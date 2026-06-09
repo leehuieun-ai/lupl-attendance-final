@@ -21,6 +21,7 @@ const workplaceTypeLabels: Record<string, string> = {
   other_field: "기타 외근지",
 };
 
+// time_fix, comp_leave_use 제거 — 신청 목록에는 남지만 신청 UI에서는 안 보임
 const requestTypeLabels: Record<string, string> = {
   annual: "연차",
   half_am: "오전 반차",
@@ -30,12 +31,13 @@ const requestTypeLabels: Record<string, string> = {
   official: "공가",
   remote: "재택",
   field: "외근",
-  time_fix: "근무시간 수정 요청",
   special: "특별휴가",
   substitute: "대체휴가",
   compensatory: "보상휴가",
-  comp_leave_use: "추가근무 대체휴가 사용",
 };
+
+// 신청 UI에 노출할 유형 (time_fix, comp_leave_use 제외)
+const REQUEST_TYPES_UI = Object.keys(requestTypeLabels);
 
 function internalEmail(no: string) {
   return `${no.trim().toLowerCase()}@lupl.local`;
@@ -57,8 +59,6 @@ function badgeClass(s?: string | null) {
   if (["rejected", "반려", "inactive"].includes(s)) return "bad";
   return "warn";
 }
-
-// 점심 12:00~13:00 자동 휴게 1시간을 차감한 실근무 분
 function workedMinutesWithLunch(inT?: string | null, outT?: string | null) {
   if (!inT || !outT) return null;
   const a = new Date(inT).getTime();
@@ -75,7 +75,7 @@ function fmtMinutes(m: number | null) {
   if (m == null) return "-";
   const h = Math.floor(m / 60);
   const mm = m % 60;
-  return `${h}시간 ${mm}분`;
+  return `${h}시간 ${mm > 0 ? mm + "분" : ""}`.trim();
 }
 
 async function fetchCurrentEmployee() {
@@ -97,13 +97,11 @@ export default function App() {
     const r = await fetchCurrentEmployee();
     setSession(r.session);
     setEmployee(r.employee);
-
     if (r.employee) {
       const { data } = await supabase
         .from("privacy_consents").select("*")
         .eq("employee_id", r.employee.id).eq("is_active", true).maybeSingle();
       setConsent(data);
-
       if (r.employee.role === "admin") {
         const [w, rq, c, d] = await Promise.all([
           supabase.from("workplaces").select("id, approval_status"),
@@ -134,14 +132,11 @@ export default function App() {
 
   async function signOut() {
     await supabase.auth.signOut();
-    setSession(null);
-    setEmployee(null);
-    setConsent(null);
+    setSession(null); setEmployee(null); setConsent(null);
   }
 
-  if (loading) return <div className="container">불러오는 중입니다.</div>;
+  if (loading) return <div className="container" style={{ paddingTop: 48, textAlign: "center", color: "#8b94a6" }}>불러오는 중…</div>;
   if (!session) return <LoginPage />;
-
   if (!employee) {
     return (
       <div className="container">
@@ -153,11 +148,7 @@ export default function App() {
       </div>
     );
   }
-
-  if (!employee.is_active || employee.employment_status !== "active") {
-    return <InactivePage signOut={signOut} />;
-  }
-
+  if (!employee.is_active || employee.employment_status !== "active") return <InactivePage signOut={signOut} />;
   if (!consent) return <ConsentGate employee={employee} onDone={load} signOut={signOut} />;
 
   const isAdmin = employee.role === "admin";
@@ -176,7 +167,6 @@ export default function App() {
           <button className="button ghost" onClick={signOut}>로그아웃</button>
         </div>
       </header>
-
       <main className="container">
         <nav className="tabs">
           <button className={`tab ${tab === "home" ? "active" : ""}`} onClick={() => setTab("home")}>출퇴근</button>
@@ -189,7 +179,6 @@ export default function App() {
           )}
           {isAdmin && <button className={`tab ${tab === "reports" ? "active" : ""}`} onClick={() => setTab("reports")}>보고서</button>}
         </nav>
-
         {tab === "home" && <HomePage employee={employee} />}
         {tab === "leave" && <LeavePage employee={employee} />}
         {tab === "workplaces" && <WorkplacePage employee={employee} />}
@@ -204,13 +193,11 @@ function LoginPage() {
   const [employeeNo, setEmployeeNo] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
-
   async function login() {
     setMessage("");
     const { error } = await supabase.auth.signInWithPassword({ email: internalEmail(employeeNo), password });
     if (error) setMessage("사번 또는 비밀번호를 확인해주세요.");
   }
-
   return (
     <div className="container">
       <section className="card auth-card">
@@ -253,18 +240,13 @@ function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () 
   const [msg, setMsg] = useState("");
 
   function ctx() {
-    const c = canvasRef.current;
-    if (!c) return null;
-    const x = c.getContext("2d");
-    if (!x) return null;
-    x.lineWidth = 2.4; x.lineCap = "round"; x.strokeStyle = "#161b26";
-    return x;
+    const c = canvasRef.current; if (!c) return null;
+    const x = c.getContext("2d"); if (!x) return null;
+    x.lineWidth = 2.4; x.lineCap = "round"; x.strokeStyle = "#161b26"; return x;
   }
   function point(e: any) {
-    const c = canvasRef.current!;
-    const r = c.getBoundingClientRect();
-    const p = e.touches?.[0] ?? e;
-    return { x: p.clientX - r.left, y: p.clientY - r.top };
+    const c = canvasRef.current!; const r = c.getBoundingClientRect();
+    const p = e.touches?.[0] ?? e; return { x: p.clientX - r.left, y: p.clientY - r.top };
   }
   function start(e: any) { setDrawing(true); const c = ctx(); const p = point(e); c?.beginPath(); c?.moveTo(p.x, p.y); }
   function move(e: any) { if (!drawing) return; e.preventDefault(); const c = ctx(); const p = point(e); c?.lineTo(p.x, p.y); c?.stroke(); }
@@ -277,20 +259,13 @@ function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () 
     const canvas = canvasRef.current;
     const signature = canvas?.toDataURL("image/png");
     if (!signature || signature.length < 1200) return setMsg("서명을 입력해주세요.");
-
     const { fingerprintHash, deviceInfo } = await getDeviceFingerprint();
     const { error } = await supabase.from("privacy_consents").insert({
-      employee_id: employee.id,
-      consent_location: true,
-      consent_device: true,
-      consent_version: "2026-02",
-      signature_data: signature,
-      device_fingerprint_hash: fingerprintHash,
-      device_info: deviceInfo,
-      is_active: true,
+      employee_id: employee.id, consent_location: true, consent_device: true,
+      consent_version: "2026-02", signature_data: signature,
+      device_fingerprint_hash: fingerprintHash, device_info: deviceInfo, is_active: true,
     });
-    if (error) setMsg(error.message);
-    else onDone();
+    if (error) setMsg(error.message); else onDone();
   }
 
   return (
@@ -322,6 +297,7 @@ function HomePage({ employee }: { employee: any }) {
   const [workplaces, setWorkplaces] = useState<any[]>([]);
   const [selectedWorkplaceId, setSelectedWorkplaceId] = useState("");
   const [todayLog, setTodayLog] = useState<any | null>(null);
+  const [recentLogs, setRecentLogs] = useState<any[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [detectedPlace, setDetectedPlace] = useState<any | null>(null);
@@ -337,22 +313,20 @@ function HomePage({ employee }: { employee: any }) {
   async function loadDevices() {
     const { data } = await supabase.from("registered_devices").select("*").eq("employee_id", employee.id).order("created_at", { ascending: false });
     setMyDevices(data ?? []);
-    try {
-      const { fingerprintHash } = await getDeviceFingerprint();
-      setThisFp(fingerprintHash);
-    } catch { /* ignore */ }
+    try { const { fingerprintHash } = await getDeviceFingerprint(); setThisFp(fingerprintHash); } catch { /* */ }
   }
 
   async function load() {
     const { data: places } = await supabase.from("workplaces").select("*").neq("approval_status", "rejected").eq("is_active", true).order("name");
     setWorkplaces(places ?? []);
-
     const { data: logs } = await supabase
       .from("attendance_logs").select("*, workplaces(name,type)")
       .eq("employee_id", employee.id)
-      .gte("check_in_time", `${todayIso()}T00:00:00`)
-      .order("created_at", { ascending: false }).limit(1);
-    setTodayLog(logs?.[0] ?? null);
+      .order("created_at", { ascending: false }).limit(6);
+    const all = logs ?? [];
+    const todayStr = todayIso();
+    setTodayLog(all.find((l: any) => l.check_in_time?.startsWith(todayStr)) ?? null);
+    setRecentLogs(all.filter((l: any) => !l.check_in_time?.startsWith(todayStr)).slice(0, 5));
     await loadDevices();
   }
 
@@ -362,23 +336,17 @@ function HomePage({ employee }: { employee: any }) {
     setMessage("");
     try {
       const { fingerprintHash, deviceInfo } = await getDeviceFingerprint();
-      const { data, error } = await supabase.rpc("register_device", {
-        p_fingerprint_hash: fingerprintHash,
-        p_device_info: deviceInfo,
-      });
+      const { data, error } = await supabase.rpc("register_device", { p_fingerprint_hash: fingerprintHash, p_device_info: deviceInfo });
       if (error) throw error;
-      const status = data?.device_status;
-      setMessage(status === "approved" ? "이 기기가 등록·승인되었습니다." : "이 기기 등록을 신청했습니다. 관리자 승인 후 사용됩니다.");
+      setMessage(data?.device_status === "approved" ? "이 기기가 등록·승인되었습니다." : "이 기기 등록을 신청했습니다. 관리자 승인 후 사용됩니다.");
       await loadDevices();
-    } catch (e: any) {
-      setMessage(e.message);
-    }
+    } catch (e: any) { setMessage(e.message); }
   }
 
   function detectPlace(lat: number, lng: number, ip: string | null) {
     const approved = workplaces.filter((w) => w.approval_status === "approved" && w.lat != null && w.lng != null);
-    const withDistance = approved.map((w) => ({ ...w, distance: distanceMeters(lat, lng, w.lat, w.lng) }));
-    const gps = withDistance.sort((a, b) => a.distance - b.distance).find((w) => w.distance <= (w.radius_m ?? 100));
+    const withDist = approved.map((w) => ({ ...w, distance: distanceMeters(lat, lng, w.lat, w.lng) }));
+    const gps = withDist.sort((a, b) => a.distance - b.distance).find((w) => w.distance <= (w.radius_m ?? 100));
     if (gps) return gps;
     if (ip) return approved.find((w) => w.ip_hint && w.ip_hint === ip) || null;
     return null;
@@ -387,8 +355,7 @@ function HomePage({ employee }: { employee: any }) {
   async function checkIn() {
     setBusy(true); setMessage("현재 위치를 확인하는 중입니다."); setDetectedPlace(null);
     try {
-      const p = await getCurrentPositionFast();
-      const ip = await getPublicIp();
+      const p = await getCurrentPositionFast(); const ip = await getPublicIp();
       const d = detectPlace(p.lat, p.lng, ip);
       if (d) {
         setDetectedPlace({ ...d, currentLat: p.lat, currentLng: p.lng, ip });
@@ -399,9 +366,8 @@ function HomePage({ employee }: { employee: any }) {
         setSelectedWorkplaceId("");
         setMessage("등록된 근무지 반경 안이 아닙니다. 현재 장소명을 입력하면 관리자 승인 대기 근무지로 저장됩니다.");
       }
-    } catch (e: any) {
-      setMessage(e.message);
-    } finally { setBusy(false); }
+    } catch (e: any) { setMessage(e.message); }
+    finally { setBusy(false); }
   }
 
   async function confirmCheckIn() {
@@ -420,31 +386,23 @@ function HomePage({ employee }: { employee: any }) {
         workplaceId = newPlace.id;
       }
       if (!workplaceId) throw new Error("근무지 선택 또는 현재 장소명 입력이 필요합니다.");
-
       const { data, error } = await supabase.rpc("check_in", {
-        p_workplace_id: workplaceId,
-        p_lat: detectedPlace?.currentLat ?? null,
-        p_lng: detectedPlace?.currentLng ?? null,
-        p_accuracy_m: null,
+        p_workplace_id: workplaceId, p_lat: detectedPlace?.currentLat ?? null,
+        p_lng: detectedPlace?.currentLng ?? null, p_accuracy_m: null,
         p_ip_address: detectedPlace?.ip ?? null,
-        p_device_fingerprint_hash: fingerprintHash,
-        p_device_info: deviceInfo,
+        p_device_fingerprint_hash: fingerprintHash, p_device_info: deviceInfo,
       });
       if (error) throw error;
       setMessage(`출근 처리 결과: ${data?.attendance_status ?? "저장 완료"}`);
-      setDetectedPlace(null);
-      setUnknownPlaceName("");
-      await load();
-    } catch (e: any) {
-      setMessage(e.message);
-    } finally { setBusy(false); }
+      setDetectedPlace(null); setUnknownPlaceName(""); await load();
+    } catch (e: any) { setMessage(e.message); }
+    finally { setBusy(false); }
   }
 
   async function checkOut() {
     setBusy(true); setMessage("퇴근 위치를 확인하는 중입니다.");
     try {
-      const p = await getCurrentPositionFast();
-      const ip = await getPublicIp();
+      const p = await getCurrentPositionFast(); const ip = await getPublicIp();
       const { fingerprintHash, deviceInfo } = await getDeviceFingerprint();
       const { data, error } = await supabase.rpc("check_out", {
         p_lat: p.lat, p_lng: p.lng, p_accuracy_m: p.accuracy,
@@ -453,9 +411,8 @@ function HomePage({ employee }: { employee: any }) {
       if (error) throw error;
       setMessage(`퇴근 처리 결과: ${data?.attendance_status ?? "저장 완료"}`);
       await load();
-    } catch (e: any) {
-      setMessage(e.message);
-    } finally { setBusy(false); }
+    } catch (e: any) { setMessage(e.message); }
+    finally { setBusy(false); }
   }
 
   const checkedIn = !!todayLog?.check_in_time;
@@ -464,77 +421,97 @@ function HomePage({ employee }: { employee: any }) {
   const thisDevice = thisFp ? myDevices.find((d) => d.fingerprint_hash === thisFp) : null;
 
   return (
-    <div className="grid two">
+    <div className="home-layout">
+      {/* 왼쪽: 출퇴근 */}
       <section className="card">
-        <p className="subtle">{now.toLocaleDateString("ko-KR", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
+        <p className="date-line">{now.toLocaleDateString("ko-KR", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</p>
         <div className="clock">{now.toLocaleTimeString("ko-KR", { hour12: false })}</div>
+
+        {/* 오늘 출퇴근 시간 항상 노출 */}
+        <div className="today-times">
+          <div className="today-time-item">
+            <span className="today-time-label">출근</span>
+            <span className="today-time-val">{checkedIn ? timeOnly(todayLog.check_in_time) : "--:--"}</span>
+          </div>
+          <div className="today-time-sep">→</div>
+          <div className="today-time-item">
+            <span className="today-time-label">퇴근</span>
+            <span className="today-time-val">{checkedOut ? timeOnly(todayLog.check_out_time) : "--:--"}</span>
+          </div>
+          {worked != null && (
+            <div className="today-time-item">
+              <span className="today-time-label">실근무</span>
+              <span className="today-time-val" style={{ fontSize: 18 }}>{fmtMinutes(worked)}</span>
+            </div>
+          )}
+        </div>
+
         <div className="punch-grid">
           <button className="button punch" disabled={busy || checkedIn} onClick={checkIn}>
-            <span className="punch-sub">출근</span>
-            {checkedIn ? timeOnly(todayLog.check_in_time) : "출근하기"}
+            출근하기
           </button>
           <button className="button secondary punch" disabled={busy || !checkedIn || checkedOut} onClick={checkOut}>
-            <span className="punch-sub">퇴근</span>
-            {checkedOut ? timeOnly(todayLog.check_out_time) : "퇴근하기"}
+            퇴근하기
           </button>
         </div>
-        <p className="subtle" style={{ marginTop: 12 }}>휴게시간은 매일 12:00~13:00(1시간) 자동 적용됩니다.</p>
+        <p className="subtle" style={{ marginTop: 10, textAlign: "center" }}>휴게시간 12:00–13:00(1시간) 자동 적용</p>
+
         {message && <div className="alert" style={{ marginTop: 14 }}>{message}</div>}
+
         {detectedPlace && (
-          <div className="card" style={{ marginTop: 16, boxShadow: "none" }}>
+          <div className="card" style={{ marginTop: 14, boxShadow: "none", background: "#f6f8fb" }}>
             {detectedPlace.id ? (
-              <>
-                <h3 style={{ marginTop: 0 }}>{detectedPlace.name} 맞나요?</h3>
-                <p className="subtle">GPS/IP 기준으로 가장 가까운 승인 근무지를 찾았습니다.</p>
-              </>
+              <><h3 style={{ marginTop: 0 }}>{detectedPlace.name} 맞나요?</h3>
+              <p className="subtle">GPS/IP 기준으로 가장 가까운 근무지를 찾았습니다.</p></>
             ) : (
-              <>
-                <h3 style={{ marginTop: 0 }}>현재 장소를 입력해주세요</h3>
-                <p className="subtle">입력한 장소는 관리자 승인 대기 근무지로 저장됩니다.</p>
-                <input className="input" style={{ marginTop: 8 }} value={unknownPlaceName} onChange={(e) => setUnknownPlaceName(e.target.value)} placeholder="예: 대구○○학교, ○○교육장" />
-              </>
+              <><h3 style={{ marginTop: 0 }}>현재 장소를 입력해주세요</h3>
+              <p className="subtle">입력한 장소는 관리자 승인 대기 근무지로 저장됩니다.</p>
+              <input className="input" style={{ marginTop: 8 }} value={unknownPlaceName} onChange={(e) => setUnknownPlaceName(e.target.value)} placeholder="예: 대구○○학교, ○○교육장" /></>
             )}
-            <div className="actions" style={{ marginTop: 12 }}>
+            <div className="actions" style={{ marginTop: 10 }}>
               <button className="button" disabled={busy} onClick={confirmCheckIn}>출근 확정</button>
               <button className="button ghost" onClick={() => setDetectedPlace(null)}>취소</button>
             </div>
           </div>
         )}
+
+        {/* 최근 출근 기록 (버튼 아래 빈 공간 채우기) */}
+        {recentLogs.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <p className="section-label">최근 기록</p>
+            {recentLogs.map((l: any) => (
+              <div className="recent-row" key={l.id}>
+                <span className="recent-date">{l.check_in_time?.slice(5, 10)}</span>
+                <span className="recent-times">{timeOnly(l.check_in_time)} → {timeOnly(l.check_out_time)}</span>
+                <span className="recent-worked">{fmtMinutes(workedMinutesWithLunch(l.check_in_time, l.check_out_time))}</span>
+                <span className={`badge ${badgeClass(l.status)}`}>{l.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
-      <div className="grid">
-        <section className="card">
-          <h2 className="card-title">오늘 근무 요약</h2>
-          <div className="grid three">
-            <div className="metric"><div className="metric-value">{timeOnly(todayLog?.check_in_time)}</div><div className="metric-label">출근</div></div>
-            <div className="metric"><div className="metric-value">{timeOnly(todayLog?.check_out_time)}</div><div className="metric-label">퇴근</div></div>
-            <div className="metric"><div className="metric-value" style={{ fontSize: 18 }}>{fmtMinutes(worked)}</div><div className="metric-label">실근무(휴게 제외)</div></div>
-          </div>
-          <div style={{ marginTop: 16 }}>
-            <span className={`badge ${badgeClass(todayLog?.status)}`}>{todayLog?.status ?? "기록 없음"}</span>
-            <p className="subtle" style={{ marginTop: 8 }}>근무지: {todayLog?.workplaces?.name ?? "-"}</p>
-            <p className="subtle">기기 상태: {todayLog?.device_status ?? "-"}</p>
-          </div>
-        </section>
-
-        <section className="card">
-          <h2 className="card-title">내 기기</h2>
-          <p className="subtle" style={{ marginBottom: 12 }}>등록 가능 기기 {employee.device_limit ?? 3}대. 한도 내에서는 자동 승인되고, 초과 시 관리자 승인이 필요합니다.</p>
-          {myDevices.length === 0 && <p className="subtle">아직 등록된 기기가 없습니다.</p>}
-          {myDevices.map((d) => (
-            <div className="device-row" key={d.id}>
-              <div>
-                <b>{d.device_info?.platform || "알 수 없는 기기"}{thisFp && d.fingerprint_hash === thisFp ? " (현재 기기)" : ""}</b>
-                <div className="subtle">{(d.device_info?.userAgent || "").slice(0, 46)} · 최근 {formatDateTime(d.last_seen_at)}</div>
-              </div>
-              <span className={`badge ${badgeClass(d.status)}`}>{d.status === "approved" ? "승인" : d.status === "pending" ? "대기" : "거절"}</span>
+      {/* 오른쪽: 내 기기 */}
+      <section className="card">
+        <h2 className="card-title">내 기기</h2>
+        <p className="body-text" style={{ marginBottom: 14 }}>등록 가능 기기 <b>{employee.device_limit ?? 3}대</b>. 한도 내에서는 자동 승인되고, 초과 시 관리자 승인이 필요합니다.</p>
+        {myDevices.length === 0 && <p className="body-text" style={{ color: "#8b94a6" }}>아직 등록된 기기가 없습니다.</p>}
+        {myDevices.map((d) => (
+          <div className="device-row" key={d.id}>
+            <div>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>
+                {d.device_info?.platform || "알 수 없는 기기"}
+                {thisFp && d.fingerprint_hash === thisFp && <span style={{ marginLeft: 6, fontSize: 12, color: "#3a6df0", fontWeight: 700 }}>현재 기기</span>}
+              </p>
+              <p className="body-text" style={{ color: "#8b94a6", marginTop: 2 }}>최근 접속 {formatDateTime(d.last_seen_at)}</p>
             </div>
-          ))}
-          {!thisDevice && (
-            <button className="button secondary full" style={{ marginTop: 8 }} onClick={registerThisDevice}>이 기기 등록 신청</button>
-          )}
-        </section>
-      </div>
+            <span className={`badge ${badgeClass(d.status)}`}>{d.status === "approved" ? "승인" : d.status === "pending" ? "승인 대기" : "거절"}</span>
+          </div>
+        ))}
+        {!thisDevice && (
+          <button className="button secondary full" style={{ marginTop: 10 }} onClick={registerThisDevice}>이 기기 등록 신청</button>
+        )}
+      </section>
     </div>
   );
 }
@@ -546,6 +523,7 @@ function LeavePage({ employee }: { employee: any }) {
   const [form, setForm] = useState({ request_type: "annual", start_date: todayIso(), end_date: todayIso(), amount_hours: "", reason: "" });
   const [compForm, setCompForm] = useState({ work_date: todayIso(), start_time: "18:00", end_time: "20:00", hours: 2, reason: "" });
   const [message, setMessage] = useState("");
+  const [showCompAlert, setShowCompAlert] = useState(false);
 
   async function load() {
     const [r, a, c] = await Promise.all([
@@ -553,9 +531,7 @@ function LeavePage({ employee }: { employee: any }) {
       supabase.from("leave_adjustments").select("*").eq("employee_id", employee.id).order("created_at", { ascending: false }),
       supabase.from("comp_time_requests").select("*").eq("employee_id", employee.id).order("created_at", { ascending: false }),
     ]);
-    setRequests(r.data ?? []);
-    setAdjustments(a.data ?? []);
-    setCompRequests(c.data ?? []);
+    setRequests(r.data ?? []); setAdjustments(a.data ?? []); setCompRequests(c.data ?? []);
   }
   useEffect(() => { load(); }, []);
 
@@ -567,41 +543,57 @@ function LeavePage({ employee }: { employee: any }) {
   const totalGranted = ent.baseGrantedDays + adj;
   const remaining = Math.max(0, totalGranted - approvedUsed);
   const expectedRemaining = Math.max(0, totalGranted - pendingUsed);
+  // 대체휴가 시간 환산 (승인된 comp_time_requests 누적, 사용한 comp_leave_use 차감)
+  const compEarnedHours = Math.round(compEarned * 8 * 10) / 10;
+  const compUsedHours = requests.filter((r) => r.request_type === "comp_leave_use" && r.status === "approved")
+    .reduce((s, r) => s + (r.amount_hours ?? (r.amount_days ?? 0) * 8), 0);
+  const compRemainHours = Math.max(0, compEarnedHours - compUsedHours);
   const remainPct = totalGranted > 0 ? Math.round((remaining / totalGranted) * 100) : 0;
+
+  // 시간차 선택 시 대체휴가 안내
+  const isHourly = form.request_type === "hourly";
 
   async function submitLeave() {
     setMessage("");
     const amountHours = form.request_type === "hourly" && form.amount_hours ? Number(form.amount_hours) : null;
-    const requestedDays = form.request_type === "hourly" ? Number(form.amount_hours || 0) / 8 : form.request_type === "half_am" || form.request_type === "half_pm" ? 0.5 : 1;
-    if (["annual", "half_am", "half_pm", "hourly", "comp_leave_use"].includes(form.request_type) && requestedDays > expectedRemaining) {
+    const requestedDays = form.request_type === "hourly" ? Number(form.amount_hours || 0) / 8
+      : form.request_type === "half_am" || form.request_type === "half_pm" ? 0.5 : 1;
+    if (["annual", "half_am", "half_pm", "hourly"].includes(form.request_type) && requestedDays > expectedRemaining) {
       return setMessage("잔여 휴가가 부족하여 신청할 수 없습니다.");
     }
     const { error } = await supabase.from("attendance_requests").insert({
-      employee_id: employee.id,
-      request_type: form.request_type,
-      start_date: form.start_date,
-      end_date: form.end_date,
-      amount_hours: amountHours,
-      amount_days: amountHours ? amountHours / 8 : null,
-      reason: form.reason,
-      status: "pending",
+      employee_id: employee.id, request_type: form.request_type,
+      start_date: form.start_date, end_date: form.end_date,
+      amount_hours: amountHours, amount_days: amountHours ? amountHours / 8 : null,
+      reason: form.reason, status: "pending",
     });
     if (error) setMessage(error.message);
     else { setMessage("휴가 신청이 저장되었습니다."); await load(); }
+  }
+
+  async function useCompLeave() {
+    setMessage("");
+    const hours = Number(form.amount_hours || 0);
+    if (!hours || hours <= 0) return setMessage("사용할 시간을 입력해주세요.");
+    if (hours > compRemainHours) return setMessage(`대체휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
+    const { error } = await supabase.from("attendance_requests").insert({
+      employee_id: employee.id, request_type: "comp_leave_use",
+      start_date: form.start_date, end_date: form.start_date,
+      amount_hours: hours, amount_days: hours / 8,
+      reason: form.reason || "대체휴가 시간 사용", status: "pending",
+    });
+    if (error) setMessage(error.message);
+    else { setMessage("대체휴가 시간 사용 신청이 저장되었습니다."); setShowCompAlert(false); await load(); }
   }
 
   async function submitCompTime() {
     setMessage("");
     if (!compForm.hours || compForm.hours <= 0) return setMessage("추가 근무 시간을 입력해주세요.");
     const { error } = await supabase.from("comp_time_requests").insert({
-      employee_id: employee.id,
-      work_date: compForm.work_date,
-      start_time: compForm.start_time,
-      end_time: compForm.end_time,
-      hours: compForm.hours,
-      converted_days: Number((compForm.hours / 8).toFixed(2)),
-      reason: compForm.reason,
-      status: "pending",
+      employee_id: employee.id, work_date: compForm.work_date,
+      start_time: compForm.start_time, end_time: compForm.end_time,
+      hours: compForm.hours, converted_days: Number((compForm.hours / 8).toFixed(2)),
+      reason: compForm.reason, status: "pending",
     });
     if (error) setMessage(error.message);
     else { setMessage("추가근무 신청이 저장되었습니다. 관리자 승인 후 대체휴가로 적립됩니다."); await load(); }
@@ -617,20 +609,23 @@ function LeavePage({ employee }: { employee: any }) {
           <div className="leave-ring" style={{ background: `conic-gradient(var(--blue) ${remainPct * 3.6}deg, #e7ecf4 0deg)` }}>
             <div className="leave-ring-inner">
               <b>{remaining.toFixed(1)}</b>
-              <span>잔여 / {totalGranted.toFixed(1)}일</span>
+              <span>잔여일</span>
             </div>
           </div>
           <div className="leave-info">
             <div className="leave-chips">
-              <div className="leave-chip">기본 발생<b>{ent.baseGrantedDays}일</b></div>
-              <div className="leave-chip">관리자·추가근무 조정<b>{adj >= 0 ? "+" : ""}{adj.toFixed(1)}일</b></div>
-              <div className="leave-chip">승인 사용<b>{approvedUsed.toFixed(1)}일</b></div>
-              <div className="leave-chip">대기 포함 예상 잔여<b>{expectedRemaining.toFixed(1)}일</b></div>
-              <div className="leave-chip">추가근무 적립<b>{compEarned.toFixed(1)}일</b></div>
+              <div className="leave-chip"><span>총 부여</span><b>{totalGranted.toFixed(1)}일</b></div>
+              <div className="leave-chip"><span>기본 발생</span><b>{ent.baseGrantedDays}일</b></div>
+              <div className="leave-chip"><span>조정</span><b>{adj >= 0 ? "+" : ""}{adj.toFixed(1)}일</b></div>
+              <div className="leave-chip"><span>사용(승인)</span><b>{approvedUsed.toFixed(1)}일</b></div>
+              <div className="leave-chip"><span>잔여(예상)</span><b>{expectedRemaining.toFixed(1)}일</b></div>
+              <div className="leave-chip" style={{ borderColor: "#3a6df0", background: "#eef3fe" }}>
+                <span>대체휴가 적립</span><b style={{ color: "#3a6df0" }}>{compEarned.toFixed(1)}일 ({compRemainHours}시간 잔여)</b>
+              </div>
             </div>
-            <p className="subtle" style={{ marginTop: 12 }}>
+            <p className="subtle" style={{ marginTop: 10 }}>
               근무 시작일 {employee.joined_at ?? "-"} · {ent.description}<br />
-              산정기간 {ent.periodStart ?? "-"} ~ {ent.periodEnd ?? "-"} (근로기준법 제60조 기준)
+              산정기간 {ent.periodStart ?? "-"} ~ {ent.periodEnd ?? "-"} (근로기준법 제60조)
             </p>
           </div>
         </div>
@@ -641,24 +636,50 @@ function LeavePage({ employee }: { employee: any }) {
           <h2 className="card-title">휴가 신청</h2>
           <div className="form-row">
             <label className="label">신청 유형</label>
-            <select className="select" value={form.request_type} onChange={(e) => setForm({ ...form, request_type: e.target.value })}>
-              {Object.entries(requestTypeLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            <select className="select" value={form.request_type} onChange={(e) => { setForm({ ...form, request_type: e.target.value }); setShowCompAlert(false); }}>
+              {REQUEST_TYPES_UI.map((k) => <option key={k} value={k}>{requestTypeLabels[k]}</option>)}
             </select>
           </div>
+
+          {/* 시간차 선택 시 대체휴가 사용 안내 */}
+          {isHourly && compRemainHours > 0 && (
+            <div className="alert" style={{ cursor: "pointer" }} onClick={() => setShowCompAlert(!showCompAlert)}>
+              대체휴가 {compRemainHours}시간 있습니다. 이걸 시간휴가로 쓰시겠습니까? {showCompAlert ? "▲" : "▼"}
+            </div>
+          )}
+          {isHourly && showCompAlert && (
+            <div className="card" style={{ boxShadow: "none", background: "#f6f8fb", marginBottom: 12 }}>
+              <p className="body-text"><b>대체휴가 시간 사용</b> — 연차 잔여에서 차감되지 않습니다.</p>
+              <div className="form-row" style={{ marginTop: 8 }}>
+                <label className="label">사용 시간</label>
+                <input className="input" type="number" step="0.5" value={form.amount_hours} onChange={(e) => setForm({ ...form, amount_hours: e.target.value })} placeholder="예: 2" />
+              </div>
+              <div className="form-row">
+                <label className="label">사용일</label>
+                <input className="input" type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} />
+              </div>
+              <div className="form-row">
+                <label className="label">사유</label>
+                <input className="input" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} placeholder="사유 입력" />
+              </div>
+              <button className="button full" onClick={useCompLeave}>대체휴가 시간 사용 신청</button>
+            </div>
+          )}
+
           <div className="grid two">
             <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} /></div>
             <div className="form-row"><label className="label">종료일</label><input className="input" type="date" value={form.end_date} onChange={(e) => setForm({ ...form, end_date: e.target.value })} /></div>
           </div>
-          {form.request_type === "hourly" && <div className="form-row"><label className="label">시간차 사용 시간</label><input className="input" type="number" step="0.5" value={form.amount_hours} onChange={(e) => setForm({ ...form, amount_hours: e.target.value })} /></div>}
+          {isHourly && <div className="form-row"><label className="label">사용 시간</label><input className="input" type="number" step="0.5" value={form.amount_hours} onChange={(e) => setForm({ ...form, amount_hours: e.target.value })} /></div>}
           <div className="form-row"><label className="label">사유</label><textarea className="textarea" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></div>
           <button className="button full" onClick={submitLeave}>휴가 신청</button>
         </section>
 
         <section className="card">
           <h2 className="card-title">추가근무 신청</h2>
-          <p className="subtle" style={{ marginBottom: 12 }}>추가근무는 별도 수당이 아니라 대체휴가로 적립됩니다. 관리자 승인 후 휴가 잔여에 추가됩니다. (8시간 = 1일)</p>
+          <p className="body-text" style={{ marginBottom: 14 }}>추가근무는 별도 수당이 아니라 대체휴가로 적립됩니다. 관리자 승인 후 휴가 잔여에 추가됩니다 (8시간 = 1일).</p>
           <div className="form-row"><label className="label">추가근무일</label><input className="input" type="date" value={compForm.work_date} onChange={(e) => setCompForm({ ...compForm, work_date: e.target.value })} /></div>
-          <div className="grid three">
+          <div className="comp-time-grid">
             <div className="form-row"><label className="label">시작</label><input className="input" type="time" value={compForm.start_time} onChange={(e) => setCompForm({ ...compForm, start_time: e.target.value })} /></div>
             <div className="form-row"><label className="label">종료</label><input className="input" type="time" value={compForm.end_time} onChange={(e) => setCompForm({ ...compForm, end_time: e.target.value })} /></div>
             <div className="form-row"><label className="label">시간</label><input className="input" type="number" step="0.5" value={compForm.hours} onChange={(e) => setCompForm({ ...compForm, hours: Number(e.target.value) })} /></div>
@@ -671,8 +692,8 @@ function LeavePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title">신청 내역</h2>
         <DataTable rows={[
-          ...requests.map((r) => ({ 구분: requestTypeLabels[r.request_type] ?? r.request_type, 기간: `${r.start_date}~${r.end_date}`, 환산: r.amount_days ?? "-", 상태: r.status, 사유: r.reason ?? "-" })),
-          ...compRequests.map((r) => ({ 구분: "추가근무(대체휴가)", 기간: r.work_date, 환산: `${r.hours}시간 → ${r.converted_days}일`, 상태: r.status, 사유: r.reason ?? "-" })),
+          ...requests.map((r) => ({ 구분: requestTypeLabels[r.request_type] ?? r.request_type, 기간: `${r.start_date}~${r.end_date}`, 환산: r.amount_days != null ? r.amount_days + "일" : r.amount_hours != null ? r.amount_hours + "시간" : "-", 상태: r.status, 사유: r.reason ?? "-" })),
+          ...compRequests.map((r) => ({ 구분: "추가근무(대체휴가)", 기간: r.work_date, 환산: `${r.hours}시간→${r.converted_days}일`, 상태: r.status, 사유: r.reason ?? "-" })),
         ]} />
       </section>
     </div>
@@ -709,12 +730,20 @@ function WorkplacePage({ employee }: { employee: any }) {
     else { setMessage("근무지 승인 요청이 저장되었습니다."); setPlaces([]); setQuery(""); await load(); }
   }
 
-  function ownerLabel(w: any) {
-    return w.requested_by === employee.id ? "본인" : "-";
-  }
-
   const approved = workplaces.filter((w) => w.approval_status === "approved");
   const pending = workplaces.filter((w) => w.approval_status === "pending");
+
+  // 100m 내 중복 제거: 이미 표시한 좌표 기준으로 너무 가까운 것 제거
+  function deduplicateByDistance(list: any[], threshold = 100) {
+    const kept: any[] = [];
+    for (const w of list) {
+      if (w.lat == null || w.lng == null) { kept.push(w); continue; }
+      const near = kept.some((k) => k.lat != null && distanceMeters(w.lat, w.lng, k.lat, k.lng) <= threshold);
+      if (!near) kept.push(w);
+    }
+    return kept;
+  }
+  const dedupedApproved = deduplicateByDistance(approved);
 
   return (
     <div className="grid two">
@@ -737,9 +766,9 @@ function WorkplacePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title">근무지 목록</h2>
         <h3>승인된 근무지</h3>
-        <DataTable rows={approved.map((w) => ({ 이름: w.name, 유형: workplaceTypeLabels[w.type], 반경: `${w.radius_m}m`, 요청자: ownerLabel(w) }))} />
+        <DataTable rows={dedupedApproved.map((w) => ({ 이름: w.name, 유형: workplaceTypeLabels[w.type] ?? w.type, 반경: `${w.radius_m}m` }))} />
         <h3>승인 대기</h3>
-        <DataTable rows={pending.map((w) => ({ 이름: w.name, 유형: workplaceTypeLabels[w.type], 반경: `${w.radius_m}m`, 요청자: ownerLabel(w) }))} />
+        <DataTable rows={pending.map((w) => ({ 이름: w.name, 유형: workplaceTypeLabels[w.type] ?? w.type, 반경: `${w.radius_m}m`, 요청자: w.requested_by === employee.id ? "본인" : "-" }))} />
       </section>
     </div>
   );
@@ -757,62 +786,45 @@ function AdminPage({ onChanged }: { onChanged: () => void }) {
   const [newEmployee, setNewEmployee] = useState({ name: "", employee_no: "", phone: "", joined_at: todayIso(), role: "employee", device_limit: 3 });
 
   async function load() {
-    // 직원 명단을 먼저 불러와 id→직원 맵 구성 (외래키 모호성 회피)
     const { data: emps } = await supabase.from("employees").select("*").order("created_at", { ascending: false });
     const list = emps ?? [];
     const map: Record<string, any> = {};
     list.forEach((e: any) => { map[e.id] = e; });
-    setEmployees(list);
-    setEmpMap(map);
-
+    setEmployees(list); setEmpMap(map);
     const [d, w, r, c] = await Promise.all([
       supabase.from("registered_devices").select("*").order("created_at", { ascending: false }),
       supabase.from("workplaces").select("*").order("created_at", { ascending: false }),
       supabase.from("attendance_requests").select("*").order("created_at", { ascending: false }),
       supabase.from("comp_time_requests").select("*").order("created_at", { ascending: false }),
     ]);
-    setDevices(d.data ?? []);
-    setWorkplaces(w.data ?? []);
-    setRequests(r.data ?? []);
-    setCompRequests(c.data ?? []);
+    setDevices(d.data ?? []); setWorkplaces(w.data ?? []); setRequests(r.data ?? []); setCompRequests(c.data ?? []);
   }
   useEffect(() => { load(); }, []);
 
-  function empName(id?: string | null) {
-    if (!id) return "-";
-    return empMap[id]?.name ?? "-";
-  }
+  const empName = (id?: string | null) => id ? (empMap[id]?.name ?? "-") : "-";
 
   async function createEmployee() {
     setMessage("");
     const { data, error } = await supabase.functions.invoke("admin-create-employee", { body: newEmployee });
     if (error) setMessage(error.message);
     else if (data?.error) setMessage(data.error);
-    else {
-      setMessage(`직원 계정이 생성되었습니다. 초기 비밀번호: ${data.initial_password}`);
-      setNewEmployee({ name: "", employee_no: "", phone: "", joined_at: todayIso(), role: "employee", device_limit: 3 });
-      await load(); onChanged();
-    }
+    else { setMessage(`직원 계정이 생성되었습니다. 초기 비밀번호: ${data.initial_password}`); setNewEmployee({ name: "", employee_no: "", phone: "", joined_at: todayIso(), role: "employee", device_limit: 3 }); await load(); onChanged(); }
   }
-
   async function updateEmployee(id: string, patch: Record<string, any>) {
     const { error } = await supabase.from("employees").update(patch).eq("id", id);
-    if (error) setMessage(error.message);
-    else { await load(); onChanged(); }
+    if (error) setMessage(error.message); else { await load(); onChanged(); }
   }
   async function toggleEmployee(id: string, currentStatus: string) {
-    const nextActive = currentStatus !== "active";
-    await updateEmployee(id, { is_active: nextActive, employment_status: nextActive ? "active" : "inactive" });
+    const next = currentStatus !== "active";
+    await updateEmployee(id, { is_active: next, employment_status: next ? "active" : "inactive" });
   }
   async function reviewWorkplace(id: string, status: string) {
     const { error } = await supabase.from("workplaces").update({ approval_status: status, is_active: status === "approved" }).eq("id", id);
-    if (error) setMessage(error.message);
-    else { await load(); onChanged(); }
+    if (error) setMessage(error.message); else { await load(); onChanged(); }
   }
   async function reviewRequest(id: string, status: string) {
     const { error } = await supabase.rpc("review_attendance_request", { p_request_id: id, p_status: status, p_review_note: "" });
-    if (error) setMessage(error.message);
-    else { await load(); onChanged(); }
+    if (error) setMessage(error.message); else { await load(); onChanged(); }
   }
   async function reviewCompRequest(id: string, status: string) {
     const { error } = await supabase.rpc("review_comp_time_request", { p_request_id: id, p_status: status, p_review_note: "" });
@@ -821,17 +833,16 @@ function AdminPage({ onChanged }: { onChanged: () => void }) {
   }
   async function reviewDevice(id: string, status: string) {
     const { error } = await supabase.from("registered_devices").update({ status }).eq("id", id);
-    if (error) setMessage(error.message);
-    else { await load(); onChanged(); }
+    if (error) setMessage(error.message); else { await load(); onChanged(); }
   }
 
   const filteredEmployees = employees.filter((e) =>
     employeeFilter === "all" ? true : employeeFilter === "inactive" ? e.employment_status !== "active" : e.employment_status === "active"
   );
-  const pendingWorkplaces = workplaces.filter((w) => w.approval_status === "pending");
-  const pendingComp = compRequests.filter((r) => r.status === "pending");
-  const pendingReq = requests.filter((r) => r.status === "pending");
-  const pendingDevices = devices.filter((d) => d.status === "pending");
+  const pW = workplaces.filter((w) => w.approval_status === "pending");
+  const pC = compRequests.filter((r) => r.status === "pending");
+  const pR = requests.filter((r) => r.status === "pending");
+  const pD = devices.filter((d) => d.status === "pending");
 
   return (
     <div className="grid">
@@ -841,57 +852,42 @@ function AdminPage({ onChanged }: { onChanged: () => void }) {
         <h2 className="card-title">승인 대기</h2>
         <div className="grid two">
           <div>
-            <h3 style={{ marginTop: 0 }}>근무지 승인 {pendingWorkplaces.length > 0 && <span className="count-badge">{pendingWorkplaces.length}</span>}</h3>
-            {pendingWorkplaces.length === 0 && <p className="subtle">대기 중인 근무지가 없습니다.</p>}
-            {pendingWorkplaces.map((w) => (
+            <h3 style={{ marginTop: 0 }}>근무지 {pW.length > 0 && <span className="count-badge">{pW.length}</span>}</h3>
+            {pW.length === 0 && <p className="subtle">없음</p>}
+            {pW.map((w) => (
               <div className="list-row" key={w.id}>
-                <div><b>{w.name}</b><div className="subtle">{workplaceTypeLabels[w.type]} · 요청 {empName(w.requested_by)}</div></div>
-                <div className="actions">
-                  <button className="button secondary" onClick={() => reviewWorkplace(w.id, "approved")}>근무지 확정</button>
-                  <button className="button danger" onClick={() => reviewWorkplace(w.id, "rejected")}>반려</button>
-                </div>
+                <div><b>{w.name}</b><div className="subtle">{workplaceTypeLabels[w.type]} · {empName(w.requested_by)}</div></div>
+                <div className="actions"><button className="button secondary" onClick={() => reviewWorkplace(w.id, "approved")}>확정</button><button className="button danger" onClick={() => reviewWorkplace(w.id, "rejected")}>반려</button></div>
               </div>
             ))}
           </div>
           <div>
-            <h3 style={{ marginTop: 0 }}>추가근무 승인 {pendingComp.length > 0 && <span className="count-badge">{pendingComp.length}</span>}</h3>
-            {pendingComp.length === 0 && <p className="subtle">대기 중인 추가근무가 없습니다.</p>}
-            {pendingComp.map((r) => (
+            <h3 style={{ marginTop: 0 }}>추가근무 {pC.length > 0 && <span className="count-badge">{pC.length}</span>}</h3>
+            {pC.length === 0 && <p className="subtle">없음</p>}
+            {pC.map((r) => (
               <div className="list-row" key={r.id}>
                 <div><b>{empName(r.employee_id)}</b><div className="subtle">{r.work_date} · {r.hours}시간 → {r.converted_days}일</div></div>
-                <div className="actions">
-                  <button className="button secondary" onClick={() => reviewCompRequest(r.id, "approved")}>승인</button>
-                  <button className="button danger" onClick={() => reviewCompRequest(r.id, "rejected")}>반려</button>
-                </div>
+                <div className="actions"><button className="button secondary" onClick={() => reviewCompRequest(r.id, "approved")}>승인</button><button className="button danger" onClick={() => reviewCompRequest(r.id, "rejected")}>반려</button></div>
               </div>
             ))}
           </div>
-        </div>
-
-        <div className="grid two" style={{ marginTop: 6 }}>
           <div>
-            <h3>휴가 신청 {pendingReq.length > 0 && <span className="count-badge">{pendingReq.length}</span>}</h3>
-            {pendingReq.length === 0 && <p className="subtle">대기 중인 휴가 신청이 없습니다.</p>}
-            {pendingReq.map((r) => (
+            <h3>휴가 신청 {pR.length > 0 && <span className="count-badge">{pR.length}</span>}</h3>
+            {pR.length === 0 && <p className="subtle">없음</p>}
+            {pR.map((r) => (
               <div className="list-row" key={r.id}>
                 <div><b>{empName(r.employee_id)}</b><div className="subtle">{requestTypeLabels[r.request_type] ?? r.request_type} · {r.start_date}~{r.end_date}</div></div>
-                <div className="actions">
-                  <button className="button secondary" onClick={() => reviewRequest(r.id, "approved")}>승인</button>
-                  <button className="button danger" onClick={() => reviewRequest(r.id, "rejected")}>반려</button>
-                </div>
+                <div className="actions"><button className="button secondary" onClick={() => reviewRequest(r.id, "approved")}>승인</button><button className="button danger" onClick={() => reviewRequest(r.id, "rejected")}>반려</button></div>
               </div>
             ))}
           </div>
           <div>
-            <h3>기기 승인 {pendingDevices.length > 0 && <span className="count-badge">{pendingDevices.length}</span>}</h3>
-            {pendingDevices.length === 0 && <p className="subtle">대기 중인 기기가 없습니다.</p>}
-            {pendingDevices.map((d) => (
+            <h3>기기 {pD.length > 0 && <span className="count-badge">{pD.length}</span>}</h3>
+            {pD.length === 0 && <p className="subtle">없음</p>}
+            {pD.map((d) => (
               <div className="list-row" key={d.id}>
-                <div><b>{empName(d.employee_id)}</b><div className="subtle">{d.device_info?.platform || "기기"} · {(d.device_info?.userAgent || "").slice(0, 36)}</div></div>
-                <div className="actions">
-                  <button className="button secondary" onClick={() => reviewDevice(d.id, "approved")}>승인</button>
-                  <button className="button danger" onClick={() => reviewDevice(d.id, "rejected")}>반려</button>
-                </div>
+                <div><b>{empName(d.employee_id)}</b><div className="subtle">{d.device_info?.platform || "기기"}</div></div>
+                <div className="actions"><button className="button secondary" onClick={() => reviewDevice(d.id, "approved")}>승인</button><button className="button danger" onClick={() => reviewDevice(d.id, "rejected")}>반려</button></div>
               </div>
             ))}
           </div>
@@ -907,17 +903,8 @@ function AdminPage({ onChanged }: { onChanged: () => void }) {
           <div className="form-row"><label className="label">근무 시작일</label><input className="input" type="date" value={newEmployee.joined_at} onChange={(e) => setNewEmployee({ ...newEmployee, joined_at: e.target.value })} /></div>
         </div>
         <div className="grid two">
-          <div className="form-row"><label className="label">권한</label>
-            <select className="select" value={newEmployee.role} onChange={(e) => setNewEmployee({ ...newEmployee, role: e.target.value })}>
-              <option value="employee">직원</option>
-              <option value="admin">관리자</option>
-            </select>
-          </div>
-          <div className="form-row"><label className="label">기기 제한</label>
-            <select className="select" value={newEmployee.device_limit} onChange={(e) => setNewEmployee({ ...newEmployee, device_limit: Number(e.target.value) })}>
-              <option value={1}>1대</option><option value={2}>2대</option><option value={3}>3대</option>
-            </select>
-          </div>
+          <div className="form-row"><label className="label">권한</label><select className="select" value={newEmployee.role} onChange={(e) => setNewEmployee({ ...newEmployee, role: e.target.value })}><option value="employee">직원</option><option value="admin">관리자</option></select></div>
+          <div className="form-row"><label className="label">기기 제한</label><select className="select" value={newEmployee.device_limit} onChange={(e) => setNewEmployee({ ...newEmployee, device_limit: Number(e.target.value) })}><option value={1}>1대</option><option value={2}>2대</option><option value={3}>3대</option></select></div>
         </div>
         <button className="button" onClick={createEmployee}>직원 생성</button>
       </section>
@@ -931,30 +918,16 @@ function AdminPage({ onChanged }: { onChanged: () => void }) {
         </div>
         <div className="table-wrap">
           <table>
-            <thead>
-              <tr><th>직원</th><th>권한</th><th>상태</th><th>근무 시작일</th><th>기기</th><th>처리</th></tr>
-            </thead>
+            <thead><tr><th>직원</th><th>권한</th><th>상태</th><th>근무 시작일</th><th>기기</th><th>처리</th></tr></thead>
             <tbody>
               {filteredEmployees.map((e) => (
                 <tr key={e.id}>
                   <td>{e.name}<br /><span className="subtle">{e.employee_no} · {e.phone}</span></td>
-                  <td>
-                    <select className="select" value={e.role} onChange={(ev) => updateEmployee(e.id, { role: ev.target.value })}>
-                      <option value="admin">관리자</option><option value="employee">직원</option>
-                    </select>
-                  </td>
+                  <td><select className="select" value={e.role} onChange={(ev) => updateEmployee(e.id, { role: ev.target.value })}><option value="admin">관리자</option><option value="employee">직원</option></select></td>
                   <td><span className={`badge ${badgeClass(e.employment_status)}`}>{e.employment_status === "active" ? "재직" : "비활성"}</span></td>
                   <td><input className="input" type="date" value={e.joined_at ?? ""} onChange={(ev) => updateEmployee(e.id, { joined_at: ev.target.value })} /></td>
-                  <td>
-                    <select className="select" value={e.device_limit} onChange={(ev) => updateEmployee(e.id, { device_limit: Number(ev.target.value) })}>
-                      <option value={1}>1대</option><option value={2}>2대</option><option value={3}>3대</option>
-                    </select>
-                  </td>
-                  <td>
-                    <button className={e.employment_status === "active" ? "button danger" : "button secondary"} onClick={() => toggleEmployee(e.id, e.employment_status)}>
-                      {e.employment_status === "active" ? "비활성화" : "활성화"}
-                    </button>
-                  </td>
+                  <td><select className="select" value={e.device_limit} onChange={(ev) => updateEmployee(e.id, { device_limit: Number(ev.target.value) })}><option value={1}>1대</option><option value={2}>2대</option><option value={3}>3대</option></select></td>
+                  <td><button className={e.employment_status === "active" ? "button danger" : "button secondary"} onClick={() => toggleEmployee(e.id, e.employment_status)}>{e.employment_status === "active" ? "비활성화" : "활성화"}</button></td>
                 </tr>
               ))}
             </tbody>
@@ -974,8 +947,7 @@ function ReportsPage() {
       supabase.from("attendance_logs").select("*, employees(name, employee_no), workplaces(name,type)").order("created_at", { ascending: false }).limit(500),
       supabase.from("comp_time_requests").select("*").order("created_at", { ascending: false }).limit(500),
     ]);
-    setLogs(l.data ?? []);
-    setCompRequests(c.data ?? []);
+    setLogs(l.data ?? []); setCompRequests(c.data ?? []);
   }
   useEffect(() => { load(); }, []);
 
@@ -1000,14 +972,10 @@ function ReportsPage() {
         <div className="metric"><div className="metric-value">{exceptions.length}</div><div className="metric-label">예외</div></div>
         <div className="metric"><div className="metric-value">{compRequests.filter((r) => r.status === "approved").reduce((s, r) => s + Number(r.converted_days || 0), 0).toFixed(1)}</div><div className="metric-label">대체휴가 적립</div></div>
       </section>
-
       <section className="card">
         <h2 className="card-title">보고서 다운로드</h2>
-        <div className="actions">
-          <button className="button" onClick={downloadAll}>월별 전체 근태 Excel</button>
-        </div>
+        <div className="actions"><button className="button" onClick={downloadAll}>월별 전체 근태 Excel</button></div>
       </section>
-
       <section className="card">
         <h2 className="card-title">예외함</h2>
         <DataTable rows={exceptions.map((l) => ({ 직원: l.employees?.name, 근무지: l.workplaces?.name, 출근: formatDateTime(l.check_in_time), 퇴근: formatDateTime(l.check_out_time), 상태: l.status }))} />
@@ -1023,11 +991,7 @@ function DataTable({ rows }: { rows: Record<string, any>[] }) {
     <div className="table-wrap">
       <table>
         <thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i}>{cols.map((c) => <td key={c}>{String(row[c] ?? "-")}</td>)}</tr>
-          ))}
-        </tbody>
+        <tbody>{rows.map((row, i) => <tr key={i}>{cols.map((c) => <td key={c}>{String(row[c] ?? "-")}</td>)}</tr>)}</tbody>
       </table>
     </div>
   );
