@@ -134,3 +134,63 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
   .clock { font-size: 52px; }
   .leave-hero { justify-content: center; text-align: center; }
 }
+
+/* ── 출퇴근 홈 레이아웃 ───────────────────────────────────── */
+.home-layout { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 880px) { .home-layout { grid-template-columns: 1fr; } }
+
+/* 날짜 줄 */
+.date-line { color: var(--muted); font-size: 14px; margin: 0 0 2px; }
+
+/* 오늘 출퇴근 시간 항상 노출 */
+.today-times {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #f6f8fb; border-radius: 14px; padding: 12px 16px; margin-bottom: 16px;
+}
+.today-time-item { display: flex; flex-direction: column; align-items: center; }
+.today-time-label { font-size: 12px; color: var(--muted); font-weight: 600; }
+.today-time-val { font-size: 22px; font-weight: 700; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.today-time-sep { color: var(--muted); font-size: 18px; }
+
+/* 출퇴근 버튼 */
+.punch {
+  min-height: 88px; border-radius: 20px;
+  font-size: 22px; font-weight: 700;
+  display: grid; place-items: center;
+  letter-spacing: -0.03em;
+}
+
+/* 최근 기록 */
+.section-label { font-size: 13px; font-weight: 700; color: var(--muted); margin: 0 0 8px; text-transform: uppercase; letter-spacing: .04em; }
+.recent-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); padding: 9px 0; font-size: 14px;
+}
+.recent-row:last-child { border-bottom: 0; }
+.recent-date { font-weight: 700; min-width: 38px; color: var(--ink); }
+.recent-times { flex: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
+.recent-worked { font-weight: 600; color: var(--ink); white-space: nowrap; }
+
+/* 기기 상태 / 본문 텍스트 */
+.body-text { font-size: 15px; line-height: 1.65; color: var(--ink); margin: 0; }
+
+/* 시계 — 모바일에서 한 줄 */
+.clock {
+  font-size: clamp(42px, 12vw, 70px);
+  font-weight: 700; letter-spacing: -0.05em;
+  margin: 6px 0 12px; font-variant-numeric: tabular-nums;
+  white-space: nowrap; line-height: 1;
+}
+
+/* 추가근무 시작·종료·시간 3칸 — 모바일에서 세로 */
+.comp-time-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+@media (max-width: 520px) { .comp-time-grid { grid-template-columns: 1fr; } }
+
+/* 연차 chip — 모바일 중앙 */
+@media (max-width: 880px) {
+  .leave-hero { flex-direction: column; align-items: center; text-align: center; }
+  .leave-chips { justify-content: center; }
+}
+
+/* 기기 상태 텍스트 크기 보정 */
+.device-row b { font-size: 15px; }
