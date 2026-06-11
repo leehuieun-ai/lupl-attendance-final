@@ -174,3 +174,8 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
   .leave-chips { justify-content: center; }
   .comp-time-grid { grid-template-columns: 1fr; }
 }
+
+/* 휴가 유형 설명 박스 */
+.type-desc { background:#f6f8fb; border:1px solid var(--line); border-radius:12px; padding:11px 13px; margin-bottom:14px; font-size:13px; line-height:1.6; }
+.type-desc b { display:block; color:var(--ink); margin-bottom:2px; }
+.type-desc span { color:var(--muted); }
