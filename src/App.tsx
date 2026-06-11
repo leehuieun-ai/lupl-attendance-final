@@ -1190,11 +1190,15 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
 function PayrollCard({ employees, absences, overrides }: { employees:any[]; absences:any[]; overrides:any[] }) {
   const [empId,setEmpId]=useState("");
   const [salary,setSalary]=useState("");
+  const [payMsg,setPayMsg]=useState("");
   const emp=empId?employees.find(e=>e.id===empId):null;
-  useEffect(()=>{ if(emp){ setSalary((Number(emp.monthly_salary||0)).toLocaleString("ko-KR")); } },[empId]);
+  useEffect(()=>{ if(emp){ setSalary((Number(emp.monthly_salary||0)).toLocaleString("ko-KR")); setPayMsg(""); } },[empId]);
   async function saveSalary() {
-    if(!empId) return;
-    await supabase.from("employees").update({monthly_salary:Number(String(salary).replace(/[^0-9]/g,""))||0}).eq("id",empId);
+    setPayMsg("");
+    if(!empId) return setPayMsg("직원을 선택해주세요.");
+    const amount=Number(String(salary).replace(/[^0-9]/g,""))||0;
+    const {error}=await supabase.from("employees").update({monthly_salary:amount}).eq("id",empId);
+    if(error) setPayMsg(`월급 저장 실패: ${error.message}`); else setPayMsg("월급이 저장되었습니다.");
   }
   const monthly=Number(String(salary).replace(/[^0-9]/g,""))||0;
   const empAbs=absences.filter(a=>a.employee_id===empId&&a.unpaid);
@@ -1217,8 +1221,9 @@ function PayrollCard({ employees, absences, overrides }: { employees:any[]; abse
             {employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         </div>
-        <div className="form-row"><label className="label">월급 (원)</label><input className="input" value={salary} onChange={e=>setSalary((Number(e.target.value.replace(/[^0-9]/g,""))||0).toLocaleString("ko-KR"))} onBlur={saveSalary} placeholder="예: 2,500,000" /></div>
+        <div className="form-row"><label className="label">월급 (원)</label><input className="input" value={salary} onChange={e=>setSalary((Number(e.target.value.replace(/[^0-9]/g,""))||0).toLocaleString("ko-KR"))} placeholder="예: 2,500,000" /></div>
       </div>
+      <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>월급 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
       {empId&&monthly>0&&(
         <div className="table-wrap" style={{marginTop:8}}>
           <table>
@@ -1258,9 +1263,19 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
   },[scheduleEmpId]);
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
   async function saveSchedule() {
-    setMsg(""); if(!scheduleEmpId) return;
-    const {error}=await supabase.from("employees").update({work_days:editDays,work_start:editStart,work_end:editEnd,contract_type:contractType,contract_start:contractType==="fixed_term"?contractStart:null,contract_end:contractType==="fixed_term"?contractEnd:null}).eq("id",scheduleEmpId);
-    if(error) setMsg(error.message); else { setMsg("스케줄이 저장되었습니다."); onChanged(); }
+    setMsg("");
+    if(!scheduleEmpId) return setMsg("직원을 선택해주세요.");
+    if(contractType==="fixed_term" && (!contractStart || !contractEnd)) return setMsg("기간제는 계약 시작일과 종료일을 입력해주세요.");
+    if(contractType==="fixed_term" && contractEnd < contractStart) return setMsg("계약 종료일은 시작일보다 뒤여야 합니다.");
+    const {error}=await supabase.from("employees").update({
+      work_days:editDays,
+      work_start:editStart,
+      work_end:editEnd,
+      contract_type:contractType,
+      contract_start:contractType==="fixed_term"?contractStart:null,
+      contract_end:contractType==="fixed_term"?contractEnd:null,
+    }).eq("id",scheduleEmpId);
+    if(error) setMsg(`저장 실패: ${error.message}`); else { setMsg("스케줄이 저장되었습니다."); await onChanged(); }
   }
 
   // 주간 오버라이드
@@ -1272,7 +1287,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
     const monday=new Date(ovWeek); monday.setDate(monday.getDate()-((monday.getDay()+6)%7));
     const weekStart=monday.toISOString().slice(0,10);
     const {error}=await supabase.from("weekly_schedule_overrides").upsert({employee_id:ovEmpId,week_start:weekStart,work_days:ovDays,work_start:ovStart,work_end:ovEnd,note:ovNote,created_by:currentEmployee.id},{onConflict:"employee_id,week_start"});
-    if(error) setMsg(error.message); else { setMsg(`${empName(ovEmpId)} ${weekStart} 주 스케줄이 저장되었습니다.`); onChanged(); }
+    if(error) setMsg(`저장 실패: ${error.message}`); else { setMsg(`${empName(ovEmpId)} ${weekStart} 주 스케줄이 저장되었습니다.`); await onChanged(); }
   }
 
   // 미출근 기간
@@ -1281,9 +1296,13 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
   async function saveAbsence() {
     setMsg(""); if(!absEmpId) return setMsg("직원을 선택해주세요.");
     const {error}=await supabase.from("employee_absences").insert({employee_id:absEmpId,start_date:absStart,end_date:absEnd,reason:absReason,unpaid:absUnpaid,created_by:currentEmployee.id});
-    if(error) setMsg(error.message); else { setMsg("미출근 기간이 등록되었습니다."); onChanged(); }
+    if(error) setMsg(`저장 실패: ${error.message}`); else { setMsg("미출근 기간이 등록되었습니다."); await onChanged(); }
   }
-  async function deleteAbsence(id:string){ await supabase.from("employee_absences").delete().eq("id",id); onChanged(); }
+  async function deleteAbsence(id:string){
+    setMsg("");
+    const {error}=await supabase.from("employee_absences").delete().eq("id",id);
+    if(error) setMsg(`삭제 실패: ${error.message}`); else { setMsg("미출근 기간이 삭제되었습니다."); await onChanged(); }
+  }
 
   return (
     <section className="card">
