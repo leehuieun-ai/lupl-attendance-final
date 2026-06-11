@@ -3,27 +3,47 @@ import { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { getDeviceFingerprint } from "./lib/device";
 import { getCurrentPositionFast, getPublicIp, distanceMeters } from "./lib/geo";
-import { calculateAdjustmentDays, calculateCompTimeEarnedDays, calculateLeaveEntitlement, calculateUsedDays } from "./lib/leave";
+import {
+  calculateAdjustmentDays, calculateCompTimeEarnedDays, calculateLeaveEntitlement, calculateUsedDays,
+  LEAVE_TYPE_META, calcInsurance, calcAbsenceDeduction,
+} from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
 
 type Tab = "home" | "leave" | "workplaces" | "admin" | "reports";
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
 const ALL_DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
+const CONTRACT_LABELS: Record<string,string> = { daily:"상시(매일)", weekly_n:"주 N일 고정", fixed_term:"기간제" };
 
 const workplaceTypeLabels: Record<string,string> = { office:"사무실", special_school:"특수학교", external_education:"외부 교육장", remote:"재택", other_field:"기타 외근지" };
 const requestTypeLabels: Record<string,string> = { annual:"연차", half_am:"오전 반차", half_pm:"오후 반차", hourly:"시간차", sick:"병가", official:"공가", remote:"재택", field:"외근", special:"특별휴가", substitute:"대체휴가", compensatory:"보상휴가", time_fix:"근무시간 수정", comp_leave_use:"대체휴가 시간 사용" };
 const REQUEST_TYPES_UI = ["annual","half_am","half_pm","hourly","sick","official","remote","field","special","substitute","compensatory"];
+const SINGLE_DAY_TYPES = ["half_am","half_pm","hourly","comp_leave_use"];
 
 function internalEmail(no: string) { return `${no.trim().toLowerCase()}@lupl.local`; }
+function won(n: number) { return n.toLocaleString("ko-KR") + "원"; }
 
-/* KST 기준 오늘 날짜 — UTC 버그 수정 핵심 */
+/* 휴대폰 자동 하이픈 */
+function formatPhone(v: string) {
+  const d = v.replace(/[^0-9]/g, "").slice(0, 11);
+  if (d.length < 4) return d;
+  if (d.length < 7) return `${d.slice(0,3)}-${d.slice(3)}`;
+  if (d.length < 11) return `${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}`;
+  return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`;
+}
+
+/* KST 기준 날짜 (UTC 버그 수정) */
 function localDateStr(d = new Date()) {
-  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  const kst = new Date(d.getTime() + 9 * 3600000);
   return kst.toISOString().slice(0, 10);
 }
 function isToday(iso?: string | null) { return !!iso && iso.startsWith(localDateStr()); }
 function todayIso() { return localDateStr(); }
+function isWeekendDate(iso?: string | null) {
+  if (!iso) return false;
+  const day = new Date(`${iso.slice(0,10)}T00:00:00`).getDay();
+  return day === 0 || day === 6;
+}
 
 function formatDateTime(v?: string | null) {
   if (!v) return "-";
@@ -44,21 +64,21 @@ function workedMinutes(inT?: string | null, outT?: string | null) {
   const a = new Date(inT).getTime(), b = new Date(outT).getTime();
   if (b <= a) return 0;
   let min = Math.round((b - a) / 60000);
-  const ls = new Date(inT); ls.setHours(12, 0, 0, 0);
-  const le = new Date(inT); le.setHours(13, 0, 0, 0);
+  const ls = new Date(inT); ls.setHours(12,0,0,0);
+  const le = new Date(inT); le.setHours(13,0,0,0);
   min -= Math.round(Math.max(0, Math.min(b, le.getTime()) - Math.max(a, ls.getTime())) / 60000);
   return Math.max(0, min);
 }
 function fmtMin(m: number | null) {
   if (m == null) return "-";
-  const h = Math.floor(m / 60), mm = m % 60;
-  return `${h}시간${mm > 0 ? " " + mm + "분" : ""}`;
+  const h = Math.floor(m/60), mm = m%60;
+  return `${h}시간${mm>0?" "+mm+"분":""}`;
 }
 function timeDiffHours(start: string, end: string) {
-  const [sh, sm] = start.split(":").map(Number);
-  const [eh, em] = end.split(":").map(Number);
-  const diff = (eh * 60 + em) - (sh * 60 + sm);
-  return diff > 0 ? Math.round(diff / 6) / 10 : 0;
+  const [sh,sm] = start.split(":").map(Number);
+  const [eh,em] = end.split(":").map(Number);
+  const diff = (eh*60+em) - (sh*60+sm);
+  return diff > 0 ? Math.round(diff/6)/10 : 0;
 }
 
 async function fetchCurrentEmployee() {
@@ -251,6 +271,7 @@ function HomePage({ employee }: { employee: any }) {
   const [unknownPlaceName,setUnknownPlaceName] = useState("");
   const [myDevices,setMyDevices] = useState<any[]>([]);
   const [thisFp,setThisFp] = useState<string|null>(null);
+  const [weekendAsk,setWeekendAsk] = useState<any|null>(null);
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t); },[]);
 
@@ -259,7 +280,6 @@ function HomePage({ employee }: { employee: any }) {
     setMyDevices(data??[]);
     try { const {fingerprintHash}=await getDeviceFingerprint(); setThisFp(fingerprintHash); } catch {/**/}
   }
-
   async function load() {
     const {data:places}=await supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name");
     setWorkplaces(places??[]);
@@ -281,7 +301,6 @@ function HomePage({ employee }: { employee: any }) {
       await loadDevices();
     } catch(e:any){setMessage(e.message);}
   }
-
   function detectPlace(lat:number,lng:number,ip:string|null) {
     const approved=workplaces.filter(w=>w.approval_status==="approved"&&w.lat!=null&&w.lng!=null);
     const withDist=approved.map(w=>({...w,distance:distanceMeters(lat,lng,w.lat,w.lng)}));
@@ -290,7 +309,6 @@ function HomePage({ employee }: { employee: any }) {
     if(ip) return approved.find(w=>w.ip_hint&&w.ip_hint===ip)||null;
     return null;
   }
-
   async function checkIn() {
     setBusy(true); setMessage("현재 위치를 확인하는 중입니다."); setDetectedPlace(null);
     try {
@@ -299,14 +317,13 @@ function HomePage({ employee }: { employee: any }) {
       else{setDetectedPlace({currentLat:p.lat,currentLng:p.lng,ip});setSelectedWorkplaceId("");setMessage("등록된 근무지 반경 안이 아닙니다. 현재 장소명을 입력하면 관리자 승인 대기 근무지로 저장됩니다.");}
     } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
   }
-
   async function confirmCheckIn() {
     setBusy(true); setMessage("");
     try {
       const {fingerprintHash,deviceInfo}=await getDeviceFingerprint();
       let workplaceId=selectedWorkplaceId;
       if(!workplaceId&&unknownPlaceName&&detectedPlace?.currentLat){
-        const {data:newPlace,error:placeError}=await supabase.from("workplaces").insert({name:unknownPlaceName,type:"other_field",lat:detectedPlace.currentLat,lng:detectedPlace.currentLng,ip_hint:detectedPlace.ip,radius_m:100,approval_status:"pending",is_active:false,requested_by:employee.id}).select().single();
+        const {data:newPlace,error:placeError}=await supabase.from("workplaces").insert({name:unknownPlaceName,type:"other_field",lat:detectedPlace.currentLat,lng:detectedPlace.currentLng,ip_hint:detectedPlace.ip,radius_m:100,approval_status:"pending",is_active:false,visibility:"public",requested_by:employee.id}).select().single();
         if(placeError) throw placeError; workplaceId=newPlace.id;
       }
       if(!workplaceId) throw new Error("근무지 선택 또는 현재 장소명 입력이 필요합니다.");
@@ -315,33 +332,39 @@ function HomePage({ employee }: { employee: any }) {
       setMessage(`출근 처리 결과: ${data?.attendance_status??"저장 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); await load();
     } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
   }
-
   async function checkOut() {
     setBusy(true); setMessage("퇴근 위치를 확인하는 중입니다.");
     try {
       const p=await getCurrentPositionFast(); const ip=await getPublicIp();
       const {fingerprintHash,deviceInfo}=await getDeviceFingerprint();
       const {data,error}=await supabase.rpc("check_out",{p_lat:p.lat,p_lng:p.lng,p_accuracy_m:p.accuracy,p_ip_address:ip,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo});
-      if(error) throw error; setMessage(`퇴근 처리 결과: ${data?.attendance_status??"저장 완료"}`); await load();
+      if(error) throw error; setMessage(`퇴근 처리 결과: ${data?.attendance_status??"저장 완료"}`);
+      await load();
+      // 주말 근무 → 대체휴가 적립 여부 묻기
+      const ci = todayLog?.check_in_time;
+      if (isWeekendDate(ci)) {
+        const mins = workedMinutes(ci, new Date().toISOString());
+        const hours = mins ? Math.round(mins/6)/10 : 0;
+        if (hours > 0) setWeekendAsk({ work_date: localDateStr(new Date(ci)), hours });
+      }
     } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
+  }
+  async function grantWeekendComp() {
+    if(!weekendAsk) return;
+    const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:weekendAsk.work_date,start_time:null,end_time:null,hours:weekendAsk.hours,converted_days:Number((weekendAsk.hours/8).toFixed(2)),reason:"주말 근무 대체휴가",status:"pending"});
+    if(error) setMessage(error.message); else setMessage("주말 근무 대체휴가 신청이 저장되었습니다. 관리자 승인 후 적립됩니다.");
+    setWeekendAsk(null);
   }
 
   const checkedIn=!!todayLog?.check_in_time; const checkedOut=!!todayLog?.check_out_time;
   const worked=workedMinutes(todayLog?.check_in_time,todayLog?.check_out_time);
   const thisDevice=thisFp?myDevices.find(d=>d.fingerprint_hash===thisFp):null;
 
-  /* 시차출퇴근 안내 */
-  let flexNote = "";
+  let flexNote="";
   if(checkedIn&&!checkedOut&&todayLog?.check_in_time){
-    const checkInHour=new Date(todayLog.check_in_time).getHours()+(new Date(todayLog.check_in_time).getMinutes()/60);
-    const kstHour=checkInHour+(9-(new Date().getTimezoneOffset()/60)-9);
-    const cin=new Date(todayLog.check_in_time);
-    const cinKst=new Date(cin.getTime()+9*3600000);
+    const cinKst=new Date(new Date(todayLog.check_in_time).getTime()+9*3600000);
     const h=cinKst.getUTCHours(), m=cinKst.getUTCMinutes();
-    if(h>=9&&(h<10||(h===10&&m===0))){
-      const outH=h+9; const outM=m;
-      flexNote=`시차출근 적용 중 · 퇴근 기준 ${String(outH).padStart(2,"0")}:${String(outM).padStart(2,"0")}`;
-    }
+    if(h>=9&&(h<10||(h===10&&m===0))) flexNote=`시차출근 적용 중 · 퇴근 기준 ${String(h+9).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
   }
 
   return (
@@ -359,8 +382,20 @@ function HomePage({ employee }: { employee: any }) {
           <button className="button secondary punch" disabled={busy||!checkedIn||checkedOut} onClick={checkOut}>퇴근하기</button>
         </div>
         {flexNote&&<p className="subtle" style={{marginTop:8,textAlign:"center",color:"#0b9b6a"}}>{flexNote}</p>}
-        <p className="subtle" style={{marginTop:6,textAlign:"center"}}>휴게시간 12:00–13:00 (1시간) 자동 적용 · 10시까지 자유 시차출근</p>
+        <p className="subtle" style={{marginTop:6,textAlign:"center"}}>휴게 12:00–13:00 자동 · 10시까지 자유 시차출근</p>
         {message&&<div className="alert" style={{marginTop:14}}>{message}</div>}
+
+        {weekendAsk&&(
+          <div className="card" style={{marginTop:14,boxShadow:"none",background:"#eef3fe"}}>
+            <h3 style={{marginTop:0}}>주말 근무 대체휴가</h3>
+            <p className="body-text">오늘 주말 근무 {weekendAsk.hours}시간이 기록되었습니다. 근무시간만큼 대체휴가를 적립하시겠습니까?</p>
+            <div className="actions" style={{marginTop:10}}>
+              <button className="button" onClick={grantWeekendComp}>네, 적립 신청</button>
+              <button className="button ghost" onClick={()=>setWeekendAsk(null)}>아니요</button>
+            </div>
+          </div>
+        )}
+
         {detectedPlace&&(
           <div className="card" style={{marginTop:14,boxShadow:"none",background:"#f6f8fb"}}>
             {detectedPlace.id
@@ -369,6 +404,7 @@ function HomePage({ employee }: { employee: any }) {
             <div className="actions" style={{marginTop:10}}><button className="button" disabled={busy} onClick={confirmCheckIn}>출근 확정</button><button className="button ghost" onClick={()=>setDetectedPlace(null)}>취소</button></div>
           </div>
         )}
+
         {recentLogs.length>0&&(
           <div style={{marginTop:20}}>
             <p className="section-label">최근 기록</p>
@@ -407,7 +443,7 @@ function LeavePage({ employee }: { employee: any }) {
   const [requests,setRequests]=useState<any[]>([]);
   const [adjustments,setAdjustments]=useState<any[]>([]);
   const [compRequests,setCompRequests]=useState<any[]>([]);
-  const [form,setForm]=useState({request_type:"annual",start_date:todayIso(),end_date:todayIso(),amount_hours:"",reason:""});
+  const [form,setForm]=useState({request_type:"annual",start_date:todayIso(),end_date:todayIso(),start_time:"09:00",end_time:"18:00",amount_hours:"",reason:""});
   const [compForm,setCompForm]=useState({work_date:todayIso(),start_time:"18:00",end_time:"20:00",hours:2,reason:""});
   const [message,setMessage]=useState(""); const [showCompAlert,setShowCompAlert]=useState(false);
 
@@ -433,36 +469,61 @@ function LeavePage({ employee }: { employee: any }) {
   const compUsedHours=requests.filter(r=>r.request_type==="comp_leave_use"&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
   const compRemainHours=Math.max(0,compEarnedHours-compUsedHours);
   const remainPct=totalGranted>0?Math.round((remaining/totalGranted)*100):0;
+  const meta=LEAVE_TYPE_META[form.request_type];
+  const isSingle=SINGLE_DAY_TYPES.includes(form.request_type);
   const isHourly=form.request_type==="hourly";
+
+  function setType(t:string){
+    const m=LEAVE_TYPE_META[t];
+    setForm(f=>({...f,request_type:t,
+      end_date:SINGLE_DAY_TYPES.includes(t)?f.start_date:f.end_date,
+      start_time:t==="half_am"?"09:00":t==="half_pm"?"14:00":f.start_time,
+      end_time:t==="half_am"?"14:00":t==="half_pm"?"18:00":f.end_time,
+    }));
+    setShowCompAlert(false);
+  }
 
   async function submitLeave() {
     setMessage("");
-    const amountHours=form.request_type==="hourly"&&form.amount_hours?Number(form.amount_hours):null;
-    const requestedDays=form.request_type==="hourly"?Number(form.amount_hours||0)/8:form.request_type==="half_am"||form.request_type==="half_pm"?0.5:1;
-    if(["annual","half_am","half_pm","hourly"].includes(form.request_type)&&requestedDays>expectedRemaining) return setMessage("잔여 휴가가 부족하여 신청할 수 없습니다.");
-    const {error}=await supabase.from("attendance_requests").insert({employee_id:employee.id,request_type:form.request_type,start_date:form.start_date,end_date:form.end_date,amount_hours:amountHours,amount_days:amountHours?amountHours/8:null,reason:form.reason,status:"pending"});
+    const m=LEAVE_TYPE_META[form.request_type];
+    const requestedDays = m?.fixedDays ?? (isHourly ? Number(form.amount_hours||0)/8 : 1);
+    // 잔여 검증 — 휴가 차감형 전체 (연차/반차/시간차/특별/대체/보상)
+    if (m?.usesLeave) {
+      if (isHourly && (!form.amount_hours || Number(form.amount_hours)<=0)) return setMessage("시간차 사용 시간을 입력해주세요.");
+      if (requestedDays > expectedRemaining + 1e-9) return setMessage(`잔여 휴가(${expectedRemaining.toFixed(1)}일)가 부족하여 신청할 수 없습니다.`);
+    }
+    const single = SINGLE_DAY_TYPES.includes(form.request_type);
+    const amountHours = isHourly && form.amount_hours ? Number(form.amount_hours) : null;
+    const useTimes = ["half_am","half_pm","hourly"].includes(form.request_type);
+    const {error}=await supabase.from("attendance_requests").insert({
+      employee_id:employee.id, request_type:form.request_type,
+      start_date:form.start_date, end_date:single?form.start_date:form.end_date,
+      start_time: useTimes? form.start_time : null,
+      end_time: useTimes? form.end_time : null,
+      amount_hours:amountHours, amount_days: m?.fixedDays ?? (amountHours?amountHours/8:null),
+      reason:form.reason, status:"pending",
+    });
     if(error) setMessage(error.message); else{setMessage("휴가 신청이 저장되었습니다.");await load();}
   }
 
   async function useCompLeave() {
     setMessage(""); const hours=Number(form.amount_hours||0);
     if(!hours||hours<=0) return setMessage("사용할 시간을 입력해주세요.");
-    if(hours>compRemainHours) return setMessage(`대체휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
+    if(hours>compRemainHours+1e-9) return setMessage(`대체휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
     const {error}=await supabase.from("attendance_requests").insert({employee_id:employee.id,request_type:"comp_leave_use",start_date:form.start_date,end_date:form.start_date,amount_hours:hours,amount_days:hours/8,reason:form.reason||"대체휴가 시간 사용",status:"pending"});
     if(error) setMessage(error.message); else{setMessage("대체휴가 시간 사용 신청이 저장되었습니다.");setShowCompAlert(false);await load();}
   }
 
+  function handleCompTimeChange(field:"start_time"|"end_time",val:string){
+    const next={...compForm,[field]:val};
+    const h=timeDiffHours(next.start_time,next.end_time);
+    setCompForm({...next,hours:h>0?h:compForm.hours});
+  }
   async function submitCompTime() {
     setMessage("");
     if(!compForm.hours||compForm.hours<=0) return setMessage("추가 근무 시간을 입력해주세요.");
     const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:compForm.work_date,start_time:compForm.start_time,end_time:compForm.end_time,hours:compForm.hours,converted_days:Number((compForm.hours/8).toFixed(2)),reason:compForm.reason,status:"pending"});
     if(error) setMessage(error.message); else{setMessage("추가근무 신청이 저장되었습니다. 관리자 승인 후 대체휴가로 적립됩니다.");await load();}
-  }
-
-  function handleCompTimeChange(field: "start_time"|"end_time", val: string) {
-    const next={...compForm,[field]:val};
-    const h=timeDiffHours(next.start_time,next.end_time);
-    setCompForm({...next,hours:h>0?h:compForm.hours});
   }
 
   return (
@@ -481,9 +542,7 @@ function LeavePage({ employee }: { employee: any }) {
               <div className="leave-chip"><span>조정</span><b>{adj>=0?"+":""}{adj.toFixed(1)}일</b></div>
               <div className="leave-chip"><span>사용(승인)</span><b>{approvedUsed.toFixed(1)}일</b></div>
               <div className="leave-chip"><span>잔여(예상)</span><b>{expectedRemaining.toFixed(1)}일</b></div>
-              <div className="leave-chip" style={{borderColor:"#3a6df0",background:"#eef3fe"}}>
-                <span>대체휴가 적립</span><b style={{color:"#3a6df0"}}>{compEarned.toFixed(1)}일 ({compRemainHours}시간 잔여)</b>
-              </div>
+              <div className="leave-chip" style={{borderColor:"#3a6df0",background:"#eef3fe"}}><span>대체휴가 적립</span><b style={{color:"#3a6df0"}}>{compEarned.toFixed(1)}일 ({compRemainHours}시간)</b></div>
             </div>
             <p className="subtle" style={{marginTop:10}}>근무 시작일 {employee.joined_at??"-"} · {ent.description}<br />산정기간 {ent.periodStart??"-"} ~ {ent.periodEnd??"-"} (근로기준법 제60조)</p>
           </div>
@@ -494,10 +553,12 @@ function LeavePage({ employee }: { employee: any }) {
         <section className="card">
           <h2 className="card-title"><i className="ti ti-beach" aria-hidden="true"></i>휴가 신청</h2>
           <div className="form-row"><label className="label">신청 유형</label>
-            <select className="select" value={form.request_type} onChange={e=>{setForm({...form,request_type:e.target.value});setShowCompAlert(false);}}>
+            <select className="select" value={form.request_type} onChange={e=>setType(e.target.value)}>
               {REQUEST_TYPES_UI.map(k=><option key={k} value={k}>{requestTypeLabels[k]}</option>)}
             </select>
           </div>
+          {meta&&<div className="type-desc"><b>{meta.label}{meta.time?` · ${meta.time}`:""}</b><span>{meta.desc}</span></div>}
+
           {isHourly&&compRemainHours>0&&(
             <div className="alert" style={{cursor:"pointer"}} onClick={()=>setShowCompAlert(!showCompAlert)}>
               대체휴가 {compRemainHours}시간 있습니다. 이걸 시간휴가로 쓰시겠습니까? {showCompAlert?"▲":"▼"}
@@ -512,11 +573,23 @@ function LeavePage({ employee }: { employee: any }) {
               <button className="button full" onClick={useCompLeave}>대체휴가 시간 사용 신청</button>
             </div>
           )}
-          <div className="grid two">
-            <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})} /></div>
-            <div className="form-row"><label className="label">종료일</label><input className="input" type="date" value={form.end_date} onChange={e=>setForm({...form,end_date:e.target.value})} /></div>
-          </div>
-          {isHourly&&<div className="form-row"><label className="label">사용 시간</label><input className="input" type="number" step="0.5" value={form.amount_hours} onChange={e=>setForm({...form,amount_hours:e.target.value})} /></div>}
+
+          {isSingle ? (
+            <div className="form-row"><label className="label">사용일</label><input className="input" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})} /></div>
+          ) : (
+            <div className="grid two">
+              <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})} /></div>
+              <div className="form-row"><label className="label">종료일</label><input className="input" type="date" value={form.end_date} onChange={e=>setForm({...form,end_date:e.target.value})} /></div>
+            </div>
+          )}
+
+          {["half_am","half_pm","hourly"].includes(form.request_type)&&(
+            <div className="grid two">
+              <div className="form-row"><label className="label">시작 시각</label><input className="input" type="time" value={form.start_time} onChange={e=>setForm({...form,start_time:e.target.value})} /></div>
+              <div className="form-row"><label className="label">종료 시각</label><input className="input" type="time" value={form.end_time} onChange={e=>setForm({...form,end_time:e.target.value})} /></div>
+            </div>
+          )}
+          {isHourly&&<div className="form-row"><label className="label">사용 시간 (시간)</label><input className="input" type="number" step="0.5" value={form.amount_hours} onChange={e=>setForm({...form,amount_hours:e.target.value})} /></div>}
           <div className="form-row"><label className="label">사유</label><textarea className="textarea" value={form.reason} onChange={e=>setForm({...form,reason:e.target.value})} /></div>
           <button className="button full" onClick={submitLeave}>휴가 신청</button>
         </section>
@@ -528,7 +601,7 @@ function LeavePage({ employee }: { employee: any }) {
           <div className="comp-time-grid">
             <div className="form-row"><label className="label">시작</label><input className="input" type="time" value={compForm.start_time} onChange={e=>handleCompTimeChange("start_time",e.target.value)} /></div>
             <div className="form-row"><label className="label">종료</label><input className="input" type="time" value={compForm.end_time} onChange={e=>handleCompTimeChange("end_time",e.target.value)} /></div>
-            <div className="form-row"><label className="label">시간 (자동계산)</label><input className="input" type="number" step="0.5" value={compForm.hours} onChange={e=>setCompForm({...compForm,hours:Number(e.target.value)})} /></div>
+            <div className="form-row"><label className="label">시간(자동)</label><input className="input" type="number" step="0.5" value={compForm.hours} onChange={e=>setCompForm({...compForm,hours:Number(e.target.value)})} /></div>
           </div>
           <div className="form-row"><label className="label">사유</label><textarea className="textarea" value={compForm.reason} onChange={e=>setCompForm({...compForm,reason:e.target.value})} placeholder="예: 행사 운영, 외부 교육 연장 등" /></div>
           <button className="button full" onClick={submitCompTime}>추가근무 신청</button>
@@ -538,8 +611,8 @@ function LeavePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-list" aria-hidden="true"></i>신청 내역</h2>
         <DataTable rows={[
-          ...requests.map(r=>({구분:requestTypeLabels[r.request_type]??r.request_type,기간:`${r.start_date}~${r.end_date}`,환산:r.amount_days!=null?r.amount_days+"일":r.amount_hours!=null?r.amount_hours+"시간":"-",상태:r.status,사유:r.reason??"-"})),
-          ...compRequests.map(r=>({구분:"추가근무(대체휴가)",기간:r.work_date,환산:`${r.hours}시간→${r.converted_days}일`,상태:r.status,사유:r.reason??"-"})),
+          ...requests.map(r=>({구분:requestTypeLabels[r.request_type]??r.request_type,기간:`${r.start_date}${r.end_date!==r.start_date?"~"+r.end_date:""}`,시간:r.start_time?`${r.start_time?.slice(0,5)}~${r.end_time?.slice(0,5)}`:"-",환산:r.amount_days!=null?r.amount_days+"일":r.amount_hours!=null?r.amount_hours+"시간":"-",상태:r.status,사유:r.reason??"-"})),
+          ...compRequests.map(r=>({구분:"추가근무(대체휴가)",기간:r.work_date,시간:r.start_time?`${r.start_time?.slice(0,5)}~${r.end_time?.slice(0,5)}`:"-",환산:`${r.hours}시간→${r.converted_days}일`,상태:r.status,사유:r.reason??"-"})),
         ]} />
       </section>
     </div>
@@ -548,11 +621,12 @@ function LeavePage({ employee }: { employee: any }) {
 
 function WorkplacePage({ employee }: { employee: any }) {
   const [query,setQuery]=useState(""); const [places,setPlaces]=useState<any[]>([]); const [workplaces,setWorkplaces]=useState<any[]>([]); const [message,setMessage]=useState("");
+  const [reqType,setReqType]=useState("special_school"); const [reqPrivate,setReqPrivate]=useState(false);
   async function load() { const {data}=await supabase.from("workplaces").select("*").order("created_at",{ascending:false}); setWorkplaces(data??[]); }
   useEffect(()=>{load();},[]);
   async function search() { setMessage(""); const {data,error}=await supabase.functions.invoke("kakao-place-search",{body:{query}}); if(error) setMessage(error.message); else setPlaces(data?.documents??[]); }
   async function requestPlace(p:any) {
-    const {error}=await supabase.from("workplaces").insert({name:p.place_name,type:"special_school",address:p.road_address_name||p.address_name,kakao_place_id:p.id,lat:Number(p.y),lng:Number(p.x),radius_m:100,approval_status:"pending",is_active:false,requested_by:employee.id});
+    const {error}=await supabase.from("workplaces").insert({name:p.place_name,type:reqType,address:p.road_address_name||p.address_name,kakao_place_id:p.id,lat:Number(p.y),lng:Number(p.x),radius_m:100,approval_status:"pending",is_active:false,visibility:reqPrivate?"private":"public",requested_by:employee.id});
     if(error) setMessage(error.message); else{setMessage("근무지 승인 요청이 저장되었습니다.");setPlaces([]);setQuery("");await load();}
   }
   function dedup(list:any[],t=100){const k:any[]=[]; for(const w of list){if(w.lat==null||w.lng==null){k.push(w);continue;}if(!k.some(x=>x.lat!=null&&distanceMeters(w.lat,w.lng,x.lat,x.lng)<=t))k.push(w);} return k;}
@@ -564,6 +638,19 @@ function WorkplacePage({ employee }: { employee: any }) {
         <h2 className="card-title"><i className="ti ti-search" aria-hidden="true"></i>근무지 검색·요청</h2>
         <p className="subtle" style={{marginBottom:12}}>카카오맵 검색으로 근무지를 등록 요청합니다. 승인되면 다음 출근 시 자동 후보로 사용됩니다.</p>
         {message&&<div className="alert">{message}</div>}
+        <div className="grid two">
+          <div className="form-row"><label className="label">유형</label>
+            <select className="select" value={reqType} onChange={e=>setReqType(e.target.value)}>
+              {Object.entries(workplaceTypeLabels).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+          <div className="form-row"><label className="label">공개 범위</label>
+            <select className="select" value={reqPrivate?"private":"public"} onChange={e=>setReqPrivate(e.target.value==="private")}>
+              <option value="public">전체 공개</option>
+              <option value="private">나에게만 (집 등)</option>
+            </select>
+          </div>
+        </div>
         <div className="form-row"><label className="label">근무지명</label><input className="input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="예: 대구광명학교" onKeyDown={e=>e.key==="Enter"&&search()} /></div>
         <button className="button" onClick={search}><i className="ti ti-search" aria-hidden="true"></i>검색</button>
         <div className="grid" style={{marginTop:14}}>{places.map(p=>(<div className="list-row" key={p.id}><div><b>{p.place_name}</b><div className="subtle">{p.road_address_name||p.address_name}</div></div><button className="button secondary" onClick={()=>requestPlace(p)}>승인 요청</button></div>))}</div>
@@ -571,10 +658,53 @@ function WorkplacePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-map" aria-hidden="true"></i>근무지 목록</h2>
         <h3>승인된 근무지</h3>
-        <DataTable rows={approved.map(w=>({이름:w.name,유형:workplaceTypeLabels[w.type]??w.type,반경:`${w.radius_m}m`}))} />
+        <DataTable rows={approved.map(w=>({이름:w.name,유형:workplaceTypeLabels[w.type]??w.type,공개:w.visibility==="private"?"나에게만":"전체",반경:`${w.radius_m}m`}))} />
         <h3>승인 대기</h3>
         <DataTable rows={pending.map(w=>({이름:w.name,유형:workplaceTypeLabels[w.type]??w.type,반경:`${w.radius_m}m`,요청자:w.requested_by===employee.id?"본인":"-"}))} />
       </section>
+    </div>
+  );
+}
+
+function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmployee, onClose, onChanged }:
+  { emp:any; requests:any[]; adjustments:any[]; compRequests:any[]; currentEmployee:any; onClose:()=>void; onChanged:()=>void }) {
+  const [days,setDays]=useState(""); const [reason,setReason]=useState(""); const [adjType,setAdjType]=useState("add"); const [msg,setMsg]=useState("");
+  const ent=calculateLeaveEntitlement(emp.joined_at);
+  const adj=calculateAdjustmentDays(adjustments);
+  const used=calculateUsedDays(requests,false);
+  const total=ent.baseGrantedDays+adj;
+  const remain=Math.max(0,total-used);
+  async function apply() {
+    setMsg(""); const d=Number(days);
+    if(!d||d<=0) return setMsg("일수를 입력해주세요.");
+    if(!reason.trim()) return setMsg("사유를 입력해주세요.");
+    const signed = adjType==="subtract" ? -Math.abs(d) : Math.abs(d);
+    const {error}=await supabase.from("leave_adjustments").insert({employee_id:emp.id,adjustment_type:adjType==="subtract"?"subtract":"add",adjustment_days:signed,source_type:"manual_adjust",reason:reason.trim(),created_by:currentEmployee.id});
+    if(error) setMsg(error.message); else { setMsg("반영되었습니다."); setDays(""); setReason(""); onChanged(); }
+  }
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-box" style={{maxWidth:460}} onClick={e=>e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="card-title" style={{margin:0}}><i className="ti ti-calendar-stats" aria-hidden="true"></i>{emp.name} 연차 관리</h2>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="leave-chips" style={{marginBottom:14}}>
+          <div className="leave-chip"><span>총 부여</span><b>{total.toFixed(1)}일</b></div>
+          <div className="leave-chip"><span>사용</span><b>{used.toFixed(1)}일</b></div>
+          <div className="leave-chip"><span>잔여</span><b>{remain.toFixed(1)}일</b></div>
+        </div>
+        {msg&&<div className={`alert ${msg.includes("반영")?"success":"error"}`}>{msg}</div>}
+        <div className="form-row"><label className="label">조정 유형</label>
+          <select className="select" value={adjType} onChange={e=>setAdjType(e.target.value)}>
+            <option value="add">추가 (특별휴가 부여 등)</option>
+            <option value="subtract">차감 (조정)</option>
+          </select>
+        </div>
+        <div className="form-row"><label className="label">일수</label><input className="input" type="number" step="0.5" value={days} onChange={e=>setDays(e.target.value)} placeholder="예: 1" /></div>
+        <div className="form-row"><label className="label">사유</label><input className="input" value={reason} onChange={e=>setReason(e.target.value)} placeholder="예: 경조사 특별휴가" /></div>
+        <button className="button full" onClick={apply}>반영</button>
+      </div>
     </div>
   );
 }
@@ -589,30 +719,32 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   const [compRequests,setCompRequests]=useState<any[]>([]);
   const [adjustments,setAdjustments]=useState<any[]>([]);
   const [overrides,setOverrides]=useState<any[]>([]);
+  const [absences,setAbsences]=useState<any[]>([]);
+  const [allLogs,setAllLogs]=useState<any[]>([]);
   const [message,setMessage]=useState("");
   const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),role:"employee",device_limit:3});
-  const [specialForm,setSpecialForm]=useState({employee_id:"",days:"",reason:""});
-  const [specialMsg,setSpecialMsg]=useState("");
   const [scheduleEmpId,setScheduleEmpId]=useState("");
   const [scheduleMsg,setScheduleMsg]=useState("");
+  const [leaveModalEmp,setLeaveModalEmp]=useState<any|null>(null);
 
   async function load() {
     const {data:emps}=await supabase.from("employees").select("*").order("created_at",{ascending:false});
     const list=emps??[]; const map:Record<string,any>={};
     list.forEach((e:any)=>{map[e.id]=e;});
     setEmployees(list); setEmpMap(map);
-    const [d,w,r,c,a,ov]=await Promise.all([
+    const [d,w,r,c,a,ov,ab,lg]=await Promise.all([
       supabase.from("registered_devices").select("*").order("created_at",{ascending:false}),
       supabase.from("workplaces").select("*").order("created_at",{ascending:false}),
       supabase.from("attendance_requests").select("*").order("created_at",{ascending:false}),
       supabase.from("comp_time_requests").select("*").order("created_at",{ascending:false}),
       supabase.from("leave_adjustments").select("*").order("created_at",{ascending:false}),
       supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(50),
+      supabase.from("employee_absences").select("*").order("start_date",{ascending:false}),
+      supabase.from("attendance_logs").select("id, employee_id, check_in_time, check_out_time, status").order("check_in_time",{ascending:false}).limit(300),
     ]);
-    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]);
+    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]);
   }
   useEffect(()=>{load();},[]);
-
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
 
   function leaveForEmployee(empId:string) {
@@ -629,50 +761,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
     const compH=Math.round(compEarned*8*10)/10;
     const compUsedH=reqs.filter(r=>r.request_type==="comp_leave_use"&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
     const pendingComp=comps.filter(c=>c.status==="pending").reduce((s,c)=>s+Number(c.converted_days||0),0);
-    return {total,used,remain,compEarned,compH,compRemainH:Math.max(0,compH-compUsedH),pendingComp};
-  }
-
-  async function grantSpecialLeave() {
-    setSpecialMsg("");
-    const days=Number(specialForm.days);
-    if(!specialForm.employee_id) return setSpecialMsg("직원을 선택해주세요.");
-    if(!days||days<=0) return setSpecialMsg("부여할 일수를 입력해주세요.");
-    if(!specialForm.reason.trim()) return setSpecialMsg("사유를 입력해주세요.");
-    const {error}=await supabase.from("leave_adjustments").insert({employee_id:specialForm.employee_id,adjustment_type:"add",adjustment_days:days,source_type:"special_grant",reason:specialForm.reason.trim(),created_by:currentEmployee.id});
-    if(error) setSpecialMsg(error.message);
-    else{setSpecialMsg(`${empName(specialForm.employee_id)}에게 ${days}일 특별휴가가 부여되었습니다.`);setSpecialForm({employee_id:"",days:"",reason:""});await load();}
-  }
-
-  /* 스케줄 편집 — 선택된 직원 */
-  const scheduleEmp=scheduleEmpId?empMap[scheduleEmpId]:null;
-  const [editDays,setEditDays]=useState<string[]>(["mon","tue","wed","thu","fri"]);
-  const [editStart,setEditStart]=useState("09:00");
-  const [editEnd,setEditEnd]=useState("18:00");
-  useEffect(()=>{
-    if(!scheduleEmp) return;
-    setEditDays(scheduleEmp.work_days??["mon","tue","wed","thu","fri"]);
-    setEditStart(scheduleEmp.work_start??"09:00");
-    setEditEnd(scheduleEmp.work_end??"18:00");
-  },[scheduleEmpId]);
-
-  async function saveSchedule() {
-    setScheduleMsg("");
-    if(!scheduleEmpId) return;
-    const {error}=await supabase.from("employees").update({work_days:editDays,work_start:editStart,work_end:editEnd}).eq("id",scheduleEmpId);
-    if(error) setScheduleMsg(error.message);
-    else{setScheduleMsg("스케줄이 저장되었습니다.");await load();}
-  }
-
-  /* 이번 주 오버라이드 추가 */
-  const [ovEmpId,setOvEmpId]=useState(""); const [ovWeek,setOvWeek]=useState(todayIso()); const [ovDays,setOvDays]=useState<string[]>(["mon","tue","wed","thu","fri"]); const [ovStart,setOvStart]=useState("09:00"); const [ovEnd,setOvEnd]=useState("18:00"); const [ovNote,setOvNote]=useState(""); const [ovMsg,setOvMsg]=useState("");
-  async function saveOverride() {
-    setOvMsg("");
-    if(!ovEmpId) return setOvMsg("직원을 선택해주세요.");
-    const monday=new Date(ovWeek); monday.setDate(monday.getDate()-((monday.getDay()+6)%7));
-    const weekStart=monday.toISOString().slice(0,10);
-    const {error}=await supabase.from("weekly_schedule_overrides").upsert({employee_id:ovEmpId,week_start:weekStart,work_days:ovDays,work_start:ovStart,work_end:ovEnd,note:ovNote,created_by:currentEmployee.id},{onConflict:"employee_id,week_start"});
-    if(error) setOvMsg(error.message);
-    else{setOvMsg(`${empName(ovEmpId)} ${weekStart} 주 스케줄이 저장되었습니다.`);await load();}
+    return {total,used,remain,compEarned,compRemainH:Math.max(0,compH-compUsedH),pendingComp};
   }
 
   async function createEmployee() {
@@ -682,7 +771,23 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   }
   async function updateEmployee(id:string,patch:Record<string,any>){const {error}=await supabase.from("employees").update(patch).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function toggleEmployee(id:string,cur:string){const n=cur!=="active";await updateEmployee(id,{is_active:n,employment_status:n?"active":"inactive"});}
-  async function reviewWorkplace(id:string,status:string){const {error}=await supabase.from("workplaces").update({approval_status:status,is_active:status==="approved"}).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
+  async function resetEmployeeNo(emp:any){
+    const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
+    if(!nw||nw===emp.employee_no) return;
+    const {data,error}=await supabase.rpc("admin_reset_employee_no",{p_employee_id:emp.id,p_new_no:nw.trim()});
+    if(error) setMessage(error.message); else { setMessage(`사번이 ${data.employee_no}(으)로 변경되었습니다. 새 로그인 아이디로 안내해주세요.`); await load(); }
+  }
+  async function resetPassword(emp:any){
+    if(!window.confirm(`${emp.name}의 비밀번호를 초기화할까요? (lupl + 휴대폰 뒤4자리)`)) return;
+    const {data,error}=await supabase.rpc("admin_reset_password",{p_employee_id:emp.id});
+    if(error) setMessage(error.message); else setMessage(`${emp.name} 비밀번호가 초기화되었습니다. 초기 비밀번호: ${data.initial_password}`);
+  }
+  async function reviewWorkplace(id:string,status:string,type?:string){
+    const patch:any={approval_status:status,is_active:status==="approved"};
+    if(type) patch.type=type;
+    const {error}=await supabase.from("workplaces").update(patch).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}
+  }
+  async function setWorkplaceType(id:string,type:string){const {error}=await supabase.from("workplaces").update({type}).eq("id",id);if(error)setMessage(error.message);else await load();}
   async function reviewRequest(id:string,status:string){const {error}=await supabase.rpc("review_attendance_request",{p_request_id:id,p_status:status,p_review_note:""});if(error)setMessage(error.message);else{await load();onChanged();}}
   async function reviewCompRequest(id:string,status:string){const {error}=await supabase.rpc("review_comp_time_request",{p_request_id:id,p_status:status,p_review_note:""});if(error)setMessage(error.message);else{setMessage(status==="approved"?"추가근무가 승인되어 대체휴가로 적립되었습니다.":"반려했습니다.");await load();onChanged();}}
   async function reviewDevice(id:string,status:string){const {error}=await supabase.from("registered_devices").update({status}).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
@@ -692,7 +797,6 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   const pC=compRequests.filter(r=>r.status==="pending");
   const pR=requests.filter(r=>r.status==="pending");
   const pD=devices.filter(d=>d.status==="pending");
-
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
 
   return (
@@ -705,7 +809,17 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
           <div>
             <h3 style={{marginTop:0}}>근무지 {pW.length>0&&<span className="count-badge">{pW.length}</span>}</h3>
             {pW.length===0&&<p className="subtle">없음</p>}
-            {pW.map(w=>(<div className="list-row" key={w.id}><div><b>{w.name}</b><div className="subtle">{workplaceTypeLabels[w.type]} · {empName(w.requested_by)}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewWorkplace(w.id,"approved")}>확정</button><button className="button danger" onClick={()=>reviewWorkplace(w.id,"rejected")}>반려</button></div></div>))}
+            {pW.map(w=>(
+              <div className="list-row" key={w.id} style={{flexDirection:"column",alignItems:"stretch"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}}>
+                  <div><b>{w.name}</b><div className="subtle">요청 {empName(w.requested_by)}</div></div>
+                  <select className="select" style={{width:"auto"}} value={w.type} onChange={e=>setWorkplaceType(w.id,e.target.value)}>
+                    {Object.entries(workplaceTypeLabels).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div className="actions"><button className="button secondary" onClick={()=>reviewWorkplace(w.id,"approved")}>확정</button><button className="button danger" onClick={()=>reviewWorkplace(w.id,"rejected")}>반려</button></div>
+              </div>
+            ))}
           </div>
           <div>
             <h3 style={{marginTop:0}}>추가근무 {pC.length>0&&<span className="count-badge">{pC.length}</span>}</h3>
@@ -715,7 +829,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
           <div>
             <h3>휴가 신청 {pR.length>0&&<span className="count-badge">{pR.length}</span>}</h3>
             {pR.length===0&&<p className="subtle">없음</p>}
-            {pR.map(r=>(<div className="list-row" key={r.id}><div><b>{empName(r.employee_id)}</b><div className="subtle">{requestTypeLabels[r.request_type]??r.request_type} · {r.start_date}~{r.end_date}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewRequest(r.id,"rejected")}>반려</button></div></div>))}
+            {pR.map(r=>(<div className="list-row" key={r.id}><div><b>{empName(r.employee_id)}</b><div className="subtle">{requestTypeLabels[r.request_type]??r.request_type} · {r.start_date}{r.end_date!==r.start_date?"~"+r.end_date:""}{r.start_time?` ${r.start_time.slice(0,5)}~${r.end_time?.slice(0,5)}`:""}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewRequest(r.id,"rejected")}>반려</button></div></div>))}
           </div>
           <div>
             <h3>기기 {pD.length>0&&<span className="count-badge">{pD.length}</span>}</h3>
@@ -725,88 +839,33 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
         </div>
       </section>
 
+      <WeekendCompCard employees={employees} empMap={empMap} allLogs={allLogs} compRequests={compRequests} currentEmployee={currentEmployee} onChanged={load} />
+
       <section className="card">
         <h2 className="card-title"><i className="ti ti-chart-pie" aria-hidden="true"></i>직원 연차 현황</h2>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>직원</th><th>총 부여</th><th>사용</th><th>잔여</th><th>대체휴가 적립</th><th>대체휴가 잔여시간</th><th>추가근무 대기</th></tr></thead>
+            <thead><tr><th>직원</th><th>총 부여</th><th>사용</th><th>잔여</th><th>대체휴가</th><th>관리</th></tr></thead>
             <tbody>
               {employees.filter(e=>e.employment_status==="active").map(e=>{
                 const lv=leaveForEmployee(e.id); if(!lv) return null;
-                return (<tr key={e.id}><td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span></td><td>{lv.total.toFixed(1)}일</td><td>{lv.used.toFixed(1)}일</td><td><b style={{color:lv.remain<3?"var(--red)":"inherit"}}>{lv.remain.toFixed(1)}일</b></td><td>{lv.compEarned.toFixed(1)}일</td><td>{lv.compRemainH}시간</td><td>{lv.pendingComp>0?`+${lv.pendingComp.toFixed(1)}일 대기`:"-"}</td></tr>);
+                return (<tr key={e.id}><td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span></td><td>{lv.total.toFixed(1)}일</td><td>{lv.used.toFixed(1)}일</td><td><b style={{color:lv.remain<3?"var(--red)":"inherit"}}>{lv.remain.toFixed(1)}일</b></td><td>{lv.compEarned.toFixed(1)}일 ({lv.compRemainH}h)</td><td><button className="button secondary" onClick={()=>setLeaveModalEmp(e)}>연차 관리</button></td></tr>);
               })}
             </tbody>
           </table>
         </div>
       </section>
 
-      <section className="card">
-        <h2 className="card-title"><i className="ti ti-gift" aria-hidden="true"></i>특별휴가 부여</h2>
-        <p className="subtle" style={{marginBottom:14}}>직원의 연차 잔여에 직접 일수를 추가합니다. 감사 로그에 기록되며 취소할 수 없습니다.</p>
-        {specialMsg&&<div className={`alert ${specialMsg.includes("부여되었습니다")?"success":""}`}>{specialMsg}</div>}
-        <div className="grid three">
-          <div className="form-row"><label className="label">직원</label><select className="select" value={specialForm.employee_id} onChange={e=>setSpecialForm({...specialForm,employee_id:e.target.value})}><option value="">직원 선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
-          <div className="form-row"><label className="label">부여 일수</label><input className="input" type="number" step="0.5" value={specialForm.days} onChange={e=>setSpecialForm({...specialForm,days:e.target.value})} placeholder="예: 1" /></div>
-          <div className="form-row"><label className="label">사유</label><input className="input" value={specialForm.reason} onChange={e=>setSpecialForm({...specialForm,reason:e.target.value})} placeholder="예: 경조사, 포상 등" /></div>
-        </div>
-        <button className="button" onClick={grantSpecialLeave}><i className="ti ti-plus" aria-hidden="true"></i>특별휴가 부여</button>
-      </section>
+      <PayrollCard employees={employees} absences={absences} />
 
-      <section className="card">
-        <h2 className="card-title"><i className="ti ti-calendar-week" aria-hidden="true"></i>직원 출근 스케줄 설정</h2>
-        <p className="subtle" style={{marginBottom:14}}>직원의 기본 출근 요일·시간을 설정합니다. 이 기준으로 지각·결근이 판단됩니다.</p>
-        {scheduleMsg&&<div className={`alert ${scheduleMsg.includes("저장")?"success":""}`}>{scheduleMsg}</div>}
-        <div className="form-row"><label className="label">직원 선택</label>
-          <select className="select" value={scheduleEmpId} onChange={e=>setScheduleEmpId(e.target.value)}>
-            <option value="">직원 선택</option>
-            {employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name} ({(e.work_days??["mon","tue","wed","thu","fri"]).map((d:string)=>DAY_LABELS[d]).join("")} / {e.work_start??"-"}~{e.work_end??"-"})</option>)}
-          </select>
-        </div>
-        {scheduleEmpId&&(<>
-          <div className="form-row">
-            <label className="label">출근 요일</label>
-            <div className="days-grid">
-              {ALL_DAYS.map(d=><button key={d} className={`day-btn ${editDays.includes(d)?"active":""}`} onClick={()=>setEditDays(toggleDay(editDays,d))}>{DAY_LABELS[d]}</button>)}
-            </div>
-          </div>
-          <div className="grid two">
-            <div className="form-row"><label className="label">출근 시간</label><input className="input" type="time" value={editStart} onChange={e=>setEditStart(e.target.value)} /></div>
-            <div className="form-row"><label className="label">퇴근 시간</label><input className="input" type="time" value={editEnd} onChange={e=>setEditEnd(e.target.value)} /></div>
-          </div>
-          <button className="button" onClick={saveSchedule}><i className="ti ti-device-floppy" aria-hidden="true"></i>저장</button>
-        </>)}
-      </section>
-
-      <section className="card">
-        <h2 className="card-title"><i className="ti ti-refresh" aria-hidden="true"></i>주간 스케줄 변경</h2>
-        <p className="subtle" style={{marginBottom:14}}>특정 주에만 출근 요일·시간이 다를 때 사용합니다. 해당 주에만 기본 스케줄을 덮어씁니다.</p>
-        {ovMsg&&<div className={`alert ${ovMsg.includes("저장")?"success":""}`}>{ovMsg}</div>}
-        <div className="grid two">
-          <div className="form-row"><label className="label">직원</label><select className="select" value={ovEmpId} onChange={e=>{setOvEmpId(e.target.value);const emp=empMap[e.target.value];if(emp){setOvDays(emp.work_days??["mon","tue","wed","thu","fri"]);setOvStart(emp.work_start??"09:00");setOvEnd(emp.work_end??"18:00");}}}><option value="">직원 선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
-          <div className="form-row"><label className="label">해당 주 날짜 (아무 날이나)</label><input className="input" type="date" value={ovWeek} onChange={e=>setOvWeek(e.target.value)} /></div>
-        </div>
-        <div className="form-row">
-          <label className="label">이 주 출근 요일</label>
-          <div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${ovDays.includes(d)?"active":""}`} onClick={()=>setOvDays(toggleDay(ovDays,d))}>{DAY_LABELS[d]}</button>)}</div>
-        </div>
-        <div className="grid two" style={{marginBottom:14}}>
-          <div className="form-row"><label className="label">출근 시간</label><input className="input" type="time" value={ovStart} onChange={e=>setOvStart(e.target.value)} /></div>
-          <div className="form-row"><label className="label">퇴근 시간</label><input className="input" type="time" value={ovEnd} onChange={e=>setOvEnd(e.target.value)} /></div>
-        </div>
-        <div className="form-row"><label className="label">메모 (선택)</label><input className="input" value={ovNote} onChange={e=>setOvNote(e.target.value)} placeholder="예: 이번 주 목요일 행사로 변경" /></div>
-        <button className="button" onClick={saveOverride}><i className="ti ti-device-floppy" aria-hidden="true"></i>저장</button>
-        {overrides.length>0&&(<>
-          <h3>최근 변경 내역</h3>
-          <DataTable rows={overrides.slice(0,10).map(o=>({직원:empName(o.employee_id),주:o.week_start,요일:(o.work_days??[]).map((d:string)=>DAY_LABELS[d]).join(""),시간:`${o.work_start}~${o.work_end}`,메모:o.note??"-"}))} />
-        </>)}
-      </section>
+      <ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setScheduleMsg} msg={scheduleMsg} />
 
       <section className="card">
         <h2 className="card-title"><i className="ti ti-user-plus" aria-hidden="true"></i>직원 계정 생성</h2>
         <div className="grid four">
           <div className="form-row"><label className="label">이름</label><input className="input" value={newEmployee.name} onChange={e=>setNewEmployee({...newEmployee,name:e.target.value})} /></div>
           <div className="form-row"><label className="label">사번</label><input className="input" value={newEmployee.employee_no} onChange={e=>setNewEmployee({...newEmployee,employee_no:e.target.value})} /></div>
-          <div className="form-row"><label className="label">휴대폰</label><input className="input" value={newEmployee.phone} onChange={e=>setNewEmployee({...newEmployee,phone:e.target.value})} placeholder="010-0000-0000" /></div>
+          <div className="form-row"><label className="label">휴대폰</label><input className="input" value={newEmployee.phone} onChange={e=>setNewEmployee({...newEmployee,phone:formatPhone(e.target.value)})} placeholder="010-0000-0000" /></div>
           <div className="form-row"><label className="label">근무 시작일</label><input className="input" type="date" value={newEmployee.joined_at} onChange={e=>setNewEmployee({...newEmployee,joined_at:e.target.value})} /></div>
         </div>
         <div className="grid two">
@@ -825,14 +884,239 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
         </div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>직원</th><th>권한</th><th>상태</th><th>근무 시작일</th><th>기기</th><th>처리</th></tr></thead>
+            <thead><tr><th>직원</th><th>권한</th><th>상태</th><th>근무 시작일</th><th>계정</th><th>처리</th></tr></thead>
             <tbody>
-              {filtered.map(e=>(<tr key={e.id}><td>{e.name}<br /><span className="subtle">{e.employee_no} · {e.phone}</span></td><td><select className="select" value={e.role} onChange={ev=>updateEmployee(e.id,{role:ev.target.value})}><option value="admin">관리자</option><option value="employee">직원</option></select></td><td><span className={`badge ${badgeClass(e.employment_status)}`}>{e.employment_status==="active"?"재직":"비활성"}</span></td><td><input className="input" type="date" value={e.joined_at??""} onChange={ev=>updateEmployee(e.id,{joined_at:ev.target.value})} /></td><td><select className="select" value={e.device_limit} onChange={ev=>updateEmployee(e.id,{device_limit:Number(ev.target.value)})}><option value={1}>1대</option><option value={2}>2대</option><option value={3}>3대</option></select></td><td><button className={e.employment_status==="active"?"button danger":"button secondary"} onClick={()=>toggleEmployee(e.id,e.employment_status)}>{e.employment_status==="active"?"비활성화":"활성화"}</button></td></tr>))}
+              {filtered.map(e=>(
+                <tr key={e.id}>
+                  <td>{e.name}<br /><span className="subtle">{e.employee_no} · {e.phone}</span></td>
+                  <td><select className="select" value={e.role} onChange={ev=>updateEmployee(e.id,{role:ev.target.value})}><option value="admin">관리자</option><option value="employee">직원</option></select></td>
+                  <td><span className={`badge ${badgeClass(e.employment_status)}`}>{e.employment_status==="active"?"재직":"비활성"}</span></td>
+                  <td><input className="input" type="date" value={e.joined_at??""} onChange={ev=>updateEmployee(e.id,{joined_at:ev.target.value})} /></td>
+                  <td><div className="actions"><button className="button ghost" onClick={()=>resetEmployeeNo(e)}>사번 변경</button><button className="button ghost" onClick={()=>resetPassword(e)}>비번 초기화</button></div></td>
+                  <td><button className={e.employment_status==="active"?"button danger":"button secondary"} onClick={()=>toggleEmployee(e.id,e.employment_status)}>{e.employment_status==="active"?"비활성화":"활성화"}</button></td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       </section>
+
+      {leaveModalEmp&&<LeaveManageModal emp={leaveModalEmp} requests={requests.filter(r=>r.employee_id===leaveModalEmp.id)} adjustments={adjustments.filter(a=>a.employee_id===leaveModalEmp.id)} compRequests={compRequests.filter(c=>c.employee_id===leaveModalEmp.id)} currentEmployee={currentEmployee} onClose={()=>setLeaveModalEmp(null)} onChanged={load} />}
     </div>
+  );
+}
+
+function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmployee, onChanged }:
+  { employees:any[]; empMap:Record<string,any>; allLogs:any[]; compRequests:any[]; currentEmployee:any; onChanged:()=>void }) {
+  const [sel,setSel]=useState<Record<string,boolean>>({});
+  const [msg,setMsg]=useState("");
+  // 주말 + 퇴근 있는 로그 중, 아직 대체휴가 신청 안 된 것
+  const grantedDates=new Set(compRequests.map(c=>`${c.employee_id}|${c.work_date}`));
+  const weekendLogs=allLogs.filter(l=>{
+    if(!l.check_in_time||!l.check_out_time) return false;
+    if(!isWeekendDate(l.check_in_time)) return false;
+    const wd=localDateStr(new Date(l.check_in_time));
+    return !grantedDates.has(`${l.employee_id}|${wd}`);
+  });
+  async function grantAll() {
+    setMsg(""); const picked=weekendLogs.filter(l=>sel[l.id]);
+    if(picked.length===0) return setMsg("부여할 항목을 선택해주세요.");
+    for(const l of picked){
+      const mins=workedMinutes(l.check_in_time,l.check_out_time);
+      const hours=mins?Math.round(mins/6)/10:0;
+      const wd=localDateStr(new Date(l.check_in_time));
+      const {data:ins,error}=await supabase.from("comp_time_requests").insert({employee_id:l.employee_id,work_date:wd,hours,converted_days:Number((hours/8).toFixed(2)),reason:"주말 근무 대체휴가(관리자 일괄)",status:"pending"}).select().single();
+      if(!error&&ins) await supabase.rpc("review_comp_time_request",{p_request_id:ins.id,p_status:"approved",p_review_note:"관리자 일괄 부여"});
+    }
+    setMsg(`${picked.length}건 대체휴가를 부여했습니다.`); setSel({}); onChanged();
+  }
+  if(weekendLogs.length===0) return null;
+  return (
+    <section className="card">
+      <h2 className="card-title"><i className="ti ti-calendar-plus" aria-hidden="true"></i>주말 근무 대체휴가 일괄 부여</h2>
+      <p className="subtle" style={{marginBottom:12}}>아직 대체휴가가 적립되지 않은 주말 근무 기록입니다. 선택 후 일괄 부여하면 즉시 적립됩니다.</p>
+      {msg&&<div className={`alert ${msg.includes("부여")?"success":""}`}>{msg}</div>}
+      {weekendLogs.map(l=>{
+        const mins=workedMinutes(l.check_in_time,l.check_out_time); const hours=mins?Math.round(mins/6)/10:0;
+        return (
+          <label className="list-row" key={l.id} style={{cursor:"pointer"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <input type="checkbox" checked={!!sel[l.id]} onChange={e=>setSel({...sel,[l.id]:e.target.checked})} style={{width:18,height:18,accentColor:"#3a6df0"}} />
+              <div><b>{empMap[l.employee_id]?.name??"-"}</b><div className="subtle">{l.check_in_time?.slice(0,10)} · {hours}시간</div></div>
+            </div>
+            <span className="badge">{hours}시간 → {(hours/8).toFixed(1)}일</span>
+          </label>
+        );
+      })}
+      <button className="button" style={{marginTop:10}} onClick={grantAll}><i className="ti ti-check" aria-hidden="true"></i>선택 항목 일괄 부여</button>
+    </section>
+  );
+}
+
+function PayrollCard({ employees, absences }: { employees:any[]; absences:any[] }) {
+  const [empId,setEmpId]=useState("");
+  const [salary,setSalary]=useState("");
+  const [start,setStart]=useState(""); const [end,setEnd]=useState("");
+  const emp=empId?employees.find(e=>e.id===empId):null;
+
+  useEffect(()=>{ if(emp){ setSalary(String(emp.monthly_salary||"")); } },[empId]);
+
+  async function saveSalary() {
+    if(!empId) return;
+    await supabase.from("employees").update({monthly_salary:Number(salary)||0}).eq("id",empId);
+  }
+
+  const monthly=Number(salary)||0;
+  // 미출근일수: 입력 기간 + 등록된 무급 미출근
+  let absentDays=0;
+  if(start&&end){ const s=new Date(start), e=new Date(end); absentDays+=Math.max(0,Math.round((e.getTime()-s.getTime())/86400000)+1); }
+  const empAbs=absences.filter(a=>a.employee_id===empId&&a.unpaid);
+  empAbs.forEach(a=>{const s=new Date(a.start_date),e=new Date(a.end_date);absentDays+=Math.max(0,Math.round((e.getTime()-s.getTime())/86400000)+1);});
+
+  const deduction=calcAbsenceDeduction(monthly,absentDays);
+  const baseAfterDeduction=Math.max(0,monthly-deduction);
+  const ins=calcInsurance(baseAfterDeduction);
+  const netPay=baseAfterDeduction-ins.employee;
+
+  return (
+    <section className="card">
+      <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산 (결근 공제 + 4대보험)</h2>
+      <p className="subtle" style={{marginBottom:12}}>월급을 입력하고 미출근 기간을 설정하면, 월급 ÷ 30 방식으로 공제하고 4대보험(근로자/회사 부담)을 계산합니다. 참고용 추정치입니다.</p>
+      <div className="grid two">
+        <div className="form-row"><label className="label">직원</label>
+          <select className="select" value={empId} onChange={e=>setEmpId(e.target.value)}>
+            <option value="">직원 선택</option>
+            {employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>
+        <div className="form-row"><label className="label">월급 (원)</label><input className="input" type="number" value={salary} onChange={e=>setSalary(e.target.value)} onBlur={saveSalary} placeholder="예: 2500000" /></div>
+      </div>
+      <div className="grid two">
+        <div className="form-row"><label className="label">미출근 시작일</label><input className="input" type="date" value={start} onChange={e=>setStart(e.target.value)} /></div>
+        <div className="form-row"><label className="label">미출근 종료일</label><input className="input" type="date" value={end} onChange={e=>setEnd(e.target.value)} /></div>
+      </div>
+      {empId&&monthly>0&&(
+        <div className="table-wrap" style={{marginTop:8}}>
+          <table>
+            <thead><tr><th>항목</th><th>근로자 부담</th><th>회사 부담</th></tr></thead>
+            <tbody>
+              <tr><td>기본 월급</td><td colSpan={2}>{won(monthly)}</td></tr>
+              <tr><td>결근 공제 ({absentDays}일, 월급÷30)</td><td colSpan={2} style={{color:"var(--red)"}}>- {won(deduction)}</td></tr>
+              <tr><td><b>공제 후 급여</b></td><td colSpan={2}><b>{won(baseAfterDeduction)}</b></td></tr>
+              {ins.breakdown.map(b=>(<tr key={b.name}><td>{b.name}</td><td>{won(b.e)}</td><td>{won(b.c)}</td></tr>))}
+              <tr><td><b>4대보험 합계</b></td><td><b>{won(ins.employee)}</b></td><td><b>{won(ins.company)}</b></td></tr>
+              <tr><td><b>실수령액 (세전, 소득세 별도)</b></td><td colSpan={2}><b style={{color:"var(--blue)"}}>{won(netPay)}</b></td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="subtle" style={{marginTop:10}}>※ 소득세·지방소득세는 부양가족·간이세액표에 따라 달라져 제외했습니다. 4대보험 요율은 2024~2025년 기준 추정이며 정확한 금액은 4대보험료 모의계산 또는 세무사 확인을 권장합니다.</p>
+    </section>
+  );
+}
+
+function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee, empName, onChanged, setMsg, msg }:
+  { employees:any[]; empMap:Record<string,any>; overrides:any[]; absences:any[]; currentEmployee:any; empName:(id?:string|null)=>string; onChanged:()=>void; setMsg:(s:string)=>void; msg:string }) {
+  const [scheduleEmpId,setScheduleEmpId]=useState("");
+  const [editDays,setEditDays]=useState<string[]>(["mon","tue","wed","thu","fri"]);
+  const [editStart,setEditStart]=useState("09:00"); const [editEnd,setEditEnd]=useState("18:00");
+  const [contractType,setContractType]=useState("daily");
+  const scheduleEmp=scheduleEmpId?empMap[scheduleEmpId]:null;
+  useEffect(()=>{
+    if(!scheduleEmp) return;
+    setEditDays(scheduleEmp.work_days??["mon","tue","wed","thu","fri"]);
+    setEditStart(scheduleEmp.work_start??"09:00"); setEditEnd(scheduleEmp.work_end??"18:00");
+    setContractType(scheduleEmp.contract_type??"daily");
+  },[scheduleEmpId]);
+  function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
+  async function saveSchedule() {
+    setMsg(""); if(!scheduleEmpId) return;
+    const {error}=await supabase.from("employees").update({work_days:editDays,work_start:editStart,work_end:editEnd,contract_type:contractType}).eq("id",scheduleEmpId);
+    if(error) setMsg(error.message); else { setMsg("스케줄이 저장되었습니다."); onChanged(); }
+  }
+
+  // 주간 오버라이드
+  const [ovEmpId,setOvEmpId]=useState(""); const [ovWeek,setOvWeek]=useState(todayIso());
+  const [ovDays,setOvDays]=useState<string[]>(["mon","tue","wed","thu","fri"]);
+  const [ovStart,setOvStart]=useState("09:00"); const [ovEnd,setOvEnd]=useState("18:00"); const [ovNote,setOvNote]=useState("");
+  async function saveOverride() {
+    setMsg(""); if(!ovEmpId) return setMsg("직원을 선택해주세요.");
+    const monday=new Date(ovWeek); monday.setDate(monday.getDate()-((monday.getDay()+6)%7));
+    const weekStart=monday.toISOString().slice(0,10);
+    const {error}=await supabase.from("weekly_schedule_overrides").upsert({employee_id:ovEmpId,week_start:weekStart,work_days:ovDays,work_start:ovStart,work_end:ovEnd,note:ovNote,created_by:currentEmployee.id},{onConflict:"employee_id,week_start"});
+    if(error) setMsg(error.message); else { setMsg(`${empName(ovEmpId)} ${weekStart} 주 스케줄이 저장되었습니다.`); onChanged(); }
+  }
+
+  // 미출근 기간
+  const [absEmpId,setAbsEmpId]=useState(""); const [absStart,setAbsStart]=useState(todayIso()); const [absEnd,setAbsEnd]=useState(todayIso());
+  const [absReason,setAbsReason]=useState(""); const [absUnpaid,setAbsUnpaid]=useState(true);
+  async function saveAbsence() {
+    setMsg(""); if(!absEmpId) return setMsg("직원을 선택해주세요.");
+    const {error}=await supabase.from("employee_absences").insert({employee_id:absEmpId,start_date:absStart,end_date:absEnd,reason:absReason,unpaid:absUnpaid,created_by:currentEmployee.id});
+    if(error) setMsg(error.message); else { setMsg("미출근 기간이 등록되었습니다."); onChanged(); }
+  }
+  async function deleteAbsence(id:string){ await supabase.from("employee_absences").delete().eq("id",id); onChanged(); }
+
+  return (
+    <section className="card">
+      <h2 className="card-title"><i className="ti ti-calendar-week" aria-hidden="true"></i>직원 출근 스케줄 설정</h2>
+      <p className="subtle" style={{marginBottom:14}}>기본 출근 요일·시간·계약유형을 설정합니다. 이 기준으로 지각·결근이 판단됩니다.</p>
+      {msg&&<div className={`alert ${msg.includes("저장")||msg.includes("등록")?"success":""}`}>{msg}</div>}
+
+      <div className="form-row"><label className="label">직원 선택</label>
+        <select className="select" value={scheduleEmpId} onChange={e=>setScheduleEmpId(e.target.value)}>
+          <option value="">직원 선택</option>
+          {employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name} · {CONTRACT_LABELS[e.contract_type??"daily"]} · {(e.work_days??["mon","tue","wed","thu","fri"]).map((d:string)=>DAY_LABELS[d]).join("")}</option>)}
+        </select>
+      </div>
+      {scheduleEmpId&&(<>
+        <div className="form-row"><label className="label">계약 유형</label>
+          <select className="select" value={contractType} onChange={e=>setContractType(e.target.value)}>
+            {Object.entries(CONTRACT_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        <div className="form-row"><label className="label">출근 요일</label>
+          <div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${editDays.includes(d)?"active":""}`} onClick={()=>setEditDays(toggleDay(editDays,d))}>{DAY_LABELS[d]}</button>)}</div>
+        </div>
+        <div className="grid two">
+          <div className="form-row"><label className="label">출근 시간</label><input className="input" type="time" value={editStart} onChange={e=>setEditStart(e.target.value)} /></div>
+          <div className="form-row"><label className="label">퇴근 시간</label><input className="input" type="time" value={editEnd} onChange={e=>setEditEnd(e.target.value)} /></div>
+        </div>
+        <button className="button" onClick={saveSchedule}><i className="ti ti-device-floppy" aria-hidden="true"></i>저장</button>
+      </>)}
+
+      <h3>특정 기간 미출근 설정</h3>
+      <p className="subtle" style={{marginBottom:10}}>특정 월·일부터 며칠간 출근하지 않는 경우 등록합니다. 결근 판단에서 제외되고, 무급이면 급여 계산에 반영됩니다.</p>
+      <div className="grid four">
+        <div className="form-row"><label className="label">직원</label><select className="select" value={absEmpId} onChange={e=>setAbsEmpId(e.target.value)}><option value="">선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+        <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={absStart} onChange={e=>setAbsStart(e.target.value)} /></div>
+        <div className="form-row"><label className="label">종료일</label><input className="input" type="date" value={absEnd} onChange={e=>setAbsEnd(e.target.value)} /></div>
+        <div className="form-row"><label className="label">급여</label><select className="select" value={absUnpaid?"unpaid":"paid"} onChange={e=>setAbsUnpaid(e.target.value==="unpaid")}><option value="unpaid">무급</option><option value="paid">유급</option></select></div>
+      </div>
+      <div className="form-row"><label className="label">사유</label><input className="input" value={absReason} onChange={e=>setAbsReason(e.target.value)} placeholder="예: 개인 사정 장기 미출근" /></div>
+      <button className="button secondary" onClick={saveAbsence}><i className="ti ti-plus" aria-hidden="true"></i>미출근 기간 등록</button>
+      {absences.length>0&&(<div style={{marginTop:12}}>
+        {absences.map(a=>(<div className="list-row" key={a.id}><div><b>{empName(a.employee_id)}</b><div className="subtle">{a.start_date}~{a.end_date} · {a.unpaid?"무급":"유급"} · {a.reason??"-"}</div></div><button className="button danger" onClick={()=>deleteAbsence(a.id)}>삭제</button></div>))}
+      </div>)}
+
+      <h3>주간 스케줄 변경 (이번 주만)</h3>
+      <p className="subtle" style={{marginBottom:10}}>특정 주에만 출근 요일·시간이 다를 때 사용합니다. 해당 주에만 기본 스케줄을 덮어씁니다.</p>
+      <div className="grid two">
+        <div className="form-row"><label className="label">직원</label><select className="select" value={ovEmpId} onChange={e=>{setOvEmpId(e.target.value);const emp=empMap[e.target.value];if(emp){setOvDays(emp.work_days??["mon","tue","wed","thu","fri"]);setOvStart(emp.work_start??"09:00");setOvEnd(emp.work_end??"18:00");}}}><option value="">직원 선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+        <div className="form-row"><label className="label">해당 주 날짜 (아무 날)</label><input className="input" type="date" value={ovWeek} onChange={e=>setOvWeek(e.target.value)} /></div>
+      </div>
+      <div className="form-row"><label className="label">이 주 출근 요일</label><div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${ovDays.includes(d)?"active":""}`} onClick={()=>setOvDays(toggleDay(ovDays,d))}>{DAY_LABELS[d]}</button>)}</div></div>
+      <div className="grid two" style={{marginBottom:14}}>
+        <div className="form-row"><label className="label">출근 시간</label><input className="input" type="time" value={ovStart} onChange={e=>setOvStart(e.target.value)} /></div>
+        <div className="form-row"><label className="label">퇴근 시간</label><input className="input" type="time" value={ovEnd} onChange={e=>setOvEnd(e.target.value)} /></div>
+      </div>
+      <div className="form-row"><label className="label">메모 (선택)</label><input className="input" value={ovNote} onChange={e=>setOvNote(e.target.value)} placeholder="예: 이번 주 목요일 행사로 변경" /></div>
+      <button className="button" onClick={saveOverride}><i className="ti ti-device-floppy" aria-hidden="true"></i>저장</button>
+      {overrides.length>0&&(<>
+        <h3>최근 변경 내역</h3>
+        <DataTable rows={overrides.slice(0,10).map(o=>({직원:empName(o.employee_id),주:o.week_start,요일:(o.work_days??[]).map((d:string)=>DAY_LABELS[d]).join(""),시간:`${o.work_start}~${o.work_end}`,메모:o.note??"-"}))} />
+      </>)}
+    </section>
   );
 }
 
