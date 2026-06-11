@@ -17,11 +17,11 @@ const CONTRACT_LABELS: Record<string,string> = { daily:"상시(매일)", weekly_
 
 const workplaceTypeLabels: Record<string,string> = { office:"사무실", special_school:"특수학교", external_education:"외부 교육장", remote:"재택", other_field:"기타 외근지" };
 const requestTypeLabels: Record<string,string> = { annual:"연차", half_am:"오전 반차", half_pm:"오후 반차", hourly:"시간차", sick:"병가", official:"공가", remote:"재택", field:"외근", special:"특별휴가", substitute:"대체휴가", compensatory:"보상휴가", time_fix:"근무시간 수정", comp_leave_use:"대체휴가 시간 사용" };
-const REQUEST_TYPES_UI = ["annual","half_am","half_pm","hourly","sick","official","remote","field","special","substitute","compensatory"];
+const REQUEST_TYPES_UI = ["annual","half_am","half_pm","hourly","sick","official","special","substitute","compensatory"];
 const SINGLE_DAY_TYPES = ["half_am","half_pm","hourly","comp_leave_use"];
 
 function internalEmail(no: string) { return `${no.trim().toLowerCase()}@lupl.local`; }
-function won(n: number) { return n.toLocaleString("ko-KR") + "원"; }
+function won(n: number) { return Math.round(n).toLocaleString("ko-KR") + "원"; }
 
 /* 휴대폰 자동 하이픈 */
 function formatPhone(v: string) {
@@ -86,6 +86,99 @@ async function fetchCurrentEmployee() {
   if (!session?.user) return { session: null, employee: null };
   const { data } = await supabase.from("employees").select("*").eq("user_id", session.user.id).maybeSingle();
   return { session, employee: data };
+}
+
+
+// ── 토글 섹션 ─────────────────────────────────────────────────
+function CollapsibleSection({ title, icon, children }: { title:string; icon:string; children:React.ReactNode }) {
+  const [open,setOpen]=useState(false);
+  return (
+    <div style={{marginTop:16}}>
+      <button className="collapsible-btn" onClick={()=>setOpen(o=>!o)}>
+        <i className={`ti ${icon}`} aria-hidden="true"></i>
+        {title}
+        <i className={`ti ${open?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
+      </button>
+      {open&&<div style={{marginTop:12}}>{children}</div>}
+    </div>
+  );
+}
+
+// ── 오늘 근무형태 선택 (출퇴근 탭) ──────────────────────────────
+function WorkTypeToggle({ employee, todayLog, onChanged }: { employee:any; todayLog:any|null; onChanged:()=>void }) {
+  const [open,setOpen]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [msg,setMsg]=useState("");
+  async function setWorkType(type:string) {
+    if(!todayLog?.id) return setMsg("오늘 출근 기록이 없습니다. 출근 후 선택해주세요.");
+    setBusy(true);
+    const {error}=await supabase.from("attendance_logs").update({status:type}).eq("id",todayLog.id);
+    if(error) setMsg(error.message); else { setMsg(`근무형태가 '${type}'(으)로 설정되었습니다.`); onChanged(); setOpen(false); }
+    setBusy(false);
+  }
+  const current=todayLog?.status??"기록 없음";
+  const isSpecial=["외근","재택"].includes(current);
+  return (
+    <div style={{marginTop:8}}>
+      <button className="collapsible-btn" onClick={()=>setOpen(o=>!o)} style={{background:isSpecial?"#eef3fe":undefined}}>
+        <i className="ti ti-map-pin-check" aria-hidden="true"></i>
+        오늘 근무형태{isSpecial?<span style={{marginLeft:6,color:"var(--blue)",fontWeight:700}}>· {current}</span>:null}
+        <i className={`ti ${open?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
+      </button>
+      {open&&(
+        <div className="work-type-grid">
+          {["외근","재택","정상출근"].map(t=>(
+            <button key={t} className={`work-type-btn ${current===t?"active":""}`} disabled={busy} onClick={()=>setWorkType(t)}>{t}</button>
+          ))}
+        </div>
+      )}
+      {msg&&<p className="subtle" style={{marginTop:6,textAlign:"center"}}>{msg}</p>}
+    </div>
+  );
+}
+
+// ── 추가근무 승인 내역 직원별 + 삭제 ────────────────────────────
+function ApprovedCompCard({ compRequests, empMap, onChanged }: { compRequests:any[]; empMap:Record<string,any>; onChanged:()=>void }) {
+  const [filterEmpId,setFilterEmpId]=useState("");
+  const [msg,setMsg]=useState("");
+  const approved=compRequests.filter(r=>r.status==="approved");
+  const shown=filterEmpId?approved.filter(r=>r.employee_id===filterEmpId):approved;
+  async function deleteComp(id:string) {
+    if(!window.confirm("이 추가근무 적립을 삭제할까요? 해당 직원의 대체휴가 잔여가 줄어듭니다.")) return;
+    const {error}=await supabase.from("comp_time_requests").delete().eq("id",id);
+    if(error) setMsg(error.message); else onChanged();
+  }
+  if(approved.length===0) return null;
+  const activeEmps=Array.from(new Set(approved.map(r=>r.employee_id))).map(id=>empMap[id]).filter(Boolean);
+  return (
+    <section className="card">
+      <h2 className="card-title"><i className="ti ti-clock-check" aria-hidden="true"></i>추가근무 적립 내역</h2>
+      <div className="form-row" style={{marginBottom:12}}>
+        <select className="select" value={filterEmpId} onChange={e=>setFilterEmpId(e.target.value)}>
+          <option value="">전체 직원</option>
+          {activeEmps.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
+      </div>
+      {msg&&<div className="alert error">{msg}</div>}
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>직원</th><th>날짜</th><th>시간</th><th>적립일수</th><th>사유</th><th></th></tr></thead>
+          <tbody>
+            {shown.map(r=>(
+              <tr key={r.id}>
+                <td><b>{empMap[r.employee_id]?.name??"-"}</b></td>
+                <td>{r.work_date}</td>
+                <td>{r.hours}시간</td>
+                <td>{r.converted_days}일</td>
+                <td className="subtle">{r.reason??"-"}</td>
+                <td><button className="button danger" onClick={()=>deleteComp(r.id)}>삭제</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
 }
 
 function PasswordModal({ onClose }: { onClose: () => void }) {
@@ -383,6 +476,7 @@ function HomePage({ employee }: { employee: any }) {
         </div>
         {flexNote&&<p className="subtle" style={{marginTop:8,textAlign:"center",color:"#0b9b6a"}}>{flexNote}</p>}
         <p className="subtle" style={{marginTop:6,textAlign:"center"}}>휴게 12:00–13:00 자동 · 10시까지 자유 시차출근</p>
+        <WorkTypeToggle employee={employee} todayLog={todayLog} onChanged={load} />
         {message&&<div className="alert" style={{marginTop:14}}>{message}</div>}
 
         {weekendAsk&&(
@@ -841,6 +935,8 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
 
       <WeekendCompCard employees={employees} empMap={empMap} allLogs={allLogs} compRequests={compRequests} currentEmployee={currentEmployee} onChanged={load} />
 
+      <ApprovedCompCard compRequests={compRequests} empMap={empMap} onChanged={load} />
+
       <section className="card">
         <h2 className="card-title"><i className="ti ti-chart-pie" aria-hidden="true"></i>직원 연차 현황</h2>
         <div className="table-wrap">
@@ -856,9 +952,9 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
         </div>
       </section>
 
-      <PayrollCard employees={employees} absences={absences} />
-
       <ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setScheduleMsg} msg={scheduleMsg} />
+
+      <PayrollCard employees={employees} absences={absences} />
 
       <section className="card">
         <h2 className="card-title"><i className="ti ti-user-plus" aria-hidden="true"></i>직원 계정 생성</h2>
@@ -956,32 +1052,25 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
 function PayrollCard({ employees, absences }: { employees:any[]; absences:any[] }) {
   const [empId,setEmpId]=useState("");
   const [salary,setSalary]=useState("");
-  const [start,setStart]=useState(""); const [end,setEnd]=useState("");
   const emp=empId?employees.find(e=>e.id===empId):null;
-
   useEffect(()=>{ if(emp){ setSalary(String(emp.monthly_salary||"")); } },[empId]);
-
   async function saveSalary() {
     if(!empId) return;
     await supabase.from("employees").update({monthly_salary:Number(salary)||0}).eq("id",empId);
   }
-
   const monthly=Number(salary)||0;
-  // 미출근일수: 입력 기간 + 등록된 무급 미출근
-  let absentDays=0;
-  if(start&&end){ const s=new Date(start), e=new Date(end); absentDays+=Math.max(0,Math.round((e.getTime()-s.getTime())/86400000)+1); }
+  // 미출근일수: employee_absences 등록된 무급 기간만 (ScheduleCard에서 등록)
   const empAbs=absences.filter(a=>a.employee_id===empId&&a.unpaid);
+  let absentDays=0;
   empAbs.forEach(a=>{const s=new Date(a.start_date),e=new Date(a.end_date);absentDays+=Math.max(0,Math.round((e.getTime()-s.getTime())/86400000)+1);});
-
   const deduction=calcAbsenceDeduction(monthly,absentDays);
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
-
   return (
     <section className="card">
-      <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산 (결근 공제 + 4대보험)</h2>
-      <p className="subtle" style={{marginBottom:12}}>월급을 입력하고 미출근 기간을 설정하면, 월급 ÷ 30 방식으로 공제하고 4대보험(근로자/회사 부담)을 계산합니다. 참고용 추정치입니다.</p>
+      <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산</h2>
+      <p className="subtle" style={{marginBottom:12}}>월 ÷ 30 결근공제 + 4대보험 정기분 추정치입니다. 연간 건강보험 정산분·장기요양 정산분·두루누리 지원분은 포함되지 않으므로 실제 명세서와 차이가 있을 수 있습니다.</p>
       <div className="grid two">
         <div className="form-row"><label className="label">직원</label>
           <select className="select" value={empId} onChange={e=>setEmpId(e.target.value)}>
@@ -991,26 +1080,22 @@ function PayrollCard({ employees, absences }: { employees:any[]; absences:any[] 
         </div>
         <div className="form-row"><label className="label">월급 (원)</label><input className="input" type="number" value={salary} onChange={e=>setSalary(e.target.value)} onBlur={saveSalary} placeholder="예: 2500000" /></div>
       </div>
-      <div className="grid two">
-        <div className="form-row"><label className="label">미출근 시작일</label><input className="input" type="date" value={start} onChange={e=>setStart(e.target.value)} /></div>
-        <div className="form-row"><label className="label">미출근 종료일</label><input className="input" type="date" value={end} onChange={e=>setEnd(e.target.value)} /></div>
-      </div>
       {empId&&monthly>0&&(
         <div className="table-wrap" style={{marginTop:8}}>
           <table>
             <thead><tr><th>항목</th><th>근로자 부담</th><th>회사 부담</th></tr></thead>
             <tbody>
               <tr><td>기본 월급</td><td colSpan={2}>{won(monthly)}</td></tr>
-              <tr><td>결근 공제 ({absentDays}일, 월급÷30)</td><td colSpan={2} style={{color:"var(--red)"}}>- {won(deduction)}</td></tr>
+              {absentDays>0&&<tr><td>미출근 공제 ({absentDays}일 × 월급÷30)</td><td colSpan={2} style={{color:"var(--red)"}}>− {won(deduction)}</td></tr>}
               <tr><td><b>공제 후 급여</b></td><td colSpan={2}><b>{won(baseAfterDeduction)}</b></td></tr>
               {ins.breakdown.map(b=>(<tr key={b.name}><td>{b.name}</td><td>{won(b.e)}</td><td>{won(b.c)}</td></tr>))}
-              <tr><td><b>4대보험 합계</b></td><td><b>{won(ins.employee)}</b></td><td><b>{won(ins.company)}</b></td></tr>
-              <tr><td><b>실수령액 (세전, 소득세 별도)</b></td><td colSpan={2}><b style={{color:"var(--blue)"}}>{won(netPay)}</b></td></tr>
+              <tr style={{background:"#f7f9fc"}}><td><b>4대보험 합계</b></td><td><b>{won(ins.employee)}</b></td><td><b>{won(ins.company)}</b></td></tr>
+              <tr style={{background:"#eef3fe"}}><td><b>예상 실수령액</b><br/><span style={{fontSize:11,color:"var(--muted)"}}>세전·소득세 미포함</span></td><td colSpan={2}><b style={{color:"var(--blue)",fontSize:17}}>{won(netPay)}</b></td></tr>
             </tbody>
           </table>
         </div>
       )}
-      <p className="subtle" style={{marginTop:10}}>※ 소득세·지방소득세는 부양가족·간이세액표에 따라 달라져 제외했습니다. 4대보험 요율은 2024~2025년 기준 추정이며 정확한 금액은 4대보험료 모의계산 또는 세무사 확인을 권장합니다.</p>
+      {empAbs.length>0&&<p className="subtle" style={{marginTop:8}}>미출근 반영: {empAbs.map(a=>`${a.start_date}~${a.end_date}`).join(", ")}</p>}
     </section>
   );
 }
@@ -1085,7 +1170,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
         <button className="button" onClick={saveSchedule}><i className="ti ti-device-floppy" aria-hidden="true"></i>저장</button>
       </>)}
 
-      <h3>특정 기간 미출근 설정</h3>
+      <CollapsibleSection title="특정 기간 미출근 설정" icon="ti-calendar-off">
       <p className="subtle" style={{marginBottom:10}}>특정 월·일부터 며칠간 출근하지 않는 경우 등록합니다. 결근 판단에서 제외되고, 무급이면 급여 계산에 반영됩니다.</p>
       <div className="grid four">
         <div className="form-row"><label className="label">직원</label><select className="select" value={absEmpId} onChange={e=>setAbsEmpId(e.target.value)}><option value="">선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
@@ -1098,8 +1183,9 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
       {absences.length>0&&(<div style={{marginTop:12}}>
         {absences.map(a=>(<div className="list-row" key={a.id}><div><b>{empName(a.employee_id)}</b><div className="subtle">{a.start_date}~{a.end_date} · {a.unpaid?"무급":"유급"} · {a.reason??"-"}</div></div><button className="button danger" onClick={()=>deleteAbsence(a.id)}>삭제</button></div>))}
       </div>)}
+      </CollapsibleSection>
 
-      <h3>주간 스케줄 변경 (이번 주만)</h3>
+      <CollapsibleSection title="주간 스케줄 변경 (이번 주만)" icon="ti-refresh">
       <p className="subtle" style={{marginBottom:10}}>특정 주에만 출근 요일·시간이 다를 때 사용합니다. 해당 주에만 기본 스케줄을 덮어씁니다.</p>
       <div className="grid two">
         <div className="form-row"><label className="label">직원</label><select className="select" value={ovEmpId} onChange={e=>{setOvEmpId(e.target.value);const emp=empMap[e.target.value];if(emp){setOvDays(emp.work_days??["mon","tue","wed","thu","fri"]);setOvStart(emp.work_start??"09:00");setOvEnd(emp.work_end??"18:00");}}}><option value="">직원 선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
@@ -1116,6 +1202,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
         <h3>최근 변경 내역</h3>
         <DataTable rows={overrides.slice(0,10).map(o=>({직원:empName(o.employee_id),주:o.week_start,요일:(o.work_days??[]).map((d:string)=>DAY_LABELS[d]).join(""),시간:`${o.work_start}~${o.work_end}`,메모:o.note??"-"}))} />
       </>)}
+      </CollapsibleSection>
     </section>
   );
 }
