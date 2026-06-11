@@ -179,3 +179,19 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .type-desc { background:#f6f8fb; border:1px solid var(--line); border-radius:12px; padding:11px 13px; margin-bottom:14px; font-size:13px; line-height:1.6; }
 .type-desc b { display:block; color:var(--ink); margin-bottom:2px; }
 .type-desc span { color:var(--muted); }
+
+/* 토글 섹션 버튼 */
+.collapsible-btn {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line); background: #f6f8fb; border-radius: 14px;
+  padding: 12px 14px; font-size: 14px; font-weight: 600; color: var(--ink);
+  cursor: pointer; transition: all .15s;
+}
+.collapsible-btn:hover { background: #eceff4; }
+.collapsible-btn i { font-size: 16px; color: var(--muted); }
+
+/* 근무형태 선택 그리드 */
+.work-type-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-top: 8px; }
+.work-type-btn { border: 1px solid var(--line); background: #f6f8fb; border-radius: 12px; padding: 10px; font-size: 14px; font-weight: 600; color: var(--muted); transition: all .15s; }
+.work-type-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+.work-type-btn:hover:not(.active) { background: #eceff4; }
