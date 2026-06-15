@@ -32,26 +32,41 @@ function formatPhone(v: string) {
   return `${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`;
 }
 
-/* KST 기준 날짜 (UTC 버그 수정) */
-function localDateStr(d = new Date()) {
-  const kst = new Date(d.getTime() + 9 * 3600000);
+/* KST 기준 날짜/시간 (Supabase UTC 저장값 표시 보정) */
+function kstDate(d: Date | string = new Date()) {
+  const base = typeof d === "string" ? new Date(d) : d;
+  return new Date(base.getTime() + 9 * 3600000);
+}
+function localDateStr(d: Date | string = new Date()) {
+  const kst = kstDate(d);
   return kst.toISOString().slice(0, 10);
 }
-function isToday(iso?: string | null) { return !!iso && iso.startsWith(localDateStr()); }
+function isToday(iso?: string | null) { return !!iso && localDateStr(iso) === todayIso(); }
 function todayIso() { return localDateStr(); }
+function monthDay(iso?: string | null) {
+  if (!iso) return "-";
+  return localDateStr(iso).slice(5, 10);
+}
 function isWeekendDate(iso?: string | null) {
   if (!iso) return false;
-  const day = new Date(`${iso.slice(0,10)}T00:00:00`).getDay();
+  const day = kstDate(iso).getUTCDay();
   return day === 0 || day === 6;
 }
 
 function formatDateTime(v?: string | null) {
   if (!v) return "-";
-  return new Intl.DateTimeFormat("ko-KR", { dateStyle: "short", timeStyle: "short" }).format(new Date(v));
+  return new Intl.DateTimeFormat("ko-KR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date(v));
 }
 function timeOnly(v?: string | null) {
   if (!v) return "-";
-  return new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(v));
+  return new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Seoul" }).format(new Date(v));
+}
+function byCheckInDesc(a:any,b:any) {
+  return new Date(b?.check_in_time ?? b?.created_at ?? 0).getTime() - new Date(a?.check_in_time ?? a?.created_at ?? 0).getTime();
+}
+function uniqueLogs(list:any[]) {
+  const seen = new Set<string>();
+  return list.filter((l:any)=>{ if(!l?.id || seen.has(l.id)) return false; seen.add(l.id); return true; });
 }
 function badgeClass(s?: string | null) {
   if (!s) return "";
@@ -146,7 +161,7 @@ function WorkTypeToggle({ employee, todayLog, onChanged }: { employee:any; today
   async function setWorkType(type:string) {
     if(!todayLog?.id) return setMsg("오늘 출근 기록이 없습니다. 출근 후 선택해주세요.");
     setBusy(true);
-    const {error}=await supabase.from("attendance_logs").update({status:type}).eq("id",todayLog.id);
+    const {error}=await supabase.rpc("update_my_attendance_status",{p_log_id:todayLog.id,p_status:type});
     if(error) setMsg(error.message); else { setMsg(`근무형태가 '${type}'(으)로 설정되었습니다.`); onChanged(); setOpen(false); }
     setBusy(false);
   }
@@ -247,6 +262,24 @@ function PasswordModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function ConfirmModal({ title, children, confirmText, cancelText="취소", onConfirm, onCancel, busy=false }: { title:string; children:React.ReactNode; confirmText:string; cancelText?:string; onConfirm:()=>void|Promise<void>; onCancel:()=>void; busy?:boolean }) {
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal-box" onClick={e=>e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="card-title" style={{margin:0}}>{title}</h2>
+          <button className="modal-close" onClick={onCancel}>✕</button>
+        </div>
+        <div className="body-text" style={{marginBottom:16}}>{children}</div>
+        <div className="modal-actions">
+          <button className="button ghost" disabled={busy} onClick={onCancel}>{cancelText}</button>
+          <button className="button" disabled={busy} onClick={onConfirm}>{confirmText}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [employee, setEmployee] = useState<any | null>(null);
@@ -333,72 +366,21 @@ export default function App() {
 }
 
 function LoginPage() {
-  const [employeeNo, setEmployeeNo] = useState("");
-  const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
-
-  async function login() {
-    setMessage("");
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email: internalEmail(employeeNo),
-      password,
-    });
-
-    if (error) setMessage("사번 또는 비밀번호를 확인해주세요.");
-  }
-
+  const [employeeNo, setEmployeeNo] = useState(""); const [password, setPassword] = useState(""); const [message, setMessage] = useState("");
+  async function login() { setMessage(""); const { error } = await supabase.auth.signInWithPassword({ email: internalEmail(employeeNo), password }); if (error) setMessage("사번 또는 비밀번호를 확인해주세요."); }
   return (
-    <div className="container">
-      <section className="card auth-card">
-        <div className="logo logo-lg">
-          <span>근태</span>
-        </div>
-
-        <h1 className="card-title" style={{ marginTop: 16, display: "block" }}>
-          러플 근태관리 로그인
-        </h1>
-
-        <p className="subtle">
-          관리자가 생성한 사번으로 로그인합니다.
-          초기 비밀번호는 lupl + 휴대폰 뒷번호 4자리입니다.
-        </p>
-
-        <div className="login-example">
-          예시 사번 아이디 <b>22061201</b>
-        </div>
-
-        {message && <div className="alert error">{message}</div>}
-
-        <div className="form-row">
-          <label className="label">사번</label>
-          <input
-            className="input"
-            value={employeeNo}
-            onChange={(e) => setEmployeeNo(e.target.value)}
-            placeholder="예: 22061201"
-            onKeyDown={(e) => e.key === "Enter" && login()}
-          />
-        </div>
-
-        <div className="form-row">
-          <label className="label">비밀번호</label>
-          <input
-            className="input"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && login()}
-          />
-        </div>
-
-        <button className="button full" onClick={login}>
-          로그인
-        </button>
-      </section>
-    </div>
+    <div className="container"><section className="card auth-card">
+      <div className="logo logo-lg"><span>근태</span></div>
+      <h1 className="card-title" style={{ marginTop: 16, display: "block" }}>러플 근태관리 로그인</h1>
+      <p className="subtle">관리자가 생성한 사번으로 로그인합니다. 초기 비밀번호는 lupl + 휴대폰 뒷번호 4자리입니다.</p>
+      {message && <div className="alert error">{message}</div>}
+      <div className="form-row"><label className="label">사번</label><input className="input" value={employeeNo} onChange={e=>setEmployeeNo(e.target.value)} placeholder="예: 22061201" onKeyDown={e=>e.key==="Enter"&&login()} /></div>
+      <div className="form-row"><label className="label">비밀번호</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&login()} /></div>
+      <button className="button full" onClick={login}>로그인</button>
+    </section></div>
   );
 }
+
 function InactivePage({ signOut }: { signOut: () => void }) {
   return <div className="container"><section className="card auth-card"><h1 className="card-title">비활성 계정입니다</h1><p className="subtle">관리자에게 계정 활성화를 요청해주세요.</p><button className="button full" onClick={signOut}>로그아웃</button></section></div>;
 }
@@ -447,6 +429,7 @@ function HomePage({ employee }: { employee: any }) {
   const [selectedWorkplaceId,setSelectedWorkplaceId] = useState("");
   const [todayLog,setTodayLog] = useState<any|null>(null);
   const [recentLogs,setRecentLogs] = useState<any[]>([]);
+  const [openLogRows,setOpenLogRows] = useState<any[]>([]);
   const [message,setMessage] = useState("");
   const [busy,setBusy] = useState(false);
   const [detectedPlace,setDetectedPlace] = useState<any|null>(null);
@@ -455,6 +438,8 @@ function HomePage({ employee }: { employee: any }) {
   const [thisFp,setThisFp] = useState<string|null>(null);
   const [weekendAsk,setWeekendAsk] = useState<any|null>(null);
   const [expandedLogId,setExpandedLogId] = useState<string|null>(null);
+  const [recheckAsk,setRecheckAsk] = useState<any|null>(null);
+  const [recheckMode,setRecheckMode] = useState(false);
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t); },[]);
 
@@ -464,12 +449,16 @@ function HomePage({ employee }: { employee: any }) {
     try { const {fingerprintHash}=await getDeviceFingerprint(); setThisFp(fingerprintHash); } catch {/**/}
   }
   async function load() {
-    const {data:places}=await supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name");
+    const [{data:places},{data:logs},{data:openLogs}]=await Promise.all([
+      supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name"),
+      supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("check_in_time",{ascending:false}).limit(10),
+      supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).is("check_out_time",null).order("check_in_time",{ascending:false}),
+    ]);
     setWorkplaces(places??[]);
-    const {data:logs}=await supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("created_at",{ascending:false}).limit(6);
-    const all=logs??[];
-    setTodayLog(all.find((l:any)=>isToday(l.check_in_time))??null);
-    setRecentLogs(all.filter((l:any)=>!isToday(l.check_in_time)).slice(0,5));
+    const merged=uniqueLogs([...(openLogs??[]), ...(logs??[])]).sort(byCheckInDesc);
+    setOpenLogRows(openLogs??[]);
+    setTodayLog(merged.find((l:any)=>isToday(l.check_in_time))??null);
+    setRecentLogs(merged.filter((l:any)=>!isToday(l.check_in_time)).slice(0,5));
     await loadDevices();
   }
   useEffect(()=>{ load(); },[]);
@@ -492,13 +481,32 @@ function HomePage({ employee }: { employee: any }) {
     if(ip) return approved.find(w=>w.ip_hint&&w.ip_hint===ip)||null;
     return null;
   }
-  async function checkIn() {
+  async function startCheckIn(isRecheck=false) {
+    const blockingOpen=openLogRows.some((l:any)=>l.id!==todayLog?.id);
+    if(blockingOpen){
+      setMessage("이전 출근 기록이 아직 퇴근 처리되지 않았습니다. 아래 미퇴근 기록을 먼저 마감해주세요.");
+      return;
+    }
+    setRecheckMode(isRecheck);
     setBusy(true); setMessage("현재 위치를 확인하는 중입니다."); setDetectedPlace(null);
     try {
       const p=await getCurrentPositionFast(); const ip=await getPublicIp(); const d=detectPlace(p.lat,p.lng,ip);
-      if(d){setDetectedPlace({...d,currentLat:p.lat,currentLng:p.lng,ip});setSelectedWorkplaceId(d.id);setMessage(`${d.name} 근처로 확인되었습니다. 이 장소가 맞으면 출근 확정을 눌러주세요.`);}
-      else{setDetectedPlace({currentLat:p.lat,currentLng:p.lng,ip});setSelectedWorkplaceId("");setMessage("등록된 근무지 반경 안이 아닙니다. 현재 장소명을 입력하면 관리자 승인 대기 근무지로 저장됩니다.");}
-    } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
+      if(d){setDetectedPlace({...d,currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip});setSelectedWorkplaceId(d.id);setMessage(`${d.name} 근처로 확인되었습니다. 이 장소가 맞으면 ${isRecheck?"재출근":"출근"} 확정을 눌러주세요.`);}
+      else{setDetectedPlace({currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip});setSelectedWorkplaceId("");setMessage("등록된 근무지 반경 안이 아닙니다. 현재 장소명을 입력하면 관리자 승인 대기 근무지로 저장됩니다.");}
+    } catch(e:any){setMessage(e.message);setRecheckMode(false);} finally{setBusy(false);}
+  }
+  function handleCheckInClick() {
+    if(todayLog?.check_in_time) { setRecheckAsk(todayLog); return; }
+    startCheckIn(false);
+  }
+  async function confirmRecheck() {
+    setRecheckAsk(null);
+    await startCheckIn(true);
+  }
+  function cancelDetectedPlace() {
+    setDetectedPlace(null);
+    setRecheckMode(false);
+    setUnknownPlaceName("");
   }
   async function confirmCheckIn() {
     setBusy(true); setMessage("");
@@ -510,9 +518,13 @@ function HomePage({ employee }: { employee: any }) {
         if(placeError) throw placeError; workplaceId=newPlace.id;
       }
       if(!workplaceId) throw new Error("근무지 선택 또는 현재 장소명 입력이 필요합니다.");
-      const {data,error}=await supabase.rpc("check_in",{p_workplace_id:workplaceId,p_lat:detectedPlace?.currentLat??null,p_lng:detectedPlace?.currentLng??null,p_accuracy_m:null,p_ip_address:detectedPlace?.ip??null,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo});
+      const rpcName=recheckMode&&todayLog?.id?"recheck_in":"check_in";
+      const rpcArgs:any=recheckMode&&todayLog?.id
+        ? {p_log_id:todayLog.id,p_workplace_id:workplaceId,p_lat:detectedPlace?.currentLat??null,p_lng:detectedPlace?.currentLng??null,p_accuracy_m:detectedPlace?.accuracy??null,p_ip_address:detectedPlace?.ip??null,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo}
+        : {p_workplace_id:workplaceId,p_lat:detectedPlace?.currentLat??null,p_lng:detectedPlace?.currentLng??null,p_accuracy_m:detectedPlace?.accuracy??null,p_ip_address:detectedPlace?.ip??null,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo};
+      const {data,error}=await supabase.rpc(rpcName,rpcArgs);
       if(error) throw error;
-      setMessage(`출근 처리 결과: ${data?.attendance_status??"저장 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); await load();
+      setMessage(`${recheckMode?"재출근":"출근"} 처리 결과: ${data?.attendance_status??"저장 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load();
     } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
   }
   async function checkOut() {
@@ -543,16 +555,18 @@ function HomePage({ employee }: { employee: any }) {
     if(!log?.id) return;
     setBusy(true); setMessage("미퇴근 기록을 퇴근 처리하는 중입니다.");
     try {
-      const nowIso=new Date().toISOString();
-      const {error}=await supabase.from("attendance_logs").update({check_out_time:nowIso,status:log.status||"관리자 확인 필요"}).eq("id",log.id).eq("employee_id",employee.id);
+      let fp:string|null=null; let info:any={};
+      try { const d=await getDeviceFingerprint(); fp=d.fingerprintHash; info=d.deviceInfo; } catch {/**/}
+      const {error}=await supabase.rpc("close_attendance_log",{p_log_id:log.id,p_status:null,p_device_fingerprint_hash:fp,p_device_info:info});
       if(error) throw error;
       setMessage(`${formatDateTime(log.check_in_time)} 출근 기록을 현재 시각으로 퇴근 처리했습니다.`);
       await load();
     } catch(e:any){ setMessage(e.message); } finally { setBusy(false); }
   }
 
-  const allShownLogs=[todayLog,...recentLogs].filter(Boolean);
+  const allShownLogs=uniqueLogs([todayLog,...openLogRows,...recentLogs].filter(Boolean)).sort(byCheckInDesc);
   const openLogs=allShownLogs.filter((l:any)=>l?.check_in_time&&!l?.check_out_time);
+  const hasBlockingOpenLog=openLogs.some((l:any)=>l.id!==todayLog?.id);
   const checkedIn=!!todayLog?.check_in_time; const checkedOut=!!todayLog?.check_out_time;
   const worked=workedMinutes(todayLog?.check_in_time,todayLog?.check_out_time);
   const thisDevice=thisFp?myDevices.find(d=>d.fingerprint_hash===thisFp):null;
@@ -575,7 +589,7 @@ function HomePage({ employee }: { employee: any }) {
           {worked!=null&&<div className="today-time-item"><span className="today-time-label">실근무</span><span className="today-time-val" style={{fontSize:17}}>{fmtMin(worked)}</span></div>}
         </div>
         <div className="punch-grid">
-          <button className="button punch" disabled={busy||openLogs.length>0} onClick={checkIn}>출근하기</button>
+          <button className="button punch" disabled={busy||hasBlockingOpenLog} onClick={handleCheckInClick}>출근하기</button>
           <button className="button secondary punch" disabled={busy||openLogs.length===0} onClick={()=>checkedIn?checkOut():closeSpecificLog(openLogs[0])}>퇴근하기</button>
         </div>
         {flexNote&&<p className="subtle" style={{marginTop:8,textAlign:"center",color:"#0b9b6a"}}>{flexNote}</p>}
@@ -586,7 +600,7 @@ function HomePage({ employee }: { employee: any }) {
         {openLogs.length>0&&(
           <div className="card" style={{marginTop:14,boxShadow:"none",background:"#fff7ed",borderColor:"#fed7aa"}}>
             <h3 style={{marginTop:0}}>아직 퇴근 처리되지 않은 기록</h3>
-            <p className="body-text" style={{color:"#8b5e00"}}>아래 기록이 남아 있어 새 출근이 막혀 있습니다. 퇴근 처리가 필요하면 해당 기록을 마감해주세요.</p>
+            <p className="body-text" style={{color:"#8b5e00"}}>{hasBlockingOpenLog?"아래 기록이 남아 있어 새 출근이 막혀 있습니다. 퇴근 처리가 필요하면 해당 기록을 마감해주세요.":"오늘 출근 기록이 열려 있습니다. 퇴근 처리하거나, 필요한 경우 출근하기를 눌러 재출근할 수 있습니다."}</p>
             {openLogs.map((l:any)=>(
               <div className="list-row" key={l.id} style={{marginTop:10}}>
                 <div>
@@ -619,7 +633,7 @@ function HomePage({ employee }: { employee: any }) {
             {detectedPlace.id
               ?(<><h3 style={{marginTop:0}}>{detectedPlace.name} 맞나요?</h3><p className="subtle">GPS/IP 기준으로 가장 가까운 근무지를 찾았습니다.</p></>)
               :(<><h3 style={{marginTop:0}}>현재 장소를 입력해주세요</h3><p className="subtle">입력한 장소는 관리자 승인 대기 근무지로 저장됩니다.</p><input className="input" style={{marginTop:8}} value={unknownPlaceName} onChange={e=>setUnknownPlaceName(e.target.value)} placeholder="예: 대구○○학교, ○○교육장" /></>)}
-            <div className="actions" style={{marginTop:10}}><button className="button" disabled={busy} onClick={confirmCheckIn}>출근 확정</button><button className="button ghost" onClick={()=>setDetectedPlace(null)}>취소</button></div>
+            <div className="actions" style={{marginTop:10}}><button className="button" disabled={busy} onClick={confirmCheckIn}>{recheckMode?"재출근 확정":"출근 확정"}</button><button className="button ghost" onClick={cancelDetectedPlace}>취소</button></div>
           </div>
         )}
 
@@ -628,7 +642,7 @@ function HomePage({ employee }: { employee: any }) {
             <p className="section-label">최근 기록</p>
             {recentLogs.map((l:any)=>(
               <div className="recent-row" key={l.id} onClick={()=>setExpandedLogId(expandedLogId===l.id?null:l.id)} style={{cursor:"pointer"}}>
-                <span className="recent-date">{l.check_in_time?.slice(5,10)}</span>
+                <span className="recent-date">{monthDay(l.check_in_time)}</span>
                 <span className="recent-times">{timeOnly(l.check_in_time)} → {timeOnly(l.check_out_time)}</span>
                 <span className="recent-worked">{fmtMin(workedMinutes(l.check_in_time,l.check_out_time))}</span>
                 <span className={`badge ${badgeClass(l.status)}`}>{l.status}</span>
@@ -638,6 +652,11 @@ function HomePage({ employee }: { employee: any }) {
             ))}
           </div>
         )}
+
+        {recheckAsk&&(<ConfirmModal title="이미 출근 처리된 기록이 있습니다" confirmText="재출근" cancelText="취소" busy={busy} onCancel={()=>setRecheckAsk(null)} onConfirm={confirmRecheck}>
+          <p style={{margin:"0 0 8px"}}>오늘 <b>{timeOnly(recheckAsk.check_in_time)}</b>에 이미 출근 처리되었습니다.</p>
+          <p style={{margin:0}}>재출근하면 현재 시각으로 출근 시간이 갱신되며, 지각 등 근태 상태가 다시 판정될 수 있습니다.</p>
+        </ConfirmModal>)}
       </section>
 
       <section className="card">
@@ -760,78 +779,28 @@ function LeavePage({ employee }: { employee: any }) {
   return (
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
-     <section className="card leave-summary-card">
-  <div className="leave-summary-header">
-    <h2 className="card-title">
-      <i className="ti ti-calendar-stats" aria-hidden="true"></i>
-      연차 현황
-    </h2>
-
-    <span className="leave-summary-badge">
-      잔여 {remaining.toFixed(1)}일
-    </span>
-  </div>
-
-  <div className="leave-hero">
-    <div
-      className="leave-ring"
-      style={{
-        background: `conic-gradient(var(--blue) ${remainPct * 3.6}deg, #e7ecf4 0deg)`,
-      }}
-    >
-      <div className="leave-ring-inner">
-        <b>{remaining.toFixed(1)}</b>
-        <span>잔여일</span>
-      </div>
-    </div>
-
-    <div className="leave-info">
-      <div className="leave-chips">
-        <div className="leave-chip">
-          <span>총 부여</span>
-          <b>{totalGranted.toFixed(1)}일</b>
+      <section className="card leave-summary-card">
+        <div className="leave-summary-header">
+          <h2 className="card-title"><i className="ti ti-calendar-stats" aria-hidden="true"></i>연차 현황</h2>
+          <span className="leave-summary-badge">잔여 {remaining.toFixed(1)}일</span>
         </div>
-
-        <div className="leave-chip">
-          <span>기본 발생</span>
-          <b>{ent.baseGrantedDays}일</b>
+        <div className="leave-hero">
+          <div className="leave-ring" style={{background:`conic-gradient(var(--blue) ${remainPct*3.6}deg, #e7ecf4 0deg)`}}>
+            <div className="leave-ring-inner"><b>{remaining.toFixed(1)}</b><span>잔여일</span></div>
+          </div>
+          <div className="leave-info">
+            <div className="leave-chips">
+              <div className="leave-chip"><span>총 부여</span><b>{totalGranted.toFixed(1)}일</b></div>
+              <div className="leave-chip"><span>기본 발생</span><b>{ent.baseGrantedDays}일</b></div>
+              <div className="leave-chip"><span>조정</span><b>{adj>=0?"+":""}{adj.toFixed(1)}일</b></div>
+              <div className="leave-chip"><span>사용(승인)</span><b>{approvedUsed.toFixed(1)}일</b></div>
+              <div className="leave-chip"><span>잔여(예상)</span><b>{expectedRemaining.toFixed(1)}일</b></div>
+              <div className="leave-chip leave-chip-highlight"><span>대체휴가 적립</span><b>{compEarned.toFixed(1)}일 ({compRemainHours}시간)</b></div>
+            </div>
+            <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {ent.description}<br />산정기간 {ent.periodStart??"-"} ~ {ent.periodEnd??"-"} (근로기준법 제60조)</p>
+          </div>
         </div>
-
-        <div className="leave-chip">
-          <span>조정</span>
-          <b>
-            {adj >= 0 ? "+" : ""}
-            {adj.toFixed(1)}일
-          </b>
-        </div>
-
-        <div className="leave-chip">
-          <span>사용(승인)</span>
-          <b>{approvedUsed.toFixed(1)}일</b>
-        </div>
-
-        <div className="leave-chip">
-          <span>잔여(예상)</span>
-          <b>{expectedRemaining.toFixed(1)}일</b>
-        </div>
-
-        <div className="leave-chip leave-chip-highlight">
-          <span>대체휴가 적립</span>
-          <b>
-            {compEarned.toFixed(1)}일 ({compRemainHours}시간)
-          </b>
-        </div>
-      </div>
-
-      <p className="subtle leave-period-text">
-        근무 시작일 {employee.joined_at ?? "-"} · {ent.description}
-        <br />
-        산정기간 {ent.periodStart ?? "-"} ~ {ent.periodEnd ?? "-"} 
-        (근로기준법 제60조)
-      </p>
-    </div>
-  </div>
-</section>
+      </section>
 
       <div className="grid two">
         <section className="card">
@@ -1073,13 +1042,13 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
     if(!nw||nw===emp.employee_no) return;
-    const {data,error}=await supabase.rpc("admin_reset_employee_no",{p_employee_id:emp.id,p_new_no:nw.trim()});
-    if(error) setMessage(error.message); else { setMessage(`사번이 ${data.employee_no}(으)로 변경되었습니다. 새 로그인 아이디로 안내해주세요.`); await load(); }
+    const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:{action:"reset_employee_no",employee_id:emp.id,new_employee_no:nw.trim()}});
+    if(error) setMessage(error.message); else if(data?.error) setMessage(data.error); else { setMessage(`사번이 ${data.employee_no}(으)로 변경되었습니다. 새 로그인 아이디로 안내해주세요.`); await load(); }
   }
   async function resetPassword(emp:any){
     if(!window.confirm(`${emp.name}의 비밀번호를 초기화할까요? (lupl + 휴대폰 뒤4자리)`)) return;
-    const {data,error}=await supabase.rpc("admin_reset_password",{p_employee_id:emp.id});
-    if(error) setMessage(error.message); else setMessage(`${emp.name} 비밀번호가 초기화되었습니다. 초기 비밀번호: ${data.initial_password}`);
+    const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:{action:"reset_password",employee_id:emp.id}});
+    if(error) setMessage(error.message); else if(data?.error) setMessage(data.error); else setMessage(`${emp.name} 비밀번호가 초기화되었습니다. 초기 비밀번호: ${data.initial_password}`);
   }
   async function reviewWorkplace(id:string,status:string,type?:string){
     const patch:any={approval_status:status,is_active:status==="approved"};
@@ -1090,8 +1059,8 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   async function reviewRequest(id:string,status:string){const {error}=await supabase.rpc("review_attendance_request",{p_request_id:id,p_status:status,p_review_note:""});if(error)setMessage(error.message);else{await load();onChanged();}}
   async function reviewCompRequest(id:string,status:string){const {error}=await supabase.rpc("review_comp_time_request",{p_request_id:id,p_status:status,p_review_note:""});if(error)setMessage(error.message);else{setMessage(status==="approved"?"추가근무가 승인되어 대체휴가로 적립되었습니다.":"반려했습니다.");await load();onChanged();}}
   async function reviewDevice(id:string,status:string){const {error}=await supabase.from("registered_devices").update({status}).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
-  async function confirmAttendanceLog(id:string){const {error}=await supabase.from("attendance_logs").update({status:"확인 완료"}).eq("id",id);if(error)setMessage(error.message);else{setMessage("근태 기록을 확인 완료 처리했습니다.");await load();onChanged();}}
-  async function forceClockOut(id:string){if(!window.confirm("이 기록을 현재 시각으로 강제 퇴근 처리할까요?")) return; const {error}=await supabase.from("attendance_logs").update({check_out_time:new Date().toISOString(),status:"관리자 강제퇴근"}).eq("id",id);if(error)setMessage(error.message);else{setMessage("강제 퇴근 처리했습니다.");await load();onChanged();}}
+  async function confirmAttendanceLog(id:string){const {error}=await supabase.rpc("confirm_attendance_log",{p_log_id:id,p_status:"확인 완료"});if(error)setMessage(error.message);else{setMessage("근태 기록을 확인 완료 처리했습니다.");await load();onChanged();}}
+  async function forceClockOut(id:string){if(!window.confirm("이 기록을 현재 시각으로 강제 퇴근 처리할까요?")) return; const {error}=await supabase.rpc("close_attendance_log",{p_log_id:id,p_status:"관리자 강제퇴근",p_device_fingerprint_hash:null,p_device_info:{}});if(error)setMessage(error.message);else{setMessage("강제 퇴근 처리했습니다.");await load();onChanged();}}
 
   const filtered=employees.filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?e.employment_status!=="active":e.employment_status==="active");
   const pW=workplaces.filter(w=>w.approval_status==="pending");
@@ -1280,7 +1249,7 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
           <label className="list-row" key={l.id} style={{cursor:"pointer"}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <input type="checkbox" checked={!!sel[l.id]} onChange={e=>setSel({...sel,[l.id]:e.target.checked})} style={{width:18,height:18,accentColor:"#3a6df0"}} />
-              <div><b>{empMap[l.employee_id]?.name??"-"}</b><div className="subtle">{l.check_in_time?.slice(0,10)} · {hours}시간</div></div>
+              <div><b>{empMap[l.employee_id]?.name??"-"}</b><div className="subtle">{localDateStr(l.check_in_time)} · {hours}시간</div></div>
             </div>
             <span className="badge">{hours}시간 → {(hours/8).toFixed(1)}일</span>
           </label>
@@ -1480,22 +1449,77 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
 }
 
 function ReportsPage() {
-  const [logs,setLogs]=useState<any[]>([]); const [compRequests,setCompRequests]=useState<any[]>([]);
-  async function load(){const [l,c]=await Promise.all([supabase.from("attendance_logs").select("*, employees(name, employee_no), workplaces(name,type)").order("created_at",{ascending:false}).limit(500),supabase.from("comp_time_requests").select("*").order("created_at",{ascending:false}).limit(500)]);setLogs(l.data??[]);setCompRequests(c.data??[]);}
+  const [logs,setLogs]=useState<any[]>([]);
+  const [employees,setEmployees]=useState<any[]>([]);
+  const [compRequests,setCompRequests]=useState<any[]>([]);
+
+  async function load(){
+    const [l,e,c]=await Promise.all([
+      supabase.from("attendance_logs").select("*, employees(name, employee_no), workplaces(name,type)").order("check_in_time",{ascending:false}).limit(1000),
+      supabase.from("employees").select("id, name, employee_no, role, employment_status, is_active, joined_at, created_at").order("created_at",{ascending:false}).limit(1000),
+      supabase.from("comp_time_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(1000)
+    ]);
+    setLogs(l.data??[]);
+    setEmployees(e.data??[]);
+    setCompRequests(c.data??[]);
+  }
+
   useEffect(()=>{load();},[]);
-  function downloadAll(){exportRowsToExcel("lupl_attendance_report.xlsx","근태",logs.map(l=>({직원:l.employees?.name,사번:l.employees?.employee_no,근무지:l.workplaces?.name,유형:workplaceTypeLabels[l.workplaces?.type]??"-",출근:formatDateTime(l.check_in_time),퇴근:formatDateTime(l.check_out_time),실근무:fmtMin(workedMinutes(l.check_in_time,l.check_out_time)),상태:l.status,기기:l.device_status})));}
+
+  const allLogRows = logs.map(l=>({
+    직원:l.employees?.name??"-",
+    사번:l.employees?.employee_no??"-",
+    근무지:l.workplaces?.name??"-",
+    유형:workplaceTypeLabels[l.workplaces?.type]??"-",
+    출근:formatDateTime(l.check_in_time),
+    퇴근:formatDateTime(l.check_out_time),
+    실근무:fmtMin(workedMinutes(l.check_in_time,l.check_out_time)),
+    상태:l.status,
+    기기:l.device_status??"-"
+  }));
+
+  function downloadAll(){
+    exportRowsToExcel("lupl_attendance_report.xlsx","근태",allLogRows);
+  }
+
   const fieldLogs=logs.filter(l=>["special_school","external_education","other_field"].includes(l.workplaces?.type));
   const exceptions=logs.filter(l=>["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음","지각","결근"].includes(l.status)||!l.check_out_time);
+
   return (
     <div className="grid">
       <section className="grid four">
         <div className="metric"><div className="metric-value">{logs.length}</div><div className="metric-label">전체 근태</div></div>
-        <div className="metric"><div className="metric-value">{fieldLogs.length}</div><div className="metric-label">외근</div></div>
+        <div className="metric"><div className="metric-value">{employees.length}</div><div className="metric-label">전체 직원</div></div>
         <div className="metric"><div className="metric-value">{exceptions.length}</div><div className="metric-label">예외</div></div>
         <div className="metric"><div className="metric-value">{compRequests.filter(r=>r.status==="approved").reduce((s,r)=>s+Number(r.converted_days||0),0).toFixed(1)}</div><div className="metric-label">대체휴가 적립</div></div>
       </section>
-      <section className="card"><h2 className="card-title"><i className="ti ti-download" aria-hidden="true"></i>보고서 다운로드</h2><div className="actions"><button className="button" onClick={downloadAll}><i className="ti ti-file-spreadsheet" aria-hidden="true"></i>월별 전체 근태 Excel</button></div></section>
-      <section className="card"><h2 className="card-title"><i className="ti ti-alert-triangle" aria-hidden="true"></i>예외함</h2><DataTable rows={exceptions.map(l=>({직원:l.employees?.name,근무지:l.workplaces?.name,출근:formatDateTime(l.check_in_time),퇴근:formatDateTime(l.check_out_time),상태:l.status}))} /></section>
+
+      <section className="card">
+        <h2 className="card-title"><i className="ti ti-download" aria-hidden="true"></i>보고서 다운로드</h2>
+        <div className="actions"><button className="button" onClick={downloadAll}><i className="ti ti-file-spreadsheet" aria-hidden="true"></i>전체 근태 Excel</button></div>
+      </section>
+
+      <section className="card">
+        <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>직원 목록</h2>
+        <DataTable rows={employees.map(e=>({
+          이름:e.name,
+          사번:e.employee_no,
+          권한:e.role==="admin"?"관리자":"직원",
+          상태:e.is_active&&e.employment_status==="active"?"활성":"비활성",
+          입사일:e.joined_at??"-",
+          등록일:formatDateTime(e.created_at)
+        }))} />
+      </section>
+
+      <section className="card">
+        <h2 className="card-title"><i className="ti ti-list-check" aria-hidden="true"></i>전체 근태 기록</h2>
+        <DataTable rows={allLogRows} />
+      </section>
+
+      <section className="card">
+        <h2 className="card-title"><i className="ti ti-alert-triangle" aria-hidden="true"></i>예외함</h2>
+        <DataTable rows={exceptions.map(l=>({직원:l.employees?.name,근무지:l.workplaces?.name,출근:formatDateTime(l.check_in_time),퇴근:formatDateTime(l.check_out_time),상태:l.status}))} />
+      </section>
     </div>
   );
 }
@@ -1503,5 +1527,12 @@ function ReportsPage() {
 function DataTable({ rows }: { rows: Record<string,any>[] }) {
   if(!rows.length) return <p className="subtle">표시할 데이터가 없습니다.</p>;
   const cols=Object.keys(rows[0]);
-  return (<div className="table-wrap"><table><thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.map((row,i)=><tr key={i}>{cols.map(c=><td key={c}>{String(row[c]??"-")}</td>)}</tr>)}</tbody></table></div>);
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead>
+        <tbody>{rows.map((row,i)=><tr key={i}>{cols.map(c=><td key={c} data-label={c}>{String(row[c]??"-")}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
 }

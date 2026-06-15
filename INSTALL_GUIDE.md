@@ -19,6 +19,9 @@ SECURITY.md
 ## 2. Supabase SQL 실행
 Supabase → SQL Editor → New query → `supabase/schema.sql` 전체 붙여넣기 → Run.
 
+기존 Supabase 프로젝트에 덮어 배포하는 경우에는 `supabase/patch_20260615.sql`을 먼저 1회 실행하세요.
+재출근, 미퇴근 기록 마감, 모바일 화면 보정, 운영설정용 DB 컬럼/테이블이 포함되어 있습니다.
+
 ## 3. 최초 관리자 만들기
 Authentication → Users → Add user. 이메일은 `admin001@lupl.local` 추천.
 
