@@ -333,21 +333,72 @@ export default function App() {
 }
 
 function LoginPage() {
-  const [employeeNo, setEmployeeNo] = useState(""); const [password, setPassword] = useState(""); const [message, setMessage] = useState("");
-  async function login() { setMessage(""); const { error } = await supabase.auth.signInWithPassword({ email: internalEmail(employeeNo), password }); if (error) setMessage("사번 또는 비밀번호를 확인해주세요."); }
+  const [employeeNo, setEmployeeNo] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function login() {
+    setMessage("");
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: internalEmail(employeeNo),
+      password,
+    });
+
+    if (error) setMessage("사번 또는 비밀번호를 확인해주세요.");
+  }
+
   return (
-    <div className="container"><section className="card auth-card">
-      <div className="logo logo-lg"><span>근태</span></div>
-      <h1 className="card-title" style={{ marginTop: 16, display: "block" }}>러플 근태관리 로그인</h1>
-      <p className="subtle">관리자가 생성한 사번으로 로그인합니다. 초기 비밀번호는 lupl + 휴대폰 뒷번호 4자리입니다.</p>
-      {message && <div className="alert error">{message}</div>}
-      <div className="form-row"><label className="label">사번</label><input className="input" value={employeeNo} onChange={e=>setEmployeeNo(e.target.value)} placeholder="예: 20220612001" onKeyDown={e=>e.key==="Enter"&&login()} /></div>
-      <div className="form-row"><label className="label">비밀번호</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&login()} /></div>
-      <button className="button full" onClick={login}>로그인</button>
-    </section></div>
+    <div className="container">
+      <section className="card auth-card">
+        <div className="logo logo-lg">
+          <span>근태</span>
+        </div>
+
+        <h1 className="card-title" style={{ marginTop: 16, display: "block" }}>
+          러플 근태관리 로그인
+        </h1>
+
+        <p className="subtle">
+          관리자가 생성한 사번으로 로그인합니다.
+          초기 비밀번호는 lupl + 휴대폰 뒷번호 4자리입니다.
+        </p>
+
+        <div className="login-example">
+          예시 사번 아이디 <b>22061201</b>
+        </div>
+
+        {message && <div className="alert error">{message}</div>}
+
+        <div className="form-row">
+          <label className="label">사번</label>
+          <input
+            className="input"
+            value={employeeNo}
+            onChange={(e) => setEmployeeNo(e.target.value)}
+            placeholder="예: 22061201"
+            onKeyDown={(e) => e.key === "Enter" && login()}
+          />
+        </div>
+
+        <div className="form-row">
+          <label className="label">비밀번호</label>
+          <input
+            className="input"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && login()}
+          />
+        </div>
+
+        <button className="button full" onClick={login}>
+          로그인
+        </button>
+      </section>
+    </div>
   );
 }
-
 function InactivePage({ signOut }: { signOut: () => void }) {
   return <div className="container"><section className="card auth-card"><h1 className="card-title">비활성 계정입니다</h1><p className="subtle">관리자에게 계정 활성화를 요청해주세요.</p><button className="button full" onClick={signOut}>로그아웃</button></section></div>;
 }
