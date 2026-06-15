@@ -760,25 +760,78 @@ function LeavePage({ employee }: { employee: any }) {
   return (
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
-      <section className="card">
-        <h2 className="card-title"><i className="ti ti-calendar-stats" aria-hidden="true"></i>연차 현황</h2>
-        <div className="leave-hero">
-          <div className="leave-ring" style={{background:`conic-gradient(var(--blue) ${remainPct*3.6}deg, #e7ecf4 0deg)`}}>
-            <div className="leave-ring-inner"><b>{remaining.toFixed(1)}</b><span>잔여일</span></div>
-          </div>
-          <div className="leave-info">
-            <div className="leave-chips">
-              <div className="leave-chip"><span>총 부여</span><b>{totalGranted.toFixed(1)}일</b></div>
-              <div className="leave-chip"><span>기본 발생</span><b>{ent.baseGrantedDays}일</b></div>
-              <div className="leave-chip"><span>조정</span><b>{adj>=0?"+":""}{adj.toFixed(1)}일</b></div>
-              <div className="leave-chip"><span>사용(승인)</span><b>{approvedUsed.toFixed(1)}일</b></div>
-              <div className="leave-chip"><span>잔여(예상)</span><b>{expectedRemaining.toFixed(1)}일</b></div>
-              <div className="leave-chip" style={{borderColor:"#3a6df0",background:"#eef3fe"}}><span>대체휴가 적립</span><b style={{color:"#3a6df0"}}>{compEarned.toFixed(1)}일 ({compRemainHours}시간)</b></div>
-            </div>
-            <p className="subtle" style={{marginTop:10}}>근무 시작일 {employee.joined_at??"-"} · {ent.description}<br />산정기간 {ent.periodStart??"-"} ~ {ent.periodEnd??"-"} (근로기준법 제60조)</p>
-          </div>
+     <section className="card leave-summary-card">
+  <div className="leave-summary-header">
+    <h2 className="card-title">
+      <i className="ti ti-calendar-stats" aria-hidden="true"></i>
+      연차 현황
+    </h2>
+
+    <span className="leave-summary-badge">
+      잔여 {remaining.toFixed(1)}일
+    </span>
+  </div>
+
+  <div className="leave-hero">
+    <div
+      className="leave-ring"
+      style={{
+        background: `conic-gradient(var(--blue) ${remainPct * 3.6}deg, #e7ecf4 0deg)`,
+      }}
+    >
+      <div className="leave-ring-inner">
+        <b>{remaining.toFixed(1)}</b>
+        <span>잔여일</span>
+      </div>
+    </div>
+
+    <div className="leave-info">
+      <div className="leave-chips">
+        <div className="leave-chip">
+          <span>총 부여</span>
+          <b>{totalGranted.toFixed(1)}일</b>
         </div>
-      </section>
+
+        <div className="leave-chip">
+          <span>기본 발생</span>
+          <b>{ent.baseGrantedDays}일</b>
+        </div>
+
+        <div className="leave-chip">
+          <span>조정</span>
+          <b>
+            {adj >= 0 ? "+" : ""}
+            {adj.toFixed(1)}일
+          </b>
+        </div>
+
+        <div className="leave-chip">
+          <span>사용(승인)</span>
+          <b>{approvedUsed.toFixed(1)}일</b>
+        </div>
+
+        <div className="leave-chip">
+          <span>잔여(예상)</span>
+          <b>{expectedRemaining.toFixed(1)}일</b>
+        </div>
+
+        <div className="leave-chip leave-chip-highlight">
+          <span>대체휴가 적립</span>
+          <b>
+            {compEarned.toFixed(1)}일 ({compRemainHours}시간)
+          </b>
+        </div>
+      </div>
+
+      <p className="subtle leave-period-text">
+        근무 시작일 {employee.joined_at ?? "-"} · {ent.description}
+        <br />
+        산정기간 {ent.periodStart ?? "-"} ~ {ent.periodEnd ?? "-"} 
+        (근로기준법 제60조)
+      </p>
+    </div>
+  </div>
+</section>
 
       <div className="grid two">
         <section className="card">
