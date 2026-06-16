@@ -78,9 +78,27 @@ function uniqueLogs(list:any[]) {
   return list.filter((l:any)=>{ if(!l?.id || seen.has(l.id)) return false; seen.add(l.id); return true; });
 }
 function calculateApprovedCompDays(compRequests:any[]) {
-  return compRequests
-    .filter((r:any)=>r.status==="approved")
+  return uniqueCompRequests(compRequests)
     .reduce((sum:number,r:any)=>sum+Number(r.converted_days||0),0);
+}
+function compRequestKey(r:any) {
+  return [
+    r.employee_id ?? "",
+    r.work_date ?? "",
+    r.start_time ?? "",
+    r.end_time ?? "",
+    Number(r.hours || 0).toFixed(2),
+  ].join("|");
+}
+function uniqueCompRequests(list:any[]) {
+  const seen = new Set<string>();
+  return list.filter((r:any)=>{
+    if(r.status!=="approved") return false;
+    const key=compRequestKey(r);
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 function badgeClass(s?: string | null) {
   if (!s) return "";
@@ -204,7 +222,7 @@ function WorkTypeToggle({ employee, todayLog, onChanged }: { employee:any; today
 function ApprovedCompCard({ compRequests, empMap, onChanged }: { compRequests:any[]; empMap:Record<string,any>; onChanged:()=>void }) {
   const [filterEmpId,setFilterEmpId]=useState("");
   const [msg,setMsg]=useState("");
-  const approved=compRequests.filter(r=>r.status==="approved");
+  const approved=uniqueCompRequests(compRequests);
   const shown=filterEmpId?approved.filter(r=>r.employee_id===filterEmpId):approved;
   const shownHours=shown.reduce((sum,r)=>sum+Number(r.hours||0),0);
   const shownDays=shown.reduce((sum,r)=>sum+Number(r.converted_days||0),0);
@@ -1027,7 +1045,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
       supabase.from("leave_adjustments").select("*").order("created_at",{ascending:false}),
       supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(50),
       supabase.from("employee_absences").select("*").order("start_date",{ascending:false}),
-      supabase.from("attendance_logs").select("id, employee_id, check_in_time, check_out_time, status").order("check_in_time",{ascending:false}).limit(300),
+      supabase.from("attendance_logs").select("id, employee_id, workplace_id, check_in_time, check_out_time, status, workplaces(name,type)").order("check_in_time",{ascending:false}).limit(300),
     ]);
     setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]);
   }
@@ -1082,6 +1100,13 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   async function forceClockOut(id:string){if(!window.confirm("이 기록을 현재 시각으로 강제 퇴근 처리할까요?")) return; const {error}=await supabase.rpc("close_attendance_log",{p_log_id:id,p_status:"관리자 강제퇴근",p_device_fingerprint_hash:null,p_device_info:{}});if(error)setMessage(error.message);else{setMessage("강제 퇴근 처리했습니다.");await load();onChanged();}}
 
   const filtered=employees.filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?e.employment_status!=="active":e.employment_status==="active");
+  const activeEmployees=employees.filter(e=>e.employment_status==="active");
+  const todayLogByEmployee:Record<string,any>={};
+  allLogs
+    .filter((l:any)=>isToday(l.check_in_time))
+    .sort(byCheckInDesc)
+    .forEach((l:any)=>{ if(!todayLogByEmployee[l.employee_id]) todayLogByEmployee[l.employee_id]=l; });
+  const dailyRows=activeEmployees.map((e:any)=>({employee:e,log:todayLogByEmployee[e.id]}));
   const pW=workplaces.filter(w=>w.approval_status==="pending");
   const pC=compRequests.filter(r=>r.status==="pending");
   const pR=requests.filter(r=>r.status==="pending");
@@ -1089,6 +1114,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   const reviewStatuses=["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음"];
   const pL=allLogs.filter((l:any)=>{
     const openToday=!l.check_out_time&&isToday(l.check_in_time);
+    if(l.status==="확인 완료") return false;
     if(openToday) return false;
     return !l.check_out_time || reviewStatuses.includes(l.status);
   });
@@ -1098,6 +1124,26 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   return (
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
+
+      <section className="card">
+        <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>일일 직원 근무 현황</h2>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>직원</th><th>출근 위치</th><th>출근 시각</th><th>퇴근 시각</th><th>상태</th></tr></thead>
+            <tbody>
+              {dailyRows.map(({employee:e,log}:any)=>(
+                <tr key={e.id}>
+                  <td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span></td>
+                  <td>{log?.workplaces?.name ?? "-"}</td>
+                  <td>{log ? formatDateTime(log.check_in_time) : "-"}</td>
+                  <td>{log?.check_out_time ? formatDateTime(log.check_out_time) : "-"}</td>
+                  <td><span className={`badge ${badgeClass(log?.status)}`}>{log?.status ?? "미출근"}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <CollapsibleSection title={`승인 대기${pendingTotal>0?` (${pendingTotal})`:""}`} icon="ti-inbox" defaultOpen={pendingTotal>0}>
         <div className="grid two">

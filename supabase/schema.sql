@@ -90,6 +90,17 @@ where source_type = 'comp_time_requests'
   and source_id is not null
   and adjustment_type = 'comp_time_earned';
 
+create unique index if not exists comp_time_requests_active_unique
+on public.comp_time_requests(
+  employee_id,
+  work_date,
+  coalesce(start_time, '00:00'::time),
+  coalesce(end_time, '00:00'::time),
+  hours,
+  status
+)
+where status in ('pending','approved');
+
 create or replace function public.review_comp_time_request(
   p_request_id uuid,
   p_status text,

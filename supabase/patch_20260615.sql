@@ -234,6 +234,36 @@ end;
 $$;
 
 -- 추가근무 승인 적립 중복 방지 및 기존 중복 정리
+with duplicate_comp_requests as (
+  select
+    id,
+    row_number() over (
+      partition by employee_id, work_date, start_time, end_time, hours, status
+      order by created_at, id
+    ) as rn
+  from public.comp_time_requests
+  where status in ('pending','approved')
+)
+delete from public.leave_adjustments a
+using duplicate_comp_requests d
+where a.source_type = 'comp_time_requests'
+  and a.source_id = d.id
+  and d.rn > 1;
+
+with duplicate_comp_requests as (
+  select
+    id,
+    row_number() over (
+      partition by employee_id, work_date, start_time, end_time, hours, status
+      order by created_at, id
+    ) as rn
+  from public.comp_time_requests
+  where status in ('pending','approved')
+)
+delete from public.comp_time_requests c
+using duplicate_comp_requests d
+where c.id = d.id and d.rn > 1;
+
 with ranked_comp_adjustments as (
   select
     id,
@@ -255,6 +285,17 @@ on public.leave_adjustments(source_type, source_id, adjustment_type)
 where source_type = 'comp_time_requests'
   and source_id is not null
   and adjustment_type = 'comp_time_earned';
+
+create unique index if not exists comp_time_requests_active_unique
+on public.comp_time_requests(
+  employee_id,
+  work_date,
+  coalesce(start_time, '00:00'::time),
+  coalesce(end_time, '00:00'::time),
+  hours,
+  status
+)
+where status in ('pending','approved');
 
 create or replace function public.review_comp_time_request(
   p_request_id uuid,
