@@ -149,6 +149,7 @@ button { cursor: pointer; }
 
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table-summary { caption-side: top; text-align: left; padding: 11px 12px; background: #f7f9fc; color: var(--ink); font-size: 13px; font-weight: 700; border-bottom: 1px solid var(--line); }
 th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { background: #f7f9fc; color: #5a6475; font-size: 12px; font-weight: 600; white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }

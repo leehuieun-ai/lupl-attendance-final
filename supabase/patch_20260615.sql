@@ -232,3 +232,86 @@ begin
   return jsonb_build_object('ok', true, 'attendance_status', v_after.status);
 end;
 $$;
+
+-- 추가근무 승인 적립 중복 방지 및 기존 중복 정리
+with ranked_comp_adjustments as (
+  select
+    id,
+    row_number() over (
+      partition by source_type, source_id, adjustment_type
+      order by created_at, id
+    ) as rn
+  from public.leave_adjustments
+  where source_type = 'comp_time_requests'
+    and source_id is not null
+    and adjustment_type = 'comp_time_earned'
+)
+delete from public.leave_adjustments a
+using ranked_comp_adjustments r
+where a.id = r.id and r.rn > 1;
+
+create unique index if not exists leave_adjustments_comp_time_source_unique
+on public.leave_adjustments(source_type, source_id, adjustment_type)
+where source_type = 'comp_time_requests'
+  and source_id is not null
+  and adjustment_type = 'comp_time_earned';
+
+create or replace function public.review_comp_time_request(
+  p_request_id uuid,
+  p_status text,
+  p_review_note text default null
+) returns jsonb
+language plpgsql security definer set search_path=public as $$
+declare
+  v_admin uuid;
+  v_before public.comp_time_requests%rowtype;
+  v_after public.comp_time_requests%rowtype;
+begin
+  if not public.is_admin() then raise exception '관리자만 처리할 수 있습니다.'; end if;
+  if p_status not in ('approved','rejected') then raise exception '허용되지 않은 처리 상태입니다.'; end if;
+
+  v_admin := public.current_employee_id();
+
+  select * into v_before from public.comp_time_requests where id = p_request_id;
+  if not found then raise exception '추가근무 신청 내역이 없습니다.'; end if;
+
+  update public.comp_time_requests
+  set status = p_status,
+      reviewed_by = v_admin,
+      reviewed_at = now(),
+      review_note = p_review_note
+  where id = p_request_id
+  returning * into v_after;
+
+  if p_status = 'approved' then
+    insert into public.leave_adjustments(
+      employee_id, adjustment_type, adjustment_days, source_type, source_id, reason, created_by
+    )
+    select
+      v_after.employee_id,
+      'comp_time_earned',
+      v_after.converted_days,
+      'comp_time_requests',
+      v_after.id,
+      coalesce(v_after.reason, '추가근무 대체휴가 적립'),
+      v_admin
+    where not exists (
+      select 1
+      from public.leave_adjustments
+      where source_type = 'comp_time_requests'
+        and source_id = v_after.id
+        and adjustment_type = 'comp_time_earned'
+    );
+  else
+    delete from public.leave_adjustments
+    where source_type = 'comp_time_requests'
+      and source_id = v_after.id
+      and adjustment_type = 'comp_time_earned';
+  end if;
+
+  insert into public.audit_logs(actor_employee_id,action,target_table,target_id,before_data,after_data,reason)
+  values(v_admin,'review_comp_time_request','comp_time_requests',p_request_id,to_jsonb(v_before),to_jsonb(v_after),p_review_note);
+
+  return jsonb_build_object('ok',true);
+end;
+$$;

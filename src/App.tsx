@@ -4,7 +4,7 @@ import { supabase } from "./lib/supabase";
 import { getDeviceFingerprint } from "./lib/device";
 import { getCurrentPositionFast, getPublicIp, distanceMeters } from "./lib/geo";
 import {
-  calculateAdjustmentDays, calculateCompTimeEarnedDays, calculateLeaveEntitlement, calculateUsedDays,
+  calculateAdjustmentDays, calculateLeaveEntitlement, calculateUsedDays,
   LEAVE_TYPE_META, calcInsurance, calcAbsenceDeduction,
 } from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
@@ -61,12 +61,26 @@ function timeOnly(v?: string | null) {
   if (!v) return "-";
   return new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Seoul" }).format(new Date(v));
 }
+function clockText(d: Date) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Seoul",
+  }).format(d);
+}
 function byCheckInDesc(a:any,b:any) {
   return new Date(b?.check_in_time ?? b?.created_at ?? 0).getTime() - new Date(a?.check_in_time ?? a?.created_at ?? 0).getTime();
 }
 function uniqueLogs(list:any[]) {
   const seen = new Set<string>();
   return list.filter((l:any)=>{ if(!l?.id || seen.has(l.id)) return false; seen.add(l.id); return true; });
+}
+function calculateApprovedCompDays(compRequests:any[]) {
+  return compRequests
+    .filter((r:any)=>r.status==="approved")
+    .reduce((sum:number,r:any)=>sum+Number(r.converted_days||0),0);
 }
 function badgeClass(s?: string | null) {
   if (!s) return "";
@@ -192,8 +206,11 @@ function ApprovedCompCard({ compRequests, empMap, onChanged }: { compRequests:an
   const [msg,setMsg]=useState("");
   const approved=compRequests.filter(r=>r.status==="approved");
   const shown=filterEmpId?approved.filter(r=>r.employee_id===filterEmpId):approved;
+  const shownHours=shown.reduce((sum,r)=>sum+Number(r.hours||0),0);
+  const shownDays=shown.reduce((sum,r)=>sum+Number(r.converted_days||0),0);
   async function deleteComp(id:string) {
     if(!window.confirm("이 추가근무 적립을 삭제할까요? 해당 직원의 대체휴가 잔여가 줄어듭니다.")) return;
+    await supabase.from("leave_adjustments").delete().eq("source_type","comp_time_requests").eq("source_id",id);
     const {error}=await supabase.from("comp_time_requests").delete().eq("id",id);
     if(error) setMsg(error.message); else onChanged();
   }
@@ -211,6 +228,7 @@ function ApprovedCompCard({ compRequests, empMap, onChanged }: { compRequests:an
       {msg&&<div className="alert error">{msg}</div>}
       <div className="table-wrap">
         <table>
+          <caption className="table-summary">합계 {shownHours.toFixed(1)}시간 · {shownDays.toFixed(2)}일</caption>
           <thead><tr><th>직원</th><th>날짜</th><th>시간</th><th>적립일수</th><th>사유</th><th></th></tr></thead>
           <tbody>
             {shown.map(r=>(
@@ -524,7 +542,7 @@ function HomePage({ employee }: { employee: any }) {
         : {p_workplace_id:workplaceId,p_lat:detectedPlace?.currentLat??null,p_lng:detectedPlace?.currentLng??null,p_accuracy_m:detectedPlace?.accuracy??null,p_ip_address:detectedPlace?.ip??null,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo};
       const {data,error}=await supabase.rpc(rpcName,rpcArgs);
       if(error) throw error;
-      setMessage(`${recheckMode?"재출근":"출근"} 처리 결과: ${data?.attendance_status??"저장 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load();
+      setMessage(recheckMode ? "출근 시간을 갱신했습니다." : "출근했습니다."); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load();
     } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
   }
   async function checkOut() {
@@ -566,7 +584,8 @@ function HomePage({ employee }: { employee: any }) {
 
   const allShownLogs=uniqueLogs([todayLog,...openLogRows,...recentLogs].filter(Boolean)).sort(byCheckInDesc);
   const openLogs=allShownLogs.filter((l:any)=>l?.check_in_time&&!l?.check_out_time);
-  const hasBlockingOpenLog=openLogs.some((l:any)=>l.id!==todayLog?.id);
+  const overdueOpenLogs=openLogs.filter((l:any)=>!isToday(l.check_in_time));
+  const hasBlockingOpenLog=overdueOpenLogs.length>0;
   const checkedIn=!!todayLog?.check_in_time; const checkedOut=!!todayLog?.check_out_time;
   const worked=workedMinutes(todayLog?.check_in_time,todayLog?.check_out_time);
   const thisDevice=thisFp?myDevices.find(d=>d.fingerprint_hash===thisFp):null;
@@ -582,7 +601,7 @@ function HomePage({ employee }: { employee: any }) {
     <div className="home-layout">
       <section className="card">
         <p className="date-line">{now.toLocaleDateString("ko-KR",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
-        <div className="clock">{now.toLocaleTimeString("ko-KR",{hour12:false})}</div>
+        <div className="clock">{clockText(now)}</div>
         <div className="today-times">
           <div className="today-time-item"><span className="today-time-label">출근</span><span className="today-time-val">{checkedIn?timeOnly(todayLog.check_in_time):"--:--"}</span></div>
           <div className="today-time-item"><span className="today-time-label">퇴근</span><span className="today-time-val">{checkedOut?timeOnly(todayLog.check_out_time):"--:--"}</span></div>
@@ -597,11 +616,11 @@ function HomePage({ employee }: { employee: any }) {
         <WorkTypeToggle employee={employee} todayLog={todayLog} onChanged={load} />
         {message&&<div className="alert" style={{marginTop:14}}>{message}</div>}
 
-        {openLogs.length>0&&(
+        {overdueOpenLogs.length>0&&(
           <div className="card" style={{marginTop:14,boxShadow:"none",background:"#fff7ed",borderColor:"#fed7aa"}}>
             <h3 style={{marginTop:0}}>아직 퇴근 처리되지 않은 기록</h3>
-            <p className="body-text" style={{color:"#8b5e00"}}>{hasBlockingOpenLog?"아래 기록이 남아 있어 새 출근이 막혀 있습니다. 퇴근 처리가 필요하면 해당 기록을 마감해주세요.":"오늘 출근 기록이 열려 있습니다. 퇴근 처리하거나, 필요한 경우 출근하기를 눌러 재출근할 수 있습니다."}</p>
-            {openLogs.map((l:any)=>(
+            <p className="body-text" style={{color:"#8b5e00"}}>전날 이전 출근 기록이 남아 있어 새 출근이 막혀 있습니다. 퇴근 처리가 필요하면 해당 기록을 마감해주세요.</p>
+            {overdueOpenLogs.map((l:any)=>(
               <div className="list-row" key={l.id} style={{marginTop:10}}>
                 <div>
                   <b>{formatDateTime(l.check_in_time)}</b>
@@ -698,7 +717,7 @@ function LeavePage({ employee }: { employee: any }) {
 
   const ent=calculateLeaveEntitlement(employee.joined_at);
   const adj=calculateAdjustmentDays(adjustments);
-  const compEarned=calculateCompTimeEarnedDays(adjustments);
+  const compEarned=calculateApprovedCompDays(compRequests);
   const approvedUsed=calculateUsedDays(requests,false);
   const pendingUsed=calculateUsedDays(requests,true);
   const totalGranted=ent.baseGrantedDays+adj;
@@ -1022,7 +1041,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
     const reqs=requests.filter(r=>r.employee_id===empId);
     const comps=compRequests.filter(c=>c.employee_id===empId);
     const adjDays=calculateAdjustmentDays(adj);
-    const compEarned=calculateCompTimeEarnedDays(adj);
+    const compEarned=calculateApprovedCompDays(comps);
     const used=calculateUsedDays(reqs,false);
     const total=ent.baseGrantedDays+adjDays;
     const remain=Math.max(0,total-used);
@@ -1067,7 +1086,12 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   const pC=compRequests.filter(r=>r.status==="pending");
   const pR=requests.filter(r=>r.status==="pending");
   const pD=devices.filter(d=>d.status==="pending");
-  const pL=allLogs.filter((l:any)=>!l.check_out_time || ["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음"].includes(l.status));
+  const reviewStatuses=["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음"];
+  const pL=allLogs.filter((l:any)=>{
+    const openToday=!l.check_out_time&&isToday(l.check_in_time);
+    if(openToday) return false;
+    return !l.check_out_time || reviewStatuses.includes(l.status);
+  });
   const pendingTotal=pW.length+pC.length+pR.length+pD.length+pL.length;
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
 
