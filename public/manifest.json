@@ -6,20 +6,20 @@
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
+  "background_color": "transparent",
+  "theme_color": "transparent",
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "/wave-192-transparent.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/wave-512-transparent.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }
