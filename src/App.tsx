@@ -517,6 +517,16 @@ function HomePage({ employee }: { employee: any }) {
     if(ip) return approved.find(w=>w.ip_hint&&w.ip_hint===ip)||null;
     return null;
   }
+  async function submitCheckIn(workplaceId:string, place:any, isRecheck:boolean) {
+    const {fingerprintHash,deviceInfo}=await getDeviceFingerprint();
+    const rpcName=isRecheck&&todayLog?.id?"recheck_in":"check_in";
+    const rpcArgs:any=isRecheck&&todayLog?.id
+      ? {p_log_id:todayLog.id,p_workplace_id:workplaceId,p_lat:place?.currentLat??null,p_lng:place?.currentLng??null,p_accuracy_m:place?.accuracy??null,p_ip_address:place?.ip??null,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo}
+      : {p_workplace_id:workplaceId,p_lat:place?.currentLat??null,p_lng:place?.currentLng??null,p_accuracy_m:place?.accuracy??null,p_ip_address:place?.ip??null,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo};
+    const {data,error}=await supabase.rpc(rpcName,rpcArgs);
+    if(error) throw error;
+    return data;
+  }
   async function startCheckIn(isRecheck=false) {
     const blockingOpen=openLogRows.some((l:any)=>l.id!==todayLog?.id);
     if(blockingOpen){
@@ -527,7 +537,13 @@ function HomePage({ employee }: { employee: any }) {
     setBusy(true); setMessage("현재 위치를 확인하는 중입니다."); setDetectedPlace(null);
     try {
       const p=await getCurrentPositionFast(); const ip=await getPublicIp(); const d=detectPlace(p.lat,p.lng,ip);
-      if(d){setDetectedPlace({...d,currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip});setSelectedWorkplaceId(d.id);setMessage(`${d.name} 근처로 확인되었습니다. 이 장소가 맞으면 ${isRecheck?"재출근":"출근"} 확정을 눌러주세요.`);}
+      if(d){
+        const place={...d,currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip};
+        setDetectedPlace(place);setSelectedWorkplaceId(d.id);setMessage(`${d.name} GPS가 확인되어 ${isRecheck?"재출근":"출근"} 처리 중입니다.`);
+        const data=await submitCheckIn(d.id,place,isRecheck);
+        setMessage(`${d.name} ${isRecheck?"재출근":"출근"} 완료: ${data?.attendance_status??"처리 완료"}`);
+        setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load();
+      }
       else{setDetectedPlace({currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip});setSelectedWorkplaceId("");setMessage("등록된 근무지 반경 안이 아닙니다. 현재 장소명을 입력하면 관리자 승인 대기 근무지로 저장됩니다.");}
     } catch(e:any){setMessage(e.message);setRecheckMode(false);} finally{setBusy(false);}
   }
@@ -547,20 +563,14 @@ function HomePage({ employee }: { employee: any }) {
   async function confirmCheckIn() {
     setBusy(true); setMessage("");
     try {
-      const {fingerprintHash,deviceInfo}=await getDeviceFingerprint();
       let workplaceId=selectedWorkplaceId;
       if(!workplaceId&&unknownPlaceName&&detectedPlace?.currentLat){
         const {data:newPlace,error:placeError}=await supabase.from("workplaces").insert({name:unknownPlaceName,type:"other_field",lat:detectedPlace.currentLat,lng:detectedPlace.currentLng,ip_hint:detectedPlace.ip,radius_m:100,approval_status:"pending",is_active:false,visibility:"public",requested_by:employee.id}).select().single();
         if(placeError) throw placeError; workplaceId=newPlace.id;
       }
       if(!workplaceId) throw new Error("근무지 선택 또는 현재 장소명 입력이 필요합니다.");
-      const rpcName=recheckMode&&todayLog?.id?"recheck_in":"check_in";
-      const rpcArgs:any=recheckMode&&todayLog?.id
-        ? {p_log_id:todayLog.id,p_workplace_id:workplaceId,p_lat:detectedPlace?.currentLat??null,p_lng:detectedPlace?.currentLng??null,p_accuracy_m:detectedPlace?.accuracy??null,p_ip_address:detectedPlace?.ip??null,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo}
-        : {p_workplace_id:workplaceId,p_lat:detectedPlace?.currentLat??null,p_lng:detectedPlace?.currentLng??null,p_accuracy_m:detectedPlace?.accuracy??null,p_ip_address:detectedPlace?.ip??null,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo};
-      const {data,error}=await supabase.rpc(rpcName,rpcArgs);
-      if(error) throw error;
-      setMessage(recheckMode ? "출근 시간을 갱신했습니다." : "출근했습니다."); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load();
+      const data=await submitCheckIn(workplaceId,detectedPlace,recheckMode);
+      setMessage(recheckMode ? `출근 시간을 갱신했습니다: ${data?.attendance_status??"처리 완료"}` : `출근 처리 결과: ${data?.attendance_status??"처리 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load();
     } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
   }
   async function checkOut() {
@@ -927,12 +937,24 @@ function LeavePage({ employee }: { employee: any }) {
 function WorkplacePage({ employee }: { employee: any }) {
   const [query,setQuery]=useState(""); const [places,setPlaces]=useState<any[]>([]); const [workplaces,setWorkplaces]=useState<any[]>([]); const [message,setMessage]=useState("");
   const [reqType,setReqType]=useState("special_school"); const [reqPrivate,setReqPrivate]=useState(false);
+  const isAdmin=employee.role==="admin";
   async function load() { const {data}=await supabase.from("workplaces").select("*").order("created_at",{ascending:false}); setWorkplaces(data??[]); }
   useEffect(()=>{load();},[]);
-  async function search() { setMessage(""); const {data,error}=await supabase.functions.invoke("kakao-place-search",{body:{query}}); if(error) setMessage(error.message); else setPlaces(data?.documents??[]); }
+  async function search() {
+    setMessage(""); setPlaces([]);
+    const trimmed=query.trim();
+    if(!trimmed) return setMessage("검색어를 입력해주세요.");
+    const {data,error}=await supabase.functions.invoke("kakao-place-search",{body:{query:trimmed}});
+    if(error) return setMessage(error.message);
+    if(data?.error) setMessage(data.error);
+    const docs=data?.documents??[];
+    setPlaces(docs);
+    if(!data?.error&&docs.length===0) setMessage("검색 결과가 없습니다. 주소를 더 자세히 입력해주세요.");
+  }
   async function requestPlace(p:any) {
-    const {error}=await supabase.from("workplaces").insert({name:p.place_name,type:reqType,address:p.road_address_name||p.address_name,kakao_place_id:p.id,lat:Number(p.y),lng:Number(p.x),radius_m:100,approval_status:"pending",is_active:false,visibility:reqPrivate?"private":"public",requested_by:employee.id});
-    if(error) setMessage(error.message); else{setMessage("근무지 승인 요청이 저장되었습니다.");setPlaces([]);setQuery("");await load();}
+    const approval_status=isAdmin?"approved":"pending";
+    const {error}=await supabase.from("workplaces").insert({name:p.place_name,type:reqType,address:p.road_address_name||p.address_name,kakao_place_id:p.id,lat:Number(p.y),lng:Number(p.x),radius_m:100,approval_status,is_active:isAdmin,visibility:reqPrivate?"private":"public",requested_by:employee.id,approved_by:isAdmin?employee.id:null});
+    if(error) setMessage(error.message); else{setMessage(isAdmin?"승인된 근무지로 바로 추가되었습니다.":"근무지 승인 요청이 저장되었습니다.");setPlaces([]);setQuery("");await load();}
   }
   function dedup(list:any[],t=100){const k:any[]=[]; for(const w of list){if(w.lat==null||w.lng==null){k.push(w);continue;}if(!k.some(x=>x.lat!=null&&distanceMeters(w.lat,w.lng,x.lat,x.lng)<=t))k.push(w);} return k;}
   const approved=dedup(workplaces.filter(w=>w.approval_status==="approved"));
@@ -941,7 +963,7 @@ function WorkplacePage({ employee }: { employee: any }) {
     <div className="grid two">
       <section className="card">
         <h2 className="card-title"><i className="ti ti-search" aria-hidden="true"></i>근무지 검색·요청</h2>
-        <p className="subtle" style={{marginBottom:12}}>카카오맵 검색으로 근무지를 등록 요청합니다. 승인되면 다음 출근 시 자동 후보로 사용됩니다.</p>
+        <p className="subtle" style={{marginBottom:12}}>{isAdmin?"카카오맵 검색으로 승인된 근무지를 바로 추가합니다.":"카카오맵 검색으로 근무지를 등록 요청합니다. 승인되면 다음 출근 시 자동 후보로 사용됩니다."}</p>
         {message&&<div className="alert">{message}</div>}
         <div className="grid two">
           <div className="form-row"><label className="label">유형</label>
@@ -958,7 +980,7 @@ function WorkplacePage({ employee }: { employee: any }) {
         </div>
         <div className="form-row"><label className="label">근무지명</label><input className="input" value={query} onChange={e=>setQuery(e.target.value)} placeholder="예: 대구광명학교" onKeyDown={e=>e.key==="Enter"&&search()} /></div>
         <button className="button" onClick={search}><i className="ti ti-search" aria-hidden="true"></i>검색</button>
-        <div className="grid" style={{marginTop:14}}>{places.map(p=>(<div className="list-row" key={p.id}><div><b>{p.place_name}</b><div className="subtle">{p.road_address_name||p.address_name}</div></div><button className="button secondary" onClick={()=>requestPlace(p)}>승인 요청</button></div>))}</div>
+        <div className="grid" style={{marginTop:14}}>{places.map(p=>(<div className="list-row" key={p.id}><div><b>{p.place_name}</b><div className="subtle">{p.road_address_name||p.address_name}</div></div><button className="button secondary" onClick={()=>requestPlace(p)}>{isAdmin?"바로 추가":"승인 요청"}</button></div>))}</div>
       </section>
       <section className="card">
         <h2 className="card-title"><i className="ti ti-map" aria-hidden="true"></i>근무지 목록</h2>
@@ -1027,7 +1049,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   const [absences,setAbsences]=useState<any[]>([]);
   const [allLogs,setAllLogs]=useState<any[]>([]);
   const [message,setMessage]=useState("");
-  const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),role:"employee",device_limit:3});
+  const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});
   const [scheduleEmpId,setScheduleEmpId]=useState("");
   const [scheduleMsg,setScheduleMsg]=useState("");
   const [leaveModalEmp,setLeaveModalEmp]=useState<any|null>(null);
@@ -1072,7 +1094,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   async function createEmployee() {
     setMessage(""); const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:newEmployee});
     if(error) setMessage(error.message); else if(data?.error) setMessage(data.error);
-    else{setMessage(`직원 계정이 생성되었습니다. 초기 비밀번호: ${data.initial_password}`);setNewEmployee({name:"",employee_no:"",phone:"",joined_at:todayIso(),role:"employee",device_limit:3});await load();onChanged();}
+    else{setMessage(`직원 계정이 생성되었습니다. 초기 비밀번호: ${data.initial_password}`);setNewEmployee({name:"",employee_no:"",phone:"",joined_at:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});await load();onChanged();}
   }
   async function updateEmployee(id:string,patch:Record<string,any>){const {error}=await supabase.from("employees").update(patch).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function toggleEmployee(id:string,cur:string){const n=cur!=="active";await updateEmployee(id,{is_active:n,employment_status:n?"active":"inactive"});}
@@ -1088,7 +1110,8 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
     if(error) setMessage(error.message); else if(data?.error) setMessage(data.error); else setMessage(`${emp.name} 비밀번호가 초기화되었습니다. 초기 비밀번호: ${data.initial_password}`);
   }
   async function reviewWorkplace(id:string,status:string,type?:string){
-    const patch:any={approval_status:status,is_active:status==="approved"};
+    const patch:any={approval_status:status,is_active:status==="approved",updated_at:new Date().toISOString()};
+    if(status==="approved") patch.approved_by=currentEmployee.id;
     if(type) patch.type=type;
     const {error}=await supabase.from("workplaces").update(patch).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}
   }
@@ -1224,6 +1247,9 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
         <div className="grid two">
           <div className="form-row"><label className="label">권한</label><select className="select" value={newEmployee.role} onChange={e=>setNewEmployee({...newEmployee,role:e.target.value})}><option value="employee">직원</option><option value="admin">관리자</option></select></div>
           <div className="form-row"><label className="label">기기 제한</label><select className="select" value={newEmployee.device_limit} onChange={e=>setNewEmployee({...newEmployee,device_limit:Number(e.target.value)})}><option value={1}>1대</option><option value={2}>2대</option><option value={3}>3대</option></select></div>
+        </div>
+        <div className="form-row"><label className="label">출근 요일</label>
+          <div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${newEmployee.work_days.includes(d)?"active":""}`} onClick={()=>setNewEmployee({...newEmployee,work_days:toggleDay(newEmployee.work_days,d)})}>{DAY_LABELS[d]}</button>)}</div>
         </div>
         <button className="button" onClick={createEmployee}><i className="ti ti-plus" aria-hidden="true"></i>직원 생성</button>
       </section>

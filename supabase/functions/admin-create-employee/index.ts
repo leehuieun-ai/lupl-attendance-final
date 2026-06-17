@@ -21,6 +21,12 @@ function initialPassword(phone: string) {
   if (last4.length !== 4) throw new Error("휴대폰 번호 뒷자리 4자리를 확인할 수 없습니다.");
   return `lupl${last4}`;
 }
+function normalizeWorkDays(value: unknown) {
+  const allowed = new Set(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+  if (!Array.isArray(value)) return ["mon", "tue", "wed", "thu", "fri"];
+  const days = value.map(String).filter((day) => allowed.has(day));
+  return days.length > 0 ? Array.from(new Set(days)) : ["mon", "tue", "wed", "thu", "fri"];
+}
 async function findAuthUserByEmail(adminClient: any, email: string) {
   const target = email.toLowerCase();
   for (let page = 1; page <= 20; page += 1) {
@@ -123,6 +129,7 @@ Deno.serve(async (req) => {
     const joinedAt = String(body.joined_at ?? new Date().toISOString().slice(0, 10));
     const role = body.role === "admin" ? "admin" : "employee";
     const deviceLimit = Math.min(3, Math.max(1, Number(body.device_limit ?? 3)));
+    const workDays = normalizeWorkDays(body.work_days);
     if (!name || !employeeNo || !phone) return json({ error: "이름, 사번, 휴대폰 번호는 필수입니다." }, 400);
 
     const email = internalEmail(employeeNo);
@@ -156,6 +163,7 @@ Deno.serve(async (req) => {
         internal_email: email,
         role,
         device_limit: deviceLimit,
+        work_days: workDays,
         joined_at: joinedAt,
         employment_status: "active",
         is_active: true,

@@ -92,7 +92,7 @@ begin
 
   if v_workplace.type = 'remote' then
     v_status := '재택';
-  elsif v_workplace.approval_status <> 'approved' then
+  elsif v_workplace.approval_status <> 'approved' or v_workplace.is_active <> true then
     v_status := '관리자 확인 필요';
   elsif v_device_status <> 'approved' then
     v_status := '기기 확인 필요';
