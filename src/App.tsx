@@ -955,9 +955,14 @@ function WorkplacePage({ employee }: { employee: any }) {
     if(!data?.error&&docs.length===0) setMessage("검색 결과가 없습니다. 주소를 더 자세히 입력해주세요.");
   }
   async function requestPlace(p:any) {
+    const existing=workplaces.find(w=>w.kakao_place_id&&String(w.kakao_place_id)===String(p.id));
+    if(existing){
+      setMessage(`이미 등록된 근무지입니다: ${existing.name} (${existing.approval_status==="approved"?"승인됨":"승인 대기"})`);
+      return;
+    }
     const approval_status=isAdmin?"approved":"pending";
     const {error}=await supabase.from("workplaces").insert({name:p.place_name,type:reqType,address:p.road_address_name||p.address_name,kakao_place_id:p.id,lat:Number(p.y),lng:Number(p.x),radius_m:100,approval_status,is_active:isAdmin,visibility:reqPrivate?"private":"public",requested_by:employee.id,approved_by:isAdmin?employee.id:null});
-    if(error) setMessage(error.message); else{setMessage(isAdmin?"승인된 근무지로 바로 추가되었습니다.":"근무지 승인 요청이 저장되었습니다.");setPlaces([]);setQuery("");await load();}
+    if(error) setMessage(error.message); else{setMessage(isAdmin?`${p.place_name}이(가) 승인된 근무지로 바로 추가되었습니다.`:`${p.place_name} 근무지 승인 요청이 저장되었습니다.`);setPlaces([]);setQuery("");await load();}
   }
   const approved=workplaces.filter(w=>w.approval_status==="approved");
   const pending=workplaces.filter(w=>w.approval_status==="pending");
@@ -986,9 +991,12 @@ function WorkplacePage({ employee }: { employee: any }) {
       </section>
       <section className="card">
         <h2 className="card-title"><i className="ti ti-map" aria-hidden="true"></i>근무지 목록</h2>
-        <h3>승인된 근무지</h3>
+        <div className="actions" style={{justifyContent:"space-between",marginBottom:8}}>
+          <h3 style={{margin:0}}>승인된 근무지 {approved.length>0&&<span className="count-badge">{approved.length}</span>}</h3>
+          <button className="button ghost" onClick={load}><i className="ti ti-refresh" aria-hidden="true"></i>새로고침</button>
+        </div>
         <DataTable rows={approved.map(w=>({이름:w.name,주소:w.address??"-",유형:workplaceTypeLabels[w.type]??w.type,공개:w.visibility==="private"?"나에게만":"전체",반경:`${w.radius_m}m`,좌표:w.lat!=null&&w.lng!=null?`${Number(w.lat).toFixed(6)}, ${Number(w.lng).toFixed(6)}`:"-"}))} />
-        <h3>승인 대기</h3>
+        <h3>승인 대기 {pending.length>0&&<span className="count-badge">{pending.length}</span>}</h3>
         <DataTable rows={pending.map(w=>({이름:w.name,주소:w.address??"-",유형:workplaceTypeLabels[w.type]??w.type,반경:`${w.radius_m}m`,요청자:w.requested_by===employee.id?"본인":"-"}))} />
       </section>
     </div>
