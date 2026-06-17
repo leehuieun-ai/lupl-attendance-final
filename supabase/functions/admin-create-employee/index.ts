@@ -127,6 +127,7 @@ Deno.serve(async (req) => {
     const employeeNo = String(body.employee_no ?? "").trim();
     const phone = String(body.phone ?? "").trim();
     const joinedAt = String(body.joined_at ?? new Date().toISOString().slice(0, 10));
+    const workStartDate = String(body.work_start_date || joinedAt);
     const role = body.role === "admin" ? "admin" : "employee";
     const deviceLimit = Math.min(3, Math.max(1, Number(body.device_limit ?? 3)));
     const workDays = normalizeWorkDays(body.work_days);
@@ -165,6 +166,7 @@ Deno.serve(async (req) => {
         device_limit: deviceLimit,
         work_days: workDays,
         joined_at: joinedAt,
+        work_start_date: workStartDate,
         employment_status: "active",
         is_active: true,
       },

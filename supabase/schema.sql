@@ -37,6 +37,12 @@ create policy audit_select_admin on public.audit_logs for select to authenticate
 -- 기존 DB에는 이 파일을 Supabase SQL Editor에서 1회 실행하세요.
 
 alter table public.employees add column if not exists monthly_salary numeric(12,0) not null default 0;
+alter table public.employees add column if not exists hourly_wage numeric(12,0) not null default 0;
+alter table public.employees add column if not exists annual_salary numeric(12,0) not null default 0;
+alter table public.employees add column if not exists weekly_work_days numeric(4,2) not null default 5;
+alter table public.employees add column if not exists daily_work_hours numeric(4,2) not null default 8;
+alter table public.employees add column if not exists monthly_standard_hours numeric(6,2) not null default 209;
+alter table public.employees add column if not exists work_start_date date;
 alter table public.employees add column if not exists work_days text[] not null default array['mon','tue','wed','thu','fri'];
 alter table public.employees add column if not exists work_start time not null default '09:00';
 alter table public.employees add column if not exists work_end time not null default '18:00';

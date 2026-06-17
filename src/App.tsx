@@ -127,6 +127,9 @@ function timeDiffHours(start: string, end: string) {
   const diff = (eh*60+em) - (sh*60+sm);
   return diff > 0 ? Math.round(diff/6)/10 : 0;
 }
+function numberValue(v:any){return Number(String(v??"").replace(/[^0-9.]/g,""))||0;}
+function moneyInput(v:any){return (Number(String(v??"").replace(/[^0-9]/g,""))||0).toLocaleString("ko-KR");}
+function scheduleHours(start?:string|null,end?:string|null){return start&&end?timeDiffHours(String(start).slice(0,5),String(end).slice(0,5)):8;}
 
 function dateFromIso(iso: string) { return new Date(`${iso}T00:00:00`); }
 function addLocalDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
@@ -1048,7 +1051,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   const [absences,setAbsences]=useState<any[]>([]);
   const [allLogs,setAllLogs]=useState<any[]>([]);
   const [message,setMessage]=useState("");
-  const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});
+  const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});
   const [scheduleEmpId,setScheduleEmpId]=useState("");
   const [scheduleMsg,setScheduleMsg]=useState("");
   const [leaveModalEmp,setLeaveModalEmp]=useState<any|null>(null);
@@ -1093,7 +1096,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
   async function createEmployee() {
     setMessage(""); const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:newEmployee});
     if(error) setMessage(error.message); else if(data?.error) setMessage(data.error);
-    else{setMessage(`직원 계정이 생성되었습니다. 초기 비밀번호: ${data.initial_password}`);setNewEmployee({name:"",employee_no:"",phone:"",joined_at:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});await load();onChanged();}
+    else{setMessage(`직원 계정이 생성되었습니다. 초기 비밀번호: ${data.initial_password}`);setNewEmployee({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});await load();onChanged();}
   }
   async function updateEmployee(id:string,patch:Record<string,any>){const {error}=await supabase.from("employees").update(patch).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function toggleEmployee(id:string,cur:string){const n=cur!=="active";await updateEmployee(id,{is_active:n,employment_status:n?"active":"inactive"});}
@@ -1241,8 +1244,9 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
           <div className="form-row"><label className="label">이름</label><input className="input" value={newEmployee.name} onChange={e=>setNewEmployee({...newEmployee,name:e.target.value})} /></div>
           <div className="form-row"><label className="label">사번</label><input className="input" value={newEmployee.employee_no} onChange={e=>setNewEmployee({...newEmployee,employee_no:e.target.value})} /></div>
           <div className="form-row"><label className="label">휴대폰</label><input className="input" value={newEmployee.phone} onChange={e=>setNewEmployee({...newEmployee,phone:formatPhone(e.target.value)})} placeholder="010-0000-0000" /></div>
-          <div className="form-row"><label className="label">근무 시작일</label><input className="input" type="date" value={newEmployee.joined_at} onChange={e=>setNewEmployee({...newEmployee,joined_at:e.target.value})} /></div>
+          <div className="form-row"><label className="label">입사일</label><input className="input" type="date" value={newEmployee.joined_at} onChange={e=>setNewEmployee({...newEmployee,joined_at:e.target.value,work_start_date:newEmployee.work_start_date||e.target.value})} /></div>
         </div>
+        <div className="form-row"><label className="label">출근 시작일</label><input className="input" type="date" value={newEmployee.work_start_date} onChange={e=>setNewEmployee({...newEmployee,work_start_date:e.target.value})} /></div>
         <div className="grid two">
           <div className="form-row"><label className="label">권한</label><select className="select" value={newEmployee.role} onChange={e=>setNewEmployee({...newEmployee,role:e.target.value})}><option value="employee">직원</option><option value="admin">관리자</option></select></div>
           <div className="form-row"><label className="label">기기 제한</label><select className="select" value={newEmployee.device_limit} onChange={e=>setNewEmployee({...newEmployee,device_limit:Number(e.target.value)})}><option value={1}>1대</option><option value={2}>2대</option><option value={3}>3대</option></select></div>
@@ -1262,7 +1266,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
         </div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>직원</th><th>권한</th><th>상태</th><th>근무 시작일</th><th>계정</th><th>처리</th></tr></thead>
+            <thead><tr><th>직원</th><th>권한</th><th>상태</th><th>입사일</th><th>출근 시작일</th><th>계정</th><th>처리</th></tr></thead>
             <tbody>
               {filtered.map(e=>(
                 <tr key={e.id}>
@@ -1270,6 +1274,7 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
                   <td><select className="select" value={e.role} onChange={ev=>updateEmployee(e.id,{role:ev.target.value})}><option value="admin">관리자</option><option value="employee">직원</option></select></td>
                   <td><span className={`badge ${badgeClass(e.employment_status)}`}>{e.employment_status==="active"?"재직":"비활성"}</span></td>
                   <td><input className="input" type="date" value={e.joined_at??""} onChange={ev=>updateEmployee(e.id,{joined_at:ev.target.value})} /></td>
+                  <td><input className="input" type="date" value={e.work_start_date??e.joined_at??""} onChange={ev=>updateEmployee(e.id,{work_start_date:ev.target.value})} /></td>
                   <td><div className="actions"><button className="button ghost" onClick={()=>resetEmployeeNo(e)}>사번 변경</button><button className="button ghost" onClick={()=>resetPassword(e)}>비번 초기화</button></div></td>
                   <td><button className={e.employment_status==="active"?"button danger":"button secondary"} onClick={()=>toggleEmployee(e.id,e.employment_status)}>{e.employment_status==="active"?"비활성화":"활성화"}</button></td>
                 </tr>
@@ -1357,18 +1362,82 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
 
 function PayrollCard({ employees, absences, overrides }: { employees:any[]; absences:any[]; overrides:any[] }) {
   const [empId,setEmpId]=useState("");
-  const [salary,setSalary]=useState("");
+  const [pay,setPay]=useState({monthly:"",hourly:"",annual:"",weeklyDays:"",dailyHours:"",monthlyHours:""});
   const [payMsg,setPayMsg]=useState("");
   const emp=empId?employees.find(e=>e.id===empId):null;
-  useEffect(()=>{ if(emp){ setSalary((Number(emp.monthly_salary||0)).toLocaleString("ko-KR")); setPayMsg(""); } },[empId]);
+  function recalc(next:any, source:string) {
+    const weeklyDays=numberValue(next.weeklyDays);
+    const dailyHours=numberValue(next.dailyHours);
+    const calculatedMonthlyHours=weeklyDays>0&&dailyHours>0?Math.round(weeklyDays*dailyHours*4.345*10)/10:0;
+    const monthlyHours=source==="monthlyHours"?numberValue(next.monthlyHours):(calculatedMonthlyHours||numberValue(next.monthlyHours));
+    let monthly=numberValue(next.monthly);
+    let hourly=numberValue(next.hourly);
+    let annual=numberValue(next.annual);
+    if(["hourly","weeklyDays","dailyHours","monthlyHours"].includes(source)&&hourly>0&&monthlyHours>0){
+      monthly=Math.round(hourly*monthlyHours);
+      annual=monthly*12;
+    } else if(source==="annual"&&annual>0){
+      monthly=Math.round(annual/12);
+      hourly=monthlyHours>0?Math.round(monthly/monthlyHours):hourly;
+    } else if(monthly>0){
+      annual=monthly*12;
+      hourly=monthlyHours>0?Math.round(monthly/monthlyHours):hourly;
+    }
+    return {
+      monthly: monthly?monthly.toLocaleString("ko-KR"):"",
+      hourly: hourly?hourly.toLocaleString("ko-KR"):"",
+      annual: annual?annual.toLocaleString("ko-KR"):"",
+      weeklyDays: next.weeklyDays,
+      dailyHours: next.dailyHours,
+      monthlyHours: monthlyHours?String(monthlyHours):"",
+    };
+  }
+  function setPayField(field:string, raw:string) {
+    const value=["monthly","hourly","annual"].includes(field)?moneyInput(raw):raw.replace(/[^0-9.]/g,"");
+    setPay(p=>recalc({...p,[field]:value},field));
+  }
+  useEffect(()=>{
+    if(emp){
+      const weeklyDays=Number(emp.weekly_work_days||emp.work_days?.length||5);
+      const dailyHours=Number(emp.daily_work_hours||scheduleHours(emp.work_start,emp.work_end)||8);
+      const monthlyHours=Number(emp.monthly_standard_hours||Math.round(weeklyDays*dailyHours*4.345*10)/10);
+      const monthly=Number(emp.monthly_salary||0);
+      const hourly=Number(emp.hourly_wage||(monthly&&monthlyHours?Math.round(monthly/monthlyHours):0));
+      const annual=Number(emp.annual_salary||(monthly?monthly*12:0));
+      setPay(recalc({
+        monthly:monthly?monthly.toLocaleString("ko-KR"):"",
+        hourly:hourly?hourly.toLocaleString("ko-KR"):"",
+        annual:annual?annual.toLocaleString("ko-KR"):"",
+        weeklyDays:String(weeklyDays),
+        dailyHours:String(dailyHours),
+        monthlyHours:String(monthlyHours),
+      },"monthly"));
+      setPayMsg("");
+    }
+  },[empId]);
   async function saveSalary() {
     setPayMsg("");
     if(!empId) return setPayMsg("직원을 선택해주세요.");
-    const amount=Number(String(salary).replace(/[^0-9]/g,""))||0;
-    const {error}=await supabase.from("employees").update({monthly_salary:amount}).eq("id",empId);
-    if(error) setPayMsg(`월급 저장 실패: ${error.message}`); else setPayMsg("월급이 저장되었습니다.");
+    const monthly=numberValue(pay.monthly);
+    const hourly=numberValue(pay.hourly);
+    const annual=numberValue(pay.annual)||monthly*12;
+    const weeklyDays=numberValue(pay.weeklyDays);
+    const dailyHours=numberValue(pay.dailyHours);
+    const monthlyHours=numberValue(pay.monthlyHours);
+    const {error}=await supabase.from("employees").update({
+      monthly_salary:monthly,
+      hourly_wage:hourly,
+      annual_salary:annual,
+      weekly_work_days:weeklyDays,
+      daily_work_hours:dailyHours,
+      monthly_standard_hours:monthlyHours,
+    }).eq("id",empId);
+    if(error) setPayMsg(`급여 설정 저장 실패: ${error.message}`); else setPayMsg("급여 설정이 저장되었습니다.");
   }
-  const monthly=Number(String(salary).replace(/[^0-9]/g,""))||0;
+  const monthly=numberValue(pay.monthly);
+  const hourly=numberValue(pay.hourly);
+  const annual=numberValue(pay.annual)||monthly*12;
+  const monthlyHours=numberValue(pay.monthlyHours);
   const empAbs=absences.filter(a=>a.employee_id===empId&&a.unpaid);
   const month=currentMonthRange();
   const scheduledDays=emp?countScheduledWorkdays(emp, month.start, month.end, overrides):0;
@@ -1381,7 +1450,7 @@ function PayrollCard({ employees, absences, overrides }: { employees:any[]; abse
   return (
     <section className="card">
       <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산</h2>
-      <p className="subtle" style={{marginBottom:12}}>월 ÷ 30 결근공제 + 4대보험 정기분 추정치입니다. 연간 건강보험 정산분·장기요양 정산분·두루누리 지원분은 포함되지 않으므로 실제 명세서와 차이가 있을 수 있습니다.</p>
+      <p className="subtle" style={{marginBottom:12}}>시급, 월급, 연봉, 주 근무일, 일 근무시간, 월 소정근로시간 중 값을 바꾸면 나머지 기준값이 자동 계산됩니다. 4대보험은 정기분 추정치입니다.</p>
       <div className="grid two">
         <div className="form-row"><label className="label">직원</label>
           <select className="select" value={empId} onChange={e=>setEmpId(e.target.value)}>
@@ -1389,9 +1458,19 @@ function PayrollCard({ employees, absences, overrides }: { employees:any[]; abse
             {employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         </div>
-        <div className="form-row"><label className="label">월급 (원)</label><input className="input" value={salary} onChange={e=>setSalary((Number(e.target.value.replace(/[^0-9]/g,""))||0).toLocaleString("ko-KR"))} placeholder="예: 2,500,000" /></div>
+        <div className="form-row"><label className="label">월급 (원)</label><input className="input" value={pay.monthly} onChange={e=>setPayField("monthly",e.target.value)} placeholder="예: 2,500,000" /></div>
       </div>
-      <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>월급 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
+      <div className="grid three">
+        <div className="form-row"><label className="label">시급 (원)</label><input className="input" value={pay.hourly} onChange={e=>setPayField("hourly",e.target.value)} placeholder="예: 11,000" /></div>
+        <div className="form-row"><label className="label">연봉 (원)</label><input className="input" value={pay.annual} onChange={e=>setPayField("annual",e.target.value)} placeholder="예: 30,000,000" /></div>
+        <div className="form-row"><label className="label">월 소정근로시간</label><input className="input" value={pay.monthlyHours} onChange={e=>setPayField("monthlyHours",e.target.value)} placeholder="예: 209" /></div>
+      </div>
+      <div className="grid two">
+        <div className="form-row"><label className="label">주 근무일</label><input className="input" value={pay.weeklyDays} onChange={e=>setPayField("weeklyDays",e.target.value)} placeholder="예: 5" /></div>
+        <div className="form-row"><label className="label">일 근무시간</label><input className="input" value={pay.dailyHours} onChange={e=>setPayField("dailyHours",e.target.value)} placeholder="예: 8" /></div>
+      </div>
+      <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
+      {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 소정근로시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)}</div>}
       {empId&&monthly>0&&(
         <div className="table-wrap" style={{marginTop:8}}>
           <table>
