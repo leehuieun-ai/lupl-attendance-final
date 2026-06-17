@@ -8,6 +8,13 @@ alter table public.workplaces add constraint workplaces_visibility_check check (
 alter table public.employees add column if not exists work_days text[] not null default array['mon','tue','wed','thu','fri'];
 alter table public.employees add column if not exists work_start time not null default '09:00';
 alter table public.employees add column if not exists work_end time not null default '18:00';
+alter table public.employees add column if not exists work_start_date date;
+alter table public.employees add column if not exists monthly_salary numeric(12,0) not null default 0;
+alter table public.employees add column if not exists hourly_wage numeric(12,0) not null default 0;
+alter table public.employees add column if not exists annual_salary numeric(12,0) not null default 0;
+alter table public.employees add column if not exists weekly_work_days numeric(4,2) not null default 5;
+alter table public.employees add column if not exists daily_work_hours numeric(4,2) not null default 8;
+alter table public.employees add column if not exists monthly_standard_hours numeric(6,2) not null default 209;
 
 create or replace function public.check_in(
   p_workplace_id uuid,
