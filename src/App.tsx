@@ -956,8 +956,7 @@ function WorkplacePage({ employee }: { employee: any }) {
     const {error}=await supabase.from("workplaces").insert({name:p.place_name,type:reqType,address:p.road_address_name||p.address_name,kakao_place_id:p.id,lat:Number(p.y),lng:Number(p.x),radius_m:100,approval_status,is_active:isAdmin,visibility:reqPrivate?"private":"public",requested_by:employee.id,approved_by:isAdmin?employee.id:null});
     if(error) setMessage(error.message); else{setMessage(isAdmin?"승인된 근무지로 바로 추가되었습니다.":"근무지 승인 요청이 저장되었습니다.");setPlaces([]);setQuery("");await load();}
   }
-  function dedup(list:any[],t=100){const k:any[]=[]; for(const w of list){if(w.lat==null||w.lng==null){k.push(w);continue;}if(!k.some(x=>x.lat!=null&&distanceMeters(w.lat,w.lng,x.lat,x.lng)<=t))k.push(w);} return k;}
-  const approved=dedup(workplaces.filter(w=>w.approval_status==="approved"));
+  const approved=workplaces.filter(w=>w.approval_status==="approved");
   const pending=workplaces.filter(w=>w.approval_status==="pending");
   return (
     <div className="grid two">
@@ -985,9 +984,9 @@ function WorkplacePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-map" aria-hidden="true"></i>근무지 목록</h2>
         <h3>승인된 근무지</h3>
-        <DataTable rows={approved.map(w=>({이름:w.name,유형:workplaceTypeLabels[w.type]??w.type,공개:w.visibility==="private"?"나에게만":"전체",반경:`${w.radius_m}m`}))} />
+        <DataTable rows={approved.map(w=>({이름:w.name,주소:w.address??"-",유형:workplaceTypeLabels[w.type]??w.type,공개:w.visibility==="private"?"나에게만":"전체",반경:`${w.radius_m}m`,좌표:w.lat!=null&&w.lng!=null?`${Number(w.lat).toFixed(6)}, ${Number(w.lng).toFixed(6)}`:"-"}))} />
         <h3>승인 대기</h3>
-        <DataTable rows={pending.map(w=>({이름:w.name,유형:workplaceTypeLabels[w.type]??w.type,반경:`${w.radius_m}m`,요청자:w.requested_by===employee.id?"본인":"-"}))} />
+        <DataTable rows={pending.map(w=>({이름:w.name,주소:w.address??"-",유형:workplaceTypeLabels[w.type]??w.type,반경:`${w.radius_m}m`,요청자:w.requested_by===employee.id?"본인":"-"}))} />
       </section>
     </div>
   );
