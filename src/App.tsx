@@ -161,17 +161,11 @@ function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequ
   if(!log?.check_in_time||log?.check_out_time) return null;
   const dateIso=localDateStr(log.check_in_time);
   const sched=getScheduleForDate(employee,dateIso,overrides);
-  const scheduledStart=kstDateTime(dateIso,sched.work_start);
-  const scheduledEnd=kstDateTime(dateIso,sched.work_end);
   const startMin=timeToMinutes(sched.work_start) ?? 9*60;
   const endMin=timeToMinutes(sched.work_end) ?? 18*60;
-  const shiftSpanMinutes=endMin>startMin ? endMin-startMin : 9*60;
+  const shiftSpanMinutes=endMin>startMin ? endMin-startMin : (24*60-startMin)+endMin;
   const checkIn=new Date(log.check_in_time);
-  const flexLimit=kstDateTime(dateIso,"10:00");
-  let target=scheduledEnd;
-  if(checkIn.getTime()>scheduledStart.getTime()&&checkIn.getTime()<=flexLimit.getTime()){
-    target=addMinutes(checkIn,shiftSpanMinutes);
-  }
+  let target=addMinutes(checkIn,shiftSpanMinutes);
   const compEnd=latestCompEndForDate(compRequests,dateIso);
   return compEnd&&compEnd.getTime()>target.getTime()?compEnd:target;
 }
@@ -839,9 +833,12 @@ function HomePage({ employee }: { employee: any }) {
           <button className="button secondary punch" disabled={busy||openLogs.length===0} onClick={()=>checkedIn?checkOut():closeSpecificLog(openLogs[0])}>퇴근하기</button>
         </div>
         {checkedIn&&!checkedOut&&reminderTarget&&(
-          <div className="alert" style={{marginTop:12}}>
-            <b>퇴근 알림</b> 기준 {timeOnly(reminderTarget.toISOString())} · 5분 전, 5분/15분/30분 후 알림
-            {activeCompRows.length>0&&<span> · 추가근무 반영</span>}
+          <div className="alert reminder-card" style={{marginTop:12}}>
+            <div className="reminder-head">
+              <span className="reminder-label">퇴근 알림 기준</span>
+              <b className="reminder-time">{timeOnly(reminderTarget.toISOString())}</b>
+            </div>
+            <p className="reminder-desc">퇴근 5분 전, 퇴근 후 5분 · 15분 · 30분에 알려드립니다.{activeCompRows.length>0?" 추가근무 시간이 반영되었습니다.":""}</p>
             {lastReminderMessage&&<p className="subtle" style={{marginTop:6}}>최근 알림: {lastReminderMessage}</p>}
             {notificationPermission!=="granted"&&(
               <div style={{marginTop:10}}>
@@ -925,13 +922,15 @@ function HomePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-device-mobile" aria-hidden="true"></i>내 기기</h2>
         <p className="body-text" style={{marginBottom:14}}>등록 가능 기기 <b>{employee.device_limit??3}대</b>. 한도 내에서는 자동 승인되고, 초과 시 관리자 승인이 필요합니다.</p>
-        <div className="alert" style={{marginBottom:14}}>
-          <b>브라우저 알림</b> {notificationPermission==="granted"?"허용됨":"퇴근 전/후 알림을 받으려면 허용이 필요합니다."}
-          {isIosLike()&&!isStandalonePwa()&&<p className="subtle" style={{marginTop:6}}>iPhone은 Safari 탭이 아니라 홈 화면에 추가한 앱에서 알림을 켜주세요.</p>}
-          <div className="actions" style={{marginTop:10}}>
-            {notificationPermission!=="granted"&&<button className="button secondary" onClick={enableCheckoutReminders}><i className="ti ti-bell" aria-hidden="true"></i>알림 켜기</button>}
-            <button className="button ghost" onClick={sendTestCheckoutNotification}><i className="ti ti-bell-ringing" aria-hidden="true"></i>테스트 알림</button>
+        <div className="alert browser-alert" style={{marginBottom:14}}>
+          <div className="browser-alert-main">
+            <span><b>브라우저 알림</b> {notificationPermission==="granted"?"허용됨":"허용 필요"}</span>
+            <div className="browser-alert-actions">
+              {notificationPermission!=="granted"&&<button className="button secondary compact" onClick={enableCheckoutReminders}><i className="ti ti-bell" aria-hidden="true"></i>알림 켜기</button>}
+              <button className="button ghost compact" onClick={sendTestCheckoutNotification}><i className="ti ti-bell-ringing" aria-hidden="true"></i>테스트 알림</button>
+            </div>
           </div>
+          {isIosLike()&&!isStandalonePwa()&&<p className="subtle" style={{marginTop:6}}>iPhone은 Safari 탭이 아니라 홈 화면에 추가한 앱에서 알림을 켜주세요.</p>}
         </div>
         {shownDevices.length===0&&<p className="body-text" style={{color:"#8b94a6"}}>아직 등록된 기기가 없습니다.</p>}
         {approvedDevices.length>1&&<p className="subtle" style={{marginBottom:10}}>승인된 기기는 최근 접속한 1대만 표시합니다.</p>}
