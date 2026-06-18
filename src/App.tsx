@@ -130,6 +130,58 @@ function timeDiffHours(start: string, end: string) {
 function numberValue(v:any){return Number(String(v??"").replace(/[^0-9.]/g,""))||0;}
 function moneyInput(v:any){return (Number(String(v??"").replace(/[^0-9]/g,""))||0).toLocaleString("ko-KR");}
 function scheduleHours(start?:string|null,end?:string|null){return start&&end?timeDiffHours(String(start).slice(0,5),String(end).slice(0,5)):8;}
+function timeToMinutes(time?: string | null) {
+  if (!time) return null;
+  const [h, m] = String(time).slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+function kstDateTime(dateIso: string, time?: string | null) {
+  const hhmm = String(time || "18:00").slice(0, 5);
+  return new Date(`${dateIso}T${hhmm}:00+09:00`);
+}
+function addMinutes(d: Date, minutes: number) {
+  return new Date(d.getTime() + minutes * 60000);
+}
+function approvedOrPendingCompRequests(list:any[]) {
+  return list.filter((r:any)=>["approved","pending"].includes(r.status));
+}
+function latestCompEndForDate(compRequests:any[], dateIso:string) {
+  return approvedOrPendingCompRequests(compRequests)
+    .filter((r:any)=>r.work_date===dateIso&&r.end_time)
+    .reduce((latest:Date|null,r:any)=>{
+      let end=kstDateTime(dateIso,r.end_time);
+      const startMin=timeToMinutes(r.start_time);
+      const endMin=timeToMinutes(r.end_time);
+      if(startMin!=null&&endMin!=null&&endMin<=startMin) end=addMinutes(end,24*60);
+      return !latest||end.getTime()>latest.getTime()?end:latest;
+    },null);
+}
+function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequests:any[]) {
+  if(!log?.check_in_time||log?.check_out_time) return null;
+  const dateIso=localDateStr(log.check_in_time);
+  const sched=getScheduleForDate(employee,dateIso,overrides);
+  const scheduledStart=kstDateTime(dateIso,sched.work_start);
+  const scheduledEnd=kstDateTime(dateIso,sched.work_end);
+  const startMin=timeToMinutes(sched.work_start) ?? 9*60;
+  const endMin=timeToMinutes(sched.work_end) ?? 18*60;
+  const shiftSpanMinutes=endMin>startMin ? endMin-startMin : 9*60;
+  const checkIn=new Date(log.check_in_time);
+  const flexLimit=kstDateTime(dateIso,"10:00");
+  let target=scheduledEnd;
+  if(checkIn.getTime()>scheduledStart.getTime()&&checkIn.getTime()<=flexLimit.getTime()){
+    target=addMinutes(checkIn,shiftSpanMinutes);
+  }
+  const compEnd=latestCompEndForDate(compRequests,dateIso);
+  return compEnd&&compEnd.getTime()>target.getTime()?compEnd:target;
+}
+function readSentReminderKeys() {
+  try {
+    return new Set<string>(JSON.parse(localStorage.getItem("lupl_checkout_reminders_sent") || "[]"));
+  } catch {
+    return new Set<string>();
+  }
+}
 
 function dateFromIso(iso: string) { return new Date(`${iso}T00:00:00`); }
 function addLocalDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
@@ -483,8 +535,16 @@ function HomePage({ employee }: { employee: any }) {
   const [expandedLogId,setExpandedLogId] = useState<string|null>(null);
   const [recheckAsk,setRecheckAsk] = useState<any|null>(null);
   const [recheckMode,setRecheckMode] = useState(false);
+  const [compTimeRows,setCompTimeRows] = useState<any[]>([]);
+  const [todayOverrides,setTodayOverrides] = useState<any[]>([]);
+  const [notificationPermission,setNotificationPermission] = useState<NotificationPermission|"unsupported">("unsupported");
+  const sentReminderKeys = useRef<Set<string>>(new Set());
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t); },[]);
+  useEffect(()=>{
+    sentReminderKeys.current=readSentReminderKeys();
+    setNotificationPermission("Notification" in window ? Notification.permission : "unsupported");
+  },[]);
 
   async function loadDevices() {
     const {data}=await supabase.from("registered_devices").select("*").eq("employee_id",employee.id).order("created_at",{ascending:false});
@@ -507,12 +567,17 @@ function HomePage({ employee }: { employee: any }) {
     try { const {fingerprintHash}=await getDeviceFingerprint(); setThisFp(fingerprintHash); } catch {/**/}
   }
   async function load() {
-    const [{data:places},{data:logs},{data:openLogs}]=await Promise.all([
+    const today=todayIso();
+    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides}]=await Promise.all([
       supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name"),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("check_in_time",{ascending:false}).limit(10),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).is("check_out_time",null).order("check_in_time",{ascending:false}),
+      supabase.from("comp_time_requests").select("*").eq("employee_id",employee.id).eq("work_date",today).in("status",["pending","approved"]).order("start_time"),
+      supabase.from("weekly_schedule_overrides").select("*").eq("employee_id",employee.id).eq("week_start",weekStartIso(today)).limit(1),
     ]);
     setWorkplaces(places??[]);
+    setCompTimeRows(compRows??[]);
+    setTodayOverrides(overrides??[]);
     const merged=uniqueLogs([...(openLogs??[]), ...(logs??[])]).sort(byCheckInDesc);
     setOpenLogRows(openLogs??[]);
     setTodayLog(merged.find((l:any)=>isToday(l.check_in_time))??null);
@@ -520,6 +585,46 @@ function HomePage({ employee }: { employee: any }) {
     await loadDevices();
   }
   useEffect(()=>{ load(); },[]);
+
+  function rememberSentReminder(key:string) {
+    sentReminderKeys.current.add(key);
+    try {
+      localStorage.setItem("lupl_checkout_reminders_sent", JSON.stringify(Array.from(sentReminderKeys.current).slice(-200)));
+    } catch {/**/}
+  }
+  async function enableCheckoutReminders() {
+    if(!("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      setMessage("이 브라우저는 알림을 지원하지 않습니다.");
+      return;
+    }
+    if(Notification.permission==="granted") {
+      setNotificationPermission("granted");
+      setMessage("퇴근 알림이 켜져 있습니다.");
+      return;
+    }
+    const permission=await Notification.requestPermission();
+    setNotificationPermission(permission);
+    setMessage(permission==="granted"?"퇴근 알림이 켜졌습니다.":"브라우저 알림 권한이 허용되지 않았습니다.");
+  }
+  async function sendTestCheckoutNotification() {
+    if(!("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      setMessage("이 브라우저는 알림을 지원하지 않습니다.");
+      return;
+    }
+    if(Notification.permission!=="granted") {
+      await enableCheckoutReminders();
+      return;
+    }
+    const n=new Notification("퇴근 알림 테스트",{
+      body:"이 알림이 보이면 이 컴퓨터에서도 퇴근 알림을 받을 수 있습니다.",
+      icon:"/wave-192-transparent.png",
+      tag:"checkout-test",
+    });
+    n.onclick=()=>{ window.focus(); n.close(); };
+    setMessage("테스트 알림을 보냈습니다.");
+  }
 
   async function registerThisDevice() {
     setMessage("");
@@ -641,6 +746,47 @@ function HomePage({ employee }: { employee: any }) {
   const thisDevice=thisFp?myDevices.find(d=>d.fingerprint_hash===thisFp):null;
   const approvedDevices=myDevices.filter(d=>d.status==="approved").sort((a,b)=>new Date(b.last_seen_at).getTime()-new Date(a.last_seen_at).getTime());
   const shownDevices=[...approvedDevices.slice(0,1),...myDevices.filter(d=>d.status!=="approved")];
+  const reminderTarget=checkoutReminderTarget(todayLog,employee,todayOverrides,compTimeRows);
+  const reminderTargetTime=reminderTarget?.getTime() ?? null;
+  const activeCompRows=approvedOrPendingCompRequests(compTimeRows);
+  const reminderOffsets=[-5,5,15,30];
+
+  useEffect(()=>{
+    if(!todayLog?.id||!todayLog?.check_in_time||todayLog?.check_out_time||!reminderTargetTime) return;
+    let checking=false;
+    const checkReminder=async()=>{
+      if(checking||!("Notification" in window)||Notification.permission!=="granted") return;
+      const nowMs=Date.now();
+      const dueOffset=reminderOffsets.find(offset=>{
+        const dueAt=reminderTargetTime+offset*60000;
+        const key=`${todayLog.id}:${offset}`;
+        if(sentReminderKeys.current.has(key)||nowMs<dueAt) return false;
+        return offset<0 ? nowMs<reminderTargetTime : true;
+      });
+      if(!dueOffset) return;
+      checking=true;
+      try {
+        const {data}=await supabase.from("attendance_logs").select("check_out_time").eq("id",todayLog.id).maybeSingle();
+        if(data?.check_out_time) {
+          await load();
+          return;
+        }
+        const isBefore=dueOffset<0;
+        const title=isBefore ? `퇴근 ${Math.abs(dueOffset)}분 전이에요` : `퇴근 처리 ${dueOffset}분 지났어요`;
+        const body=isBefore
+          ? `곧 퇴근 기준 시각입니다. 기준 시각: ${timeOnly(new Date(reminderTargetTime).toISOString())}`
+          : `퇴근 버튼을 누르지 않았다면 지금 퇴근 처리해주세요. 기준 시각: ${timeOnly(new Date(reminderTargetTime).toISOString())}`;
+        const n=new Notification(title,{body,icon:"/wave-192-transparent.png",tag:`checkout-${todayLog.id}-${dueOffset}`});
+        n.onclick=()=>{ window.focus(); n.close(); };
+        rememberSentReminder(`${todayLog.id}:${dueOffset}`);
+      } finally {
+        checking=false;
+      }
+    };
+    checkReminder();
+    const timer=window.setInterval(checkReminder,60000);
+    return()=>window.clearInterval(timer);
+  },[todayLog?.id,todayLog?.check_in_time,todayLog?.check_out_time,reminderTargetTime,notificationPermission]);
 
   let flexNote="";
   if(checkedIn&&!checkedOut&&todayLog?.check_in_time){
@@ -663,6 +809,22 @@ function HomePage({ employee }: { employee: any }) {
           <button className="button punch" disabled={busy||hasBlockingOpenLog} onClick={handleCheckInClick}>출근하기</button>
           <button className="button secondary punch" disabled={busy||openLogs.length===0} onClick={()=>checkedIn?checkOut():closeSpecificLog(openLogs[0])}>퇴근하기</button>
         </div>
+        {checkedIn&&!checkedOut&&reminderTarget&&(
+          <div className="alert" style={{marginTop:12}}>
+            <b>퇴근 알림</b> 기준 {timeOnly(reminderTarget.toISOString())} · 5분 전, 5분/15분/30분 후 알림
+            {activeCompRows.length>0&&<span> · 추가근무 반영</span>}
+            {notificationPermission!=="granted"&&(
+              <div style={{marginTop:10}}>
+                <button className="button secondary" onClick={enableCheckoutReminders}>
+                  <i className="ti ti-bell" aria-hidden="true"></i>
+                  퇴근 알림 켜기
+                </button>
+                {notificationPermission==="denied"&&<p className="subtle" style={{marginTop:6}}>브라우저 설정에서 이 사이트의 알림을 허용해야 합니다.</p>}
+                {notificationPermission==="unsupported"&&<p className="subtle" style={{marginTop:6}}>이 브라우저에서는 알림을 지원하지 않습니다.</p>}
+              </div>
+            )}
+          </div>
+        )}
         {flexNote&&<p className="subtle" style={{marginTop:8,textAlign:"center",color:"#0b9b6a"}}>{flexNote}</p>}
         <p className="subtle" style={{marginTop:6,textAlign:"center"}}>휴게 12:00–13:00 자동 · 10시까지 자유 시차출근</p>
         <WorkTypeToggle employee={employee} todayLog={todayLog} onChanged={load} />
@@ -733,6 +895,13 @@ function HomePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-device-mobile" aria-hidden="true"></i>내 기기</h2>
         <p className="body-text" style={{marginBottom:14}}>등록 가능 기기 <b>{employee.device_limit??3}대</b>. 한도 내에서는 자동 승인되고, 초과 시 관리자 승인이 필요합니다.</p>
+        <div className="alert" style={{marginBottom:14}}>
+          <b>브라우저 알림</b> {notificationPermission==="granted"?"허용됨":"퇴근 전/후 알림을 받으려면 허용이 필요합니다."}
+          <div className="actions" style={{marginTop:10}}>
+            {notificationPermission!=="granted"&&<button className="button secondary" onClick={enableCheckoutReminders}><i className="ti ti-bell" aria-hidden="true"></i>알림 켜기</button>}
+            <button className="button ghost" onClick={sendTestCheckoutNotification}><i className="ti ti-bell-ringing" aria-hidden="true"></i>테스트 알림</button>
+          </div>
+        </div>
         {shownDevices.length===0&&<p className="body-text" style={{color:"#8b94a6"}}>아직 등록된 기기가 없습니다.</p>}
         {approvedDevices.length>1&&<p className="subtle" style={{marginBottom:10}}>승인된 기기는 최근 접속한 1대만 표시합니다.</p>}
         {shownDevices.map(d=>(
