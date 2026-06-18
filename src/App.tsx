@@ -484,7 +484,22 @@ function HomePage({ employee }: { employee: any }) {
 
   async function loadDevices() {
     const {data}=await supabase.from("registered_devices").select("*").eq("employee_id",employee.id).order("created_at",{ascending:false});
-    setMyDevices(data??[]);
+    const latestByDevice=new Map<string,any>();
+    for(const device of data??[]){
+      const info=device.device_info??{};
+      const key=[
+        info.platform??"",
+        info.screen??"",
+        info.hardwareConcurrency??"",
+        info.language??"",
+        info.timezone??"",
+      ].join("|")||device.fingerprint_hash;
+      const current=latestByDevice.get(key);
+      if(!current||new Date(device.last_seen_at).getTime()>new Date(current.last_seen_at).getTime()){
+        latestByDevice.set(key,device);
+      }
+    }
+    setMyDevices(Array.from(latestByDevice.values()).sort((a,b)=>new Date(b.last_seen_at).getTime()-new Date(a.last_seen_at).getTime()));
     try { const {fingerprintHash}=await getDeviceFingerprint(); setThisFp(fingerprintHash); } catch {/**/}
   }
   async function load() {
@@ -620,6 +635,8 @@ function HomePage({ employee }: { employee: any }) {
   const checkedIn=!!todayLog?.check_in_time; const checkedOut=!!todayLog?.check_out_time;
   const worked=workedMinutes(todayLog?.check_in_time,todayLog?.check_out_time);
   const thisDevice=thisFp?myDevices.find(d=>d.fingerprint_hash===thisFp):null;
+  const approvedDevices=myDevices.filter(d=>d.status==="approved").sort((a,b)=>new Date(b.last_seen_at).getTime()-new Date(a.last_seen_at).getTime());
+  const shownDevices=[...approvedDevices.slice(0,1),...myDevices.filter(d=>d.status!=="approved")];
 
   let flexNote="";
   if(checkedIn&&!checkedOut&&todayLog?.check_in_time){
@@ -712,8 +729,9 @@ function HomePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-device-mobile" aria-hidden="true"></i>내 기기</h2>
         <p className="body-text" style={{marginBottom:14}}>등록 가능 기기 <b>{employee.device_limit??3}대</b>. 한도 내에서는 자동 승인되고, 초과 시 관리자 승인이 필요합니다.</p>
-        {myDevices.length===0&&<p className="body-text" style={{color:"#8b94a6"}}>아직 등록된 기기가 없습니다.</p>}
-        {myDevices.map(d=>(
+        {shownDevices.length===0&&<p className="body-text" style={{color:"#8b94a6"}}>아직 등록된 기기가 없습니다.</p>}
+        {approvedDevices.length>1&&<p className="subtle" style={{marginBottom:10}}>승인된 기기는 최근 접속한 1대만 표시합니다.</p>}
+        {shownDevices.map(d=>(
           <div className="device-row" key={d.id}>
             <div>
               <p style={{margin:0,fontWeight:600,fontSize:15}}>{d.device_info?.platform||"알 수 없는 기기"}{thisFp&&d.fingerprint_hash===thisFp&&<span style={{marginLeft:6,fontSize:12,color:"#3a6df0",fontWeight:700}}>현재 기기</span>}</p>
@@ -940,8 +958,12 @@ function LeavePage({ employee }: { employee: any }) {
 function WorkplacePage({ employee }: { employee: any }) {
   const [query,setQuery]=useState(""); const [places,setPlaces]=useState<any[]>([]); const [workplaces,setWorkplaces]=useState<any[]>([]); const [message,setMessage]=useState("");
   const [reqType,setReqType]=useState("special_school"); const [reqPrivate,setReqPrivate]=useState(false);
+  const [editing,setEditing]=useState<any|null>(null);
   const isAdmin=employee.role==="admin";
-  async function load() { const {data}=await supabase.from("workplaces").select("*").order("created_at",{ascending:false}); setWorkplaces(data??[]); }
+  async function load() {
+    const {data}=await supabase.from("workplaces").select("*").neq("approval_status","rejected").order("created_at",{ascending:false});
+    setWorkplaces(data??[]);
+  }
   useEffect(()=>{load();},[]);
   async function search() {
     setMessage(""); setPlaces([]);
@@ -963,6 +985,41 @@ function WorkplacePage({ employee }: { employee: any }) {
     const approval_status=isAdmin?"approved":"pending";
     const {error}=await supabase.from("workplaces").insert({name:p.place_name,type:reqType,address:p.road_address_name||p.address_name,kakao_place_id:p.id,lat:Number(p.y),lng:Number(p.x),radius_m:100,approval_status,is_active:isAdmin,visibility:reqPrivate?"private":"public",requested_by:employee.id,approved_by:isAdmin?employee.id:null});
     if(error) setMessage(error.message); else{setMessage(isAdmin?`${p.place_name}이(가) 승인된 근무지로 바로 추가되었습니다.`:`${p.place_name} 근무지 승인 요청이 저장되었습니다.`);setPlaces([]);setQuery("");await load();}
+  }
+  async function saveWorkplace() {
+    if(!editing?.id) return;
+    const name=String(editing.name??"").trim();
+    if(!name) return setMessage("근무지 이름을 입력해주세요.");
+    const radius=Math.max(20,Math.min(1000,Number(editing.radius_m)||100));
+    const type=/(집|자택|재택|home)/i.test(name)? "remote" : editing.type;
+    const {error}=await supabase.from("workplaces").update({
+      name,
+      address:String(editing.address??"").trim()||null,
+      type,
+      radius_m:radius,
+      visibility:editing.visibility==="private"?"private":"public",
+      updated_at:new Date().toISOString(),
+    }).eq("id",editing.id);
+    if(error) setMessage(error.message);
+    else {
+      setMessage(`${name} 근무지 정보를 수정했습니다.${type==="remote"?" 이제 출근 시 자동으로 재택 처리됩니다.":""}`);
+      setEditing(null);
+      await load();
+    }
+  }
+  async function archiveWorkplace(w:any) {
+    if(!window.confirm(`${w.name} 근무지를 삭제할까요?\n과거 출근 기록은 유지되고 새 출근 위치에서는 제외됩니다.`)) return;
+    const {error}=await supabase.from("workplaces").update({
+      approval_status:"rejected",
+      is_active:false,
+      updated_at:new Date().toISOString(),
+    }).eq("id",w.id);
+    if(error) setMessage(error.message);
+    else {
+      setMessage(`${w.name} 근무지를 삭제했습니다.`);
+      if(editing?.id===w.id) setEditing(null);
+      await load();
+    }
   }
   const approved=workplaces.filter(w=>w.approval_status==="approved");
   const pending=workplaces.filter(w=>w.approval_status==="pending");
@@ -995,10 +1052,50 @@ function WorkplacePage({ employee }: { employee: any }) {
           <h3 style={{margin:0}}>승인된 근무지 {approved.length>0&&<span className="count-badge">{approved.length}</span>}</h3>
           <button className="button ghost" onClick={load}><i className="ti ti-refresh" aria-hidden="true"></i>새로고침</button>
         </div>
-        <DataTable rows={approved.map(w=>({이름:w.name,주소:w.address??"-",유형:workplaceTypeLabels[w.type]??w.type,공개:w.visibility==="private"?"나에게만":"전체",반경:`${w.radius_m}m`,좌표:w.lat!=null&&w.lng!=null?`${Number(w.lat).toFixed(6)}, ${Number(w.lng).toFixed(6)}`:"-"}))} />
+        {approved.length===0&&<p className="subtle">승인된 근무지가 없습니다.</p>}
+        {approved.map(w=>(
+          <div className="list-row" key={w.id}>
+            <div>
+              <b>{w.name}</b>
+              <div className="subtle">{w.address??"주소 없음"} · {workplaceTypeLabels[w.type]??w.type} · 반경 {w.radius_m}m · {w.visibility==="private"?"나에게만":"전체 공개"}</div>
+            </div>
+            {isAdmin&&<div className="actions">
+              <button className="button ghost" title="근무지 수정" onClick={()=>setEditing({...w})}><i className="ti ti-edit" aria-hidden="true"></i>수정</button>
+              <button className="button danger" title="근무지 삭제" onClick={()=>archiveWorkplace(w)}><i className="ti ti-trash" aria-hidden="true"></i>삭제</button>
+            </div>}
+          </div>
+        ))}
         <h3>승인 대기 {pending.length>0&&<span className="count-badge">{pending.length}</span>}</h3>
-        <DataTable rows={pending.map(w=>({이름:w.name,주소:w.address??"-",유형:workplaceTypeLabels[w.type]??w.type,반경:`${w.radius_m}m`,요청자:w.requested_by===employee.id?"본인":"-"}))} />
+        {pending.length===0&&<p className="subtle">승인 대기 근무지가 없습니다.</p>}
+        {pending.map(w=>(
+          <div className="list-row" key={w.id}>
+            <div><b>{w.name}</b><div className="subtle">{w.address??"주소 없음"} · {workplaceTypeLabels[w.type]??w.type} · 반경 {w.radius_m}m</div></div>
+            {isAdmin&&<div className="actions">
+              <button className="button ghost" title="근무지 수정" onClick={()=>setEditing({...w})}><i className="ti ti-edit" aria-hidden="true"></i>수정</button>
+              <button className="button danger" title="근무지 삭제" onClick={()=>archiveWorkplace(w)}><i className="ti ti-trash" aria-hidden="true"></i>삭제</button>
+            </div>}
+          </div>
+        ))}
       </section>
+      {editing&&(
+        <div className="modal-backdrop" onClick={()=>setEditing(null)}>
+          <div className="modal-box" style={{maxWidth:520}} onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="card-title" style={{margin:0}}><i className="ti ti-map-pin-cog" aria-hidden="true"></i>근무지 수정</h2>
+              <button className="modal-close" title="닫기" onClick={()=>setEditing(null)}><i className="ti ti-x" aria-hidden="true"></i></button>
+            </div>
+            <div className="form-row"><label className="label">이름</label><input className="input" value={editing.name??""} onChange={e=>setEditing({...editing,name:e.target.value})} /></div>
+            <div className="form-row"><label className="label">주소</label><input className="input" value={editing.address??""} onChange={e=>setEditing({...editing,address:e.target.value})} /></div>
+            <div className="grid two">
+              <div className="form-row"><label className="label">유형</label><select className="select" value={editing.type} onChange={e=>setEditing({...editing,type:e.target.value})}>{Object.entries(workplaceTypeLabels).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></div>
+              <div className="form-row"><label className="label">GPS 인식 반경(m)</label><input className="input" type="number" min="20" max="1000" value={editing.radius_m??100} onChange={e=>setEditing({...editing,radius_m:Number(e.target.value)})} /></div>
+            </div>
+            <div className="form-row"><label className="label">공개 범위</label><select className="select" value={editing.visibility??"public"} onChange={e=>setEditing({...editing,visibility:e.target.value})}><option value="public">전체 공개</option><option value="private">나에게만 (집 등)</option></select></div>
+            <div className="alert">집 또는 자택은 유형을 <b>재택</b>으로 지정하면 GPS 확인 후 출근 상태가 자동으로 재택으로 기록됩니다.</div>
+            <div className="modal-actions"><button className="button" onClick={saveWorkplace}><i className="ti ti-check" aria-hidden="true"></i>저장</button><button className="button ghost" onClick={()=>setEditing(null)}>취소</button></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
