@@ -182,6 +182,29 @@ function readSentReminderKeys() {
     return new Set<string>();
   }
 }
+function isIosLike() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function isStandalonePwa() {
+  return window.matchMedia?.("(display-mode: standalone)")?.matches || (navigator as any).standalone === true;
+}
+async function showBrowserNotification(title: string, options: NotificationOptions = {}) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return false;
+  try {
+    if ("serviceWorker" in navigator) {
+      const registration = await navigator.serviceWorker.ready;
+      await registration.showNotification(title, options);
+      return true;
+    }
+  } catch {/**/}
+  try {
+    const n = new Notification(title, options);
+    n.onclick = () => { window.focus(); n.close(); };
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function dateFromIso(iso: string) { return new Date(`${iso}T00:00:00`); }
 function addLocalDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
@@ -538,6 +561,7 @@ function HomePage({ employee }: { employee: any }) {
   const [compTimeRows,setCompTimeRows] = useState<any[]>([]);
   const [todayOverrides,setTodayOverrides] = useState<any[]>([]);
   const [notificationPermission,setNotificationPermission] = useState<NotificationPermission|"unsupported">("unsupported");
+  const [lastReminderMessage,setLastReminderMessage] = useState("");
   const sentReminderKeys = useRef<Set<string>>(new Set());
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t); },[]);
@@ -595,7 +619,9 @@ function HomePage({ employee }: { employee: any }) {
   async function enableCheckoutReminders() {
     if(!("Notification" in window)) {
       setNotificationPermission("unsupported");
-      setMessage("이 브라우저는 알림을 지원하지 않습니다.");
+      setMessage(isIosLike()&&!isStandalonePwa()
+        ? "iPhone Safari에서는 먼저 공유 버튼 → 홈 화면에 추가 후, 홈 화면 앱으로 열어야 알림을 켤 수 있습니다."
+        : "이 브라우저는 알림을 지원하지 않습니다.");
       return;
     }
     if(Notification.permission==="granted") {
@@ -610,20 +636,22 @@ function HomePage({ employee }: { employee: any }) {
   async function sendTestCheckoutNotification() {
     if(!("Notification" in window)) {
       setNotificationPermission("unsupported");
-      setMessage("이 브라우저는 알림을 지원하지 않습니다.");
+      setMessage(isIosLike()&&!isStandalonePwa()
+        ? "iPhone Safari에서는 먼저 공유 버튼 → 홈 화면에 추가 후, 홈 화면 앱으로 열어야 알림을 켤 수 있습니다."
+        : "이 브라우저는 알림을 지원하지 않습니다.");
       return;
     }
     if(Notification.permission!=="granted") {
       await enableCheckoutReminders();
       return;
     }
-    const n=new Notification("퇴근 알림 테스트",{
+    const ok=await showBrowserNotification("퇴근 알림 테스트",{
       body:"이 알림이 보이면 이 컴퓨터에서도 퇴근 알림을 받을 수 있습니다.",
       icon:"/wave-192-transparent.png",
       tag:"checkout-test",
     });
-    n.onclick=()=>{ window.focus(); n.close(); };
-    setMessage("테스트 알림을 보냈습니다.");
+    setLastReminderMessage("테스트 알림을 보냈습니다.");
+    setMessage(ok?"테스트 알림을 보냈습니다.":"알림 전송을 시도했지만 브라우저가 표시하지 않았습니다. OS 알림 설정을 확인해주세요.");
   }
 
   async function registerThisDevice() {
@@ -776,9 +804,10 @@ function HomePage({ employee }: { employee: any }) {
         const body=isBefore
           ? `곧 퇴근 기준 시각입니다. 기준 시각: ${timeOnly(new Date(reminderTargetTime).toISOString())}`
           : `퇴근 버튼을 누르지 않았다면 지금 퇴근 처리해주세요. 기준 시각: ${timeOnly(new Date(reminderTargetTime).toISOString())}`;
-        const n=new Notification(title,{body,icon:"/wave-192-transparent.png",tag:`checkout-${todayLog.id}-${dueOffset}`});
-        n.onclick=()=>{ window.focus(); n.close(); };
-        rememberSentReminder(`${todayLog.id}:${dueOffset}`);
+        setLastReminderMessage(`${title} · ${body}`);
+        setMessage(`${title} ${body}`);
+        const ok=await showBrowserNotification(title,{body,icon:"/wave-192-transparent.png",tag:`checkout-${todayLog.id}-${dueOffset}`});
+        if(ok) rememberSentReminder(`${todayLog.id}:${dueOffset}`);
       } finally {
         checking=false;
       }
@@ -813,6 +842,7 @@ function HomePage({ employee }: { employee: any }) {
           <div className="alert" style={{marginTop:12}}>
             <b>퇴근 알림</b> 기준 {timeOnly(reminderTarget.toISOString())} · 5분 전, 5분/15분/30분 후 알림
             {activeCompRows.length>0&&<span> · 추가근무 반영</span>}
+            {lastReminderMessage&&<p className="subtle" style={{marginTop:6}}>최근 알림: {lastReminderMessage}</p>}
             {notificationPermission!=="granted"&&(
               <div style={{marginTop:10}}>
                 <button className="button secondary" onClick={enableCheckoutReminders}>
@@ -897,6 +927,7 @@ function HomePage({ employee }: { employee: any }) {
         <p className="body-text" style={{marginBottom:14}}>등록 가능 기기 <b>{employee.device_limit??3}대</b>. 한도 내에서는 자동 승인되고, 초과 시 관리자 승인이 필요합니다.</p>
         <div className="alert" style={{marginBottom:14}}>
           <b>브라우저 알림</b> {notificationPermission==="granted"?"허용됨":"퇴근 전/후 알림을 받으려면 허용이 필요합니다."}
+          {isIosLike()&&!isStandalonePwa()&&<p className="subtle" style={{marginTop:6}}>iPhone은 Safari 탭이 아니라 홈 화면에 추가한 앱에서 알림을 켜주세요.</p>}
           <div className="actions" style={{marginTop:10}}>
             {notificationPermission!=="granted"&&<button className="button secondary" onClick={enableCheckoutReminders}><i className="ti ti-bell" aria-hidden="true"></i>알림 켜기</button>}
             <button className="button ghost" onClick={sendTestCheckoutNotification}><i className="ti ti-bell-ringing" aria-hidden="true"></i>테스트 알림</button>
