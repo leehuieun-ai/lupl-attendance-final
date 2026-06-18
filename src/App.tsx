@@ -340,14 +340,18 @@ export default function App() {
           supabase.from("attendance_requests").select("id, status"),
           supabase.from("comp_time_requests").select("id, status"),
           supabase.from("registered_devices").select("id, status"),
-          supabase.from("attendance_logs").select("id, status, check_out_time"),
+          supabase.from("attendance_logs").select("id, status, check_in_time, check_out_time"),
         ]);
         setPendingCount(
           (w.data??[]).filter((x:any)=>x.approval_status==="pending").length +
           (rq.data??[]).filter((x:any)=>x.status==="pending").length +
           (c.data??[]).filter((x:any)=>x.status==="pending").length +
           (d.data??[]).filter((x:any)=>x.status==="pending").length +
-          (lg.data??[]).filter((x:any)=>!x.check_out_time || ["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음"].includes(x.status)).length
+          (lg.data??[]).filter((x:any)=>{
+            const openToday=!x.check_out_time&&isToday(x.check_in_time);
+            if(x.status==="확인 완료"||openToday) return false;
+            return !x.check_out_time||["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음"].includes(x.status);
+          }).length
         );
       } else setPendingCount(0);
     } else setConsent(null);
