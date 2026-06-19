@@ -1,3 +1,5 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -9,6 +11,31 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+async function requireActiveEmployee(req: Request) {
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader) return { error: json({ documents: [], error: "로그인이 필요합니다." }, 401) };
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supabaseUrl || !anonKey) {
+    return { error: json({ documents: [], error: "Supabase Secret 설정이 부족합니다." }, 500) };
+  }
+
+  const userClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
+  const { data: { user }, error: userError } = await userClient.auth.getUser();
+  if (userError || !user) return { error: json({ documents: [], error: "로그인 정보를 확인할 수 없습니다." }, 401) };
+
+  const { data: employee } = await userClient
+    .from("employees")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .eq("employment_status", "active")
+    .maybeSingle();
+  if (!employee) return { error: json({ documents: [], error: "활성화된 직원 정보가 없습니다." }, 403) };
+  return { employee };
 }
 
 async function kakaoSearch(path: string, query: string, kakaoRestKey: string) {
@@ -27,6 +54,9 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
+    const auth = await requireActiveEmployee(req);
+    if (auth.error) return auth.error;
+
     const body = await req.json().catch(() => ({}));
     const query = String(body.query || "").trim();
     if (!query) return json({ documents: [], error: "검색어를 입력해주세요." });
