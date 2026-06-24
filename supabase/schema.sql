@@ -53,6 +53,8 @@ alter table public.employees add column if not exists work_start_date date;
 alter table public.employees add column if not exists work_days text[] not null default array['mon','tue','wed','thu','fri'];
 alter table public.employees add column if not exists work_start time not null default '09:00';
 alter table public.employees add column if not exists work_end time not null default '18:00';
+alter table public.employees add column if not exists schedule_title text not null default '기본 근무';
+alter table public.employees add column if not exists schedule_note text not null default '';
 alter table public.employees add column if not exists contract_type text not null default 'daily';
 alter table public.employees add column if not exists contract_start date;
 alter table public.employees add column if not exists contract_end date;
@@ -100,6 +102,10 @@ create table if not exists public.employee_schedule_events (
   updated_at timestamptz not null default now(),
   constraint employee_schedule_events_date_check check (end_date >= start_date)
 );
+
+alter table public.employee_schedule_events drop constraint if exists employee_schedule_events_event_type_check;
+alter table public.employee_schedule_events add constraint employee_schedule_events_event_type_check
+  check (event_type in ('work','am_only','pm_only','unavailable','info','hidden'));
 
 alter table public.weekly_schedule_overrides enable row level security;
 alter table public.employee_absences enable row level security;

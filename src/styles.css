@@ -303,12 +303,11 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .team-calendar-header .team-day-head { min-height: 52px; border-bottom: 1px solid var(--line); }
 .team-calendar-header .team-day-head b { font-size: 14px; }
 .team-employee-head {
-  min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 0; display: flex; align-items: center; justify-content: center;
   border: 0; border-right: 1px solid var(--line); background: #fff;
-  color: var(--employee-color); font-size: 12px; font-weight: 750;
+  color: var(--employee-color); font-size: 14px; font-weight: 800;
 }
 .team-employee-head:hover { background: color-mix(in srgb,var(--employee-color) 8%,white); }
-.team-employee-head i { width: 9px; height: 9px; flex-shrink: 0; border-radius: 3px; background: var(--employee-color); }
 .team-employee-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: inherit; }
 .team-employee-head.team-day-end { border-right-color: #c4cad4; }
 .week-time-head { color: #667085; font-size: 12px; font-weight: 700; }
@@ -318,10 +317,10 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-all-day-track.team-all-day-track { grid-template-rows: repeat(var(--employee-count),34px); grid-auto-rows: 34px; }
 .week-drop-column { grid-row: 1; border-right: 1px solid var(--line); }
 .week-drop-column:hover { background: #f2f6ff; }
-.week-all-day-event { z-index: 2; grid-row: 1; min-width: 0; align-self: center; height: 48px; margin: 0 5px; border: 1px solid var(--employee-color); border-radius: 6px; background: var(--employee-color); color: #fff; padding: 6px 10px; text-align: left; overflow: hidden; }
+.week-all-day-event { z-index: 2; grid-row: 1; min-width: 0; align-self: center; height: 48px; margin: 0 5px; border: 1px solid var(--employee-color); border-radius: 5px; background: color-mix(in srgb,var(--employee-color) 16%,white); color: var(--employee-color); padding: 6px 10px; text-align: left; overflow: hidden; }
 .week-all-day-event b, .week-all-day-event span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .week-all-day-event b { font-size: 12px; }
-.week-all-day-event span { margin-top: 3px; color: rgba(255,255,255,.86); font-size: 10px; }
+.week-all-day-event span { margin-top: 3px; color: inherit; font-size: 10px; opacity: .85; }
 .week-all-day-event.team-all-day-event { height: 28px; margin: 2px 4px; padding: 4px 7px; }
 .week-all-day-event.team-all-day-event b { font-size: 10px; }
 .week-all-day-event.team-all-day-event span { display: none; }
@@ -342,24 +341,32 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-day-column:hover { background: rgba(58,109,240,.06); }
 .team-event-grid .team-employee-column { border-right-color: #e4e7ec; }
 .team-event-grid .team-employee-column.team-day-end { border-right-color: #c4cad4; }
-.week-time-event { z-index: 3; min-width: 0; margin: 3px 5px; border: 1px solid var(--employee-color); border-radius: 6px; background: var(--employee-color); color: #fff; padding: 8px 9px; text-align: left; overflow: hidden; box-shadow: 0 1px 3px rgba(20,30,60,.16); }
+.week-time-event { position: relative; z-index: 3; min-width: 0; margin: 3px 5px; border: 1px solid var(--employee-color); border-radius: 5px; background: color-mix(in srgb,var(--employee-color) 16%,white); color: var(--employee-color); padding: 13px 8px 10px; text-align: center; overflow: hidden; box-shadow: 0 1px 3px color-mix(in srgb,var(--employee-color) 18%,transparent); }
 .week-time-event b, .week-time-event span, .week-time-event small { display: block; overflow: hidden; text-overflow: ellipsis; }
 .week-time-event b { font-size: 12px; white-space: nowrap; }
 .week-time-event b i { margin-right: 4px; }
 .week-time-event span { margin-top: 3px; font-size: 10px; white-space: nowrap; }
-.week-time-event small { margin-top: 4px; color: rgba(255,255,255,.84); font-size: 10px; line-height: 1.35; }
-.week-time-event.event-unavailable { background: var(--employee-color); }
+.week-time-event small { margin-top: 4px; color: inherit; font-size: 10px; line-height: 1.35; opacity: .82; }
+.week-time-event.event-unavailable { background: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 13%,white) 0,color-mix(in srgb,var(--employee-color) 13%,white) 7px,color-mix(in srgb,var(--employee-color) 5%,white) 7px,color-mix(in srgb,var(--employee-color) 5%,white) 14px); }
 .week-time-event.team-lane-event {
-  margin: 3px 5px;
-  padding: 8px 7px;
+  margin: 3px 6px;
+  padding: 14px 8px 10px;
 }
-.week-time-event.team-lane-event b { font-size: 12px; line-height: 1.25; white-space: normal; }
-.week-time-event.team-lane-event span { font-size: 11px; line-height: 1.25; white-space: nowrap; }
+.week-time-event.team-lane-event b { font-size: 14px; line-height: 1.25; white-space: normal; }
+.week-time-event.team-lane-event .event-time-label { font-size: 12px; line-height: 1.35; white-space: normal; font-weight: 700; }
 .week-time-event.team-lane-event small { margin-top: 4px; font-size: 10px; line-height: 1.25; white-space: normal; color: rgba(255,255,255,.84); }
+.week-time-event.team-lane-event small { color: inherit; opacity: .82; }
+.time-resize-handle { position: absolute; left: 5px; right: 5px; z-index: 5; opacity: 0; transition: opacity .12s; touch-action: none; }
+.week-time-event:hover .time-resize-handle, .week-time-event:focus-visible .time-resize-handle { opacity: 1; }
+.time-resize-handle.top { top: 2px; height: 7px; border-top: 2px solid currentColor; cursor: ns-resize; }
+.time-resize-handle.bottom { bottom: 2px; height: 7px; border-bottom: 2px solid currentColor; cursor: ns-resize; }
+.time-resize-handle.move { top: 2px; left: 50%; right: auto; width: 24px; height: 12px; transform: translateX(-50%); cursor: ns-resize; }
+.time-resize-handle.move i { font-size: 13px; }
 .team-color-legend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
 .team-color-legend span { display: inline-flex; align-items: center; gap: 5px; color: #475467; font-size: 11px; font-weight: 650; }
 .team-color-legend i { width: 9px; height: 9px; border-radius: 3px; }
-.schedule-help { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; color: var(--muted); font-size: 11px; }
+.schedule-help { display: flex; align-items: center; gap: 7px; margin: 14px 0 0; color: #475467; font-size: 14px; line-height: 1.55; }
+.schedule-apply-all { margin-top: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; font-weight: 700; }
 .consent-modal { max-width: 720px; }
 .consent-preview { max-height: 68vh; overflow-y: auto; padding-right: 4px; }
 .consent-preview dl { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin: 16px 0; }

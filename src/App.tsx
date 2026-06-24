@@ -20,6 +20,7 @@ const SCHEDULE_EVENT_META: Record<string,{label:string;icon:string}> = {
   pm_only:{label:"오후만 가능",icon:"ti-moon"},
   unavailable:{label:"출근 불가",icon:"ti-ban"},
   info:{label:"교육·학기·기타",icon:"ti-book"},
+  hidden:{label:"빈 칸",icon:"ti-square-off"},
 };
 const EMPLOYEE_COLORS = ["#2563eb","#059669","#ea580c","#dc2626","#7c3aed","#0891b2","#b45309","#4f46e5","#65a30d","#be185d"];
 
@@ -230,6 +231,10 @@ function weekOfMonthLabel(dateIso: string) { const d=dateFromIso(dateIso); const
 function dateInRange(dateIso:string, start?:string|null, end?:string|null) { if(!start) return true; if(dateIso<start) return false; if(end&&dateIso>end) return false; return true; }
 function countDaysInclusive(start:string, end:string) { const s=dateFromIso(start), e=dateFromIso(end); return Math.max(0, Math.round((e.getTime()-s.getTime())/86400000)+1); }
 function addIsoDays(iso:string,days:number){return isoDate(addLocalDays(dateFromIso(iso),days));}
+function minutesToTime(minutes:number){
+  const safe=Math.max(0,Math.min(23*60+59,minutes));
+  return `${String(Math.floor(safe/60)).padStart(2,"0")}:${String(safe%60).padStart(2,"0")}`;
+}
 function employeeScheduleColor(employeeId:string){
   let hash=0;
   for(let i=0;i<employeeId.length;i++) hash=(hash*31+employeeId.charCodeAt(i))>>>0;
@@ -1842,6 +1847,9 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
   const [editing,setEditing]=useState<any|null>(null);
   const [message,setMessage]=useState("");
   const [draggingId,setDraggingId]=useState<string|null>(null);
+  const [timeDrag,setTimeDrag]=useState<any|null>(null);
+  const timeDragRef=useRef<any|null>(null);
+  const timeDragClickGuard=useRef(0);
   const weekStart=weekStartIso(weekAnchor);
   const dates=Array.from({length:5},(_,i)=>addIsoDays(weekStart,i));
   const weekEnd=dates[4];
@@ -1852,13 +1860,28 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
   const selectedEvents=events.filter(e=>(isAll||e.employee_id===selectedEmployee?.id)&&e.start_date<=weekEnd&&e.end_date>=weekStart);
   const allDayEvents=isAll?[]:selectedEvents.filter(e=>e.event_type==="info"&&!e.start_time&&!e.end_time);
   const timedEvents=isAll?selectedEvents:selectedEvents.filter(e=>!allDayEvents.includes(e));
-  const hours=Array.from({length:11},(_,i)=>9+i);
+  const visibleEmployees=isAll?activeEmployees:(selectedEmployee?[selectedEmployee]:[]);
+  const visibleStartMinutes=[
+    ...visibleEmployees.map(e=>timeToMinutes(e.work_start)).filter((v):v is number=>v!=null),
+    ...timedEvents.map(e=>timeToMinutes(e.start_time)).filter((v):v is number=>v!=null),
+  ];
+  const visibleEndMinutes=[
+    ...visibleEmployees.map(e=>timeToMinutes(e.work_end)).filter((v):v is number=>v!=null),
+    ...timedEvents.map(e=>timeToMinutes(e.end_time)).filter((v):v is number=>v!=null),
+  ];
+  const calendarStartHour=Math.max(0,Math.min(9,Math.floor(Math.min(...visibleStartMinutes,9*60)/60)));
+  const calendarEndHour=Math.min(24,Math.max(19,Math.ceil(Math.max(...visibleEndMinutes,19*60)/60)));
+  const calendarStartMin=calendarStartHour*60;
+  const calendarEndMin=calendarEndHour*60;
+  const calendarRows=(calendarEndHour-calendarStartHour)*2;
+  const calendarHeight=calendarRows*32;
+  const hours=Array.from({length:calendarEndHour-calendarStartHour+1},(_,i)=>calendarStartHour+i);
   const selectedColor=selectedEmployee?employeeColorFromList(activeEmployees,selectedEmployee.id):EMPLOYEE_COLORS[0];
   useEffect(()=>{
     if(selectedEmpId!=="all"&&!activeEmployees.some(e=>e.id===selectedEmpId)) setSelectedEmpId("all");
   },[activeEmployees.length,selectedEmpId]);
   function emptyEvent(employeeId=selectedEmployee?.id??activeEmployees[0]?.id??"",date=todayIso()){
-    return {employee_id:employeeId,title:"",event_type:"info",start_date:date,end_date:date,start_time:"",end_time:"",note:""};
+    return {employee_id:employeeId,title:"",event_type:"info",start_date:date,end_date:date,start_time:"",end_time:"",note:"",apply_all:false};
   }
   function changeWeek(offset:number){setWeekAnchor(addIsoDays(weekStart,offset*7));}
   function eventTime(event:any,employee=selectedEmployee){
@@ -1874,18 +1897,28 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
   }
   function timeGridPosition(event:any,employee=selectedEmployee){
     const [start,end]=eventTime(event,employee);
-    const startMin=Math.max(9*60,Math.min(19*60,timeToMinutes(start)??9*60));
-    const endMin=Math.max(startMin+30,Math.min(19*60,timeToMinutes(end)??18*60));
-    return {row:Math.floor((startMin-9*60)/30)+1,span:Math.max(1,Math.ceil((endMin-startMin)/30)),label:`${start}~${end}`};
+    const startMin=Math.max(calendarStartMin,Math.min(calendarEndMin-30,timeToMinutes(start)??calendarStartMin));
+    const endMin=Math.max(startMin+30,Math.min(calendarEndMin,timeToMinutes(end)??calendarEndMin));
+    return {row:Math.floor((startMin-calendarStartMin)/30)+1,span:Math.max(1,Math.ceil((endMin-startMin)/30)),label:`${start}~${end}`};
   }
   async function saveEvent(){
     if(!editing?.employee_id) return setMessage("직원을 선택해주세요.");
-    if(!String(editing.title??"").trim()) return setMessage("일정 이름을 입력해주세요.");
     if(!editing.start_date||!editing.end_date||editing.end_date<editing.start_date) return setMessage("일정 기간을 확인해주세요.");
+    if(editing.fromBase&&editing.apply_all){
+      const {error}=await supabase.from("employees").update({
+        work_start:editing.start_time||"09:00",
+        work_end:editing.end_time||"18:00",
+        schedule_title:String(editing.title??""),
+        schedule_note:String(editing.note??""),
+      }).eq("id",editing.employee_id);
+      if(error) setMessage(`전체 변경 실패: ${error.message}`);
+      else{setMessage("이 직원의 기본 근무 일정을 전체 변경했습니다.");setEditing(null);await onChanged();}
+      return;
+    }
     const payload={
       employee_id:editing.employee_id,
-      title:String(editing.title).trim(),
-      event_type:editing.event_type,
+      title:String(editing.title??"").trim(),
+      event_type:editing.event_type==="hidden"?"hidden":editing.event_type,
       start_date:editing.start_date,
       end_date:editing.end_date,
       start_time:editing.start_time||null,
@@ -1893,9 +1926,21 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
       note:String(editing.note??"").trim()||null,
       updated_at:new Date().toISOString(),
     };
-    const result=editing.id
-      ? await supabase.from("employee_schedule_events").update(payload).eq("id",editing.id)
-      : await supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
+    let result;
+    if(editing.id&&editing.apply_all){
+      result=await supabase.from("employee_schedule_events").update({
+        title:payload.title,
+        event_type:payload.event_type,
+        start_time:payload.start_time,
+        end_time:payload.end_time,
+        note:payload.note,
+        updated_at:payload.updated_at,
+      }).eq("employee_id",editing.employee_id).eq("title",editing.original_title??editing.title);
+    }else{
+      result=editing.id
+        ? await supabase.from("employee_schedule_events").update(payload).eq("id",editing.id)
+        : await supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
+    }
     if(result.error) setMessage(`저장 실패: ${result.error.message}`);
     else{setMessage("직원 일정이 저장되었습니다.");setEditing(null);await onChanged();}
   }
@@ -1918,6 +1963,49 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
     }).eq("id",event.id);
     if(error) setMessage(`이동 실패: ${error.message}`); else{setMessage(`${event.title} 일정을 이동했습니다.`);await onChanged();}
   }
+  function beginTimeDrag(e:React.PointerEvent,event:any,employee:any,date:string,edge:"move"|"start"|"end"){
+    e.preventDefault();
+    e.stopPropagation();
+    const [start,end]=eventTime(event,employee);
+    const drag={event,employee,date,edge,startY:e.clientY,startMin:timeToMinutes(start)??540,endMin:timeToMinutes(end)??1080};
+    timeDragRef.current=drag;
+    setTimeDrag(drag);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+  }
+  async function finishTimeDrag(e:React.PointerEvent){
+    const drag=timeDragRef.current??timeDrag;
+    if(!drag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const delta=Math.round((e.clientY-drag.startY)/32)*30;
+    let startMin=drag.startMin;
+    let endMin=drag.endMin;
+    if(drag.edge==="move"){startMin+=delta;endMin+=delta;}
+    if(drag.edge==="start") startMin=Math.min(endMin-30,startMin+delta);
+    if(drag.edge==="end") endMin=Math.max(startMin+30,endMin+delta);
+    startMin=Math.max(calendarStartMin,Math.min(calendarEndMin-30,startMin));
+    endMin=Math.max(startMin+30,Math.min(calendarEndMin,endMin));
+    const event=drag.event;
+    const payload={
+      employee_id:event.employee_id,
+      title:String(event.title??""),
+      event_type:event.event_type,
+      start_date:event.start_date??drag.date,
+      end_date:event.end_date??drag.date,
+      start_time:minutesToTime(startMin),
+      end_time:minutesToTime(endMin),
+      note:event.note??null,
+      updated_at:new Date().toISOString(),
+    };
+    const result=event.base
+      ? await supabase.from("employee_schedule_events").insert({...payload,start_date:drag.date,end_date:drag.date,created_by:currentEmployee.id})
+      : await supabase.from("employee_schedule_events").update(payload).eq("id",event.id);
+    timeDragClickGuard.current=Date.now()+350;
+    timeDragRef.current=null;
+    setTimeDrag(null);
+    if(result.error) setMessage(`시간 변경 실패: ${result.error.message}`);
+    else{setMessage(`${minutesToTime(startMin)}~${minutesToTime(endMin)}으로 변경했습니다.`);await onChanged();}
+  }
   return (
     <section className="card schedule-board-card">
       <div className="schedule-board-toolbar">
@@ -1939,8 +2027,8 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
         <button className="icon-button" title="다음 주" onClick={()=>changeWeek(1)}><i className="ti ti-chevron-right" aria-hidden="true"></i></button>
       </div>
       <div className="week-calendar-scroll">
-        <div className={`week-calendar ${isAll?"team-view":""}`} style={isAll?{minWidth:78+teamColumnCount*92}:undefined}>
-          <div className={`week-calendar-header ${isAll?"team-calendar-header":""}`} style={isAll?{gridTemplateColumns:`78px repeat(${teamColumnCount},minmax(92px,1fr))`}:undefined}>
+        <div className={`week-calendar ${isAll?"team-view":""}`} style={isAll?{minWidth:78+teamColumnCount*118}:undefined}>
+          <div className={`week-calendar-header ${isAll?"team-calendar-header":""}`} style={isAll?{gridTemplateColumns:`78px repeat(${teamColumnCount},minmax(118px,1fr))`}:undefined}>
             <div className="week-time-head" style={isAll?{gridRow:"1 / span 2"}:undefined}>시간</div>
             {dates.map((date,dateIndex)=>{
               const d=dateFromIso(date);
@@ -1948,7 +2036,7 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
             })}
             {isAll&&dates.flatMap((date,dateIndex)=>activeEmployees.map((employee,employeeIndex)=>{
               const color=employeeColorFromList(activeEmployees,employee.id);
-              return <button key={`${date}-${employee.id}-head`} className={`team-employee-head ${employeeIndex===activeEmployees.length-1?"team-day-end":""}`} style={{gridColumn:dateIndex*employeeCount+employeeIndex+2,gridRow:2,"--employee-color":color} as React.CSSProperties} onClick={()=>setSelectedEmpId(employee.id)} title={`${employee.name} 개인 일정 보기`}><i></i><span>{employee.name}</span></button>;
+              return <button key={`${date}-${employee.id}-head`} className={`team-employee-head ${employeeIndex===activeEmployees.length-1?"team-day-end":""}`} style={{gridColumn:dateIndex*employeeCount+employeeIndex+2,gridRow:2,"--employee-color":color} as React.CSSProperties} onClick={()=>setSelectedEmpId(employee.id)} title={`${employee.name} 개인 일정 보기`}><span>{employee.name}</span></button>;
             }))}
           </div>
           {!isAll&&<div className="week-all-day">
@@ -1965,29 +2053,37 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
             </div>
           </div>}
           <div className="week-time-grid">
-            <div className="week-time-axis">{hours.map(hour=><div key={hour}>{String(hour).padStart(2,"0")}:00</div>)}</div>
-            <div className={`week-event-grid ${isAll?"team-event-grid":""}`} style={isAll?{gridTemplateColumns:`repeat(${teamColumnCount},minmax(92px,1fr))`}:undefined}>
+            <div className="week-time-axis" style={{height:calendarHeight}}>{hours.map(hour=><div key={hour}>{String(hour).padStart(2,"0")}:00</div>)}</div>
+            <div className={`week-event-grid ${isAll?"team-event-grid":""}`} style={{height:calendarHeight,gridTemplateRows:`repeat(${calendarRows},32px)`,...(isAll?{gridTemplateColumns:`repeat(${teamColumnCount},minmax(118px,1fr))`}:{})}}>
               {isAll
-                ? dates.flatMap((date,dateIndex)=>activeEmployees.map((employee,employeeIndex)=><div key={`${date}-${employee.id}-drop`} className={`week-day-column team-employee-column ${employeeIndex===activeEmployees.length-1?"team-day-end":""} ${date===todayIso()?"today":""}`} style={{gridColumn:dateIndex*employeeCount+employeeIndex+1}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(employee.id,date)} onDoubleClick={()=>setEditing(emptyEvent(employee.id,date))} />))
-                : dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""}`} style={{gridColumn:index+1}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
+                ? dates.flatMap((date,dateIndex)=>activeEmployees.map((employee,employeeIndex)=><div key={`${date}-${employee.id}-drop`} className={`week-day-column team-employee-column ${employeeIndex===activeEmployees.length-1?"team-day-end":""} ${date===todayIso()?"today":""}`} style={{gridColumn:dateIndex*employeeCount+employeeIndex+1,gridRow:`1 / span ${calendarRows}`}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(employee.id,date)} onDoubleClick={()=>setEditing(emptyEvent(employee.id,date))} />))
+                : dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""}`} style={{gridColumn:index+1,gridRow:`1 / span ${calendarRows}`}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
               {dates.flatMap((date,index)=>{
                 const shownEmployees=isAll?activeEmployees:(selectedEmployee?[selectedEmployee]:[]);
                 return shownEmployees.flatMap((employee:any,employeeIndex:number)=>{
                   const dayEvents=timedEvents.filter(event=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date);
-                  const unavailable=dayEvents.filter(event=>event.event_type==="unavailable");
-                  const shown=unavailable.length?unavailable:dayEvents;
+                  const shown=dayEvents.filter(event=>event.event_type!=="hidden");
+                  const suppressBase=dayEvents.some(event=>["hidden","work","unavailable","am_only","pm_only"].includes(event.event_type));
                   const schedule=getScheduleForDate(employee,date,overrides);
                   const isBaseWorkday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
-                  const baseWork=shown.length===0&&isBaseWorkday?{id:`base-${employee.id}-${date}`,employee_id:employee.id,title:"기본 근무",event_type:"work",start_time:schedule.work_start,end_time:schedule.work_end,note:"직원 기본 스케줄",base:true}:null;
+                  const baseWork=!suppressBase&&isBaseWorkday?{id:`base-${employee.id}-${date}`,employee_id:employee.id,title:employee.schedule_title??"기본 근무",event_type:"work",start_time:schedule.work_start,end_time:schedule.work_end,note:employee.schedule_note??"",base:true}:null;
                   const color=employeeColorFromList(activeEmployees,employee.id);
                   return [...shown,...(baseWork?[baseWork]:[])].map((event:any)=>{
                     const pos=timeGridPosition(event,employee);
                     const meta=SCHEDULE_EVENT_META[event.event_type]??SCHEDULE_EVENT_META.info;
                     const gridColumn=isAll?index*employeeCount+employeeIndex+1:index+1;
-                    const openEditor=()=>setEditing(event.base
-                      ? {...event,id:undefined,base:undefined,fromBase:true,start_date:date,end_date:date,start_time:String(event.start_time??"09:00").slice(0,5),end_time:String(event.end_time??"18:00").slice(0,5)}
-                      : {...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""});
-                    return <button key={`${event.id}-${date}`} title={`${employee.name} · ${event.title} · ${pos.label} · 눌러서 수정`} draggable={!event.base} className={`week-time-event event-${event.event_type} ${isAll?"team-lane-event":""}`} style={{gridColumn,gridRow:`${pos.row} / span ${pos.span}`,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{if(event.base)return;setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={openEditor}><b>{!isAll&&<i className={`ti ${meta.icon}`} aria-hidden="true"></i>}{event.title}</b><span>{pos.label}</span>{event.note&&<small>{event.note}</small>}</button>;
+                    const openEditor=()=>{
+                      if(Date.now()<timeDragClickGuard.current) return;
+                      setEditing(event.base
+                      ? {...event,id:undefined,base:undefined,fromBase:true,start_date:date,end_date:date,start_time:String(event.start_time??"09:00").slice(0,5),end_time:String(event.end_time??"18:00").slice(0,5),apply_all:false}
+                      : {...event,original_title:event.title,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??"",apply_all:false});
+                    };
+                    return <button key={`${event.id}-${date}`} title={`${employee.name} · ${event.title||"빈 일정"} · ${pos.label} · 눌러서 수정`} draggable={!event.base} className={`week-time-event event-${event.event_type} ${isAll?"team-lane-event":""}`} style={{gridColumn,gridRow:`${pos.row} / span ${pos.span}`,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{if(event.base)return;setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={openEditor}>
+                      <span className="time-resize-handle top" title="시작 시간 드래그" onPointerDown={e=>beginTimeDrag(e,event,employee,date,"start")} onPointerUp={finishTimeDrag}></span>
+                      <span className="time-resize-handle move" title="일정 시간 이동" onPointerDown={e=>beginTimeDrag(e,event,employee,date,"move")} onPointerUp={finishTimeDrag}><i className="ti ti-grip-horizontal" aria-hidden="true"></i></span>
+                      <b>{!isAll&&<i className={`ti ${meta.icon}`} aria-hidden="true"></i>}{event.title}</b><span className="event-time-label">{pos.label}</span>{event.note&&<small>{event.note}</small>}
+                      <span className="time-resize-handle bottom" title="종료 시간 드래그" onPointerDown={e=>beginTimeDrag(e,event,employee,date,"end")} onPointerUp={finishTimeDrag}></span>
+                    </button>;
                   });
                 });
               })}
@@ -2005,7 +2101,7 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
             <div className="form-row"><label className="label">직원</label><select className="select" value={editing.employee_id} onChange={e=>setEditing({...editing,employee_id:e.target.value})}>{activeEmployees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
             <div className="form-row"><label className="label">일정 종류</label><select className="select" value={editing.event_type} onChange={e=>setEditing({...editing,event_type:e.target.value})}>{Object.entries(SCHEDULE_EVENT_META).map(([key,value])=><option key={key} value={key}>{value.label}</option>)}</select></div>
           </div>
-          <div className="form-row"><label className="label">일정 이름</label><input className="input" value={editing.title??""} onChange={e=>setEditing({...editing,title:e.target.value})} placeholder="예: 네이버교육, 계절학기 시험" /></div>
+          <div className="form-row"><label className="label">일정 이름</label><input className="input" value={editing.title??""} onChange={e=>setEditing({...editing,title:e.target.value})} placeholder="예: 기본 근무" /></div>
           <div className="grid two">
             <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={editing.start_date} onChange={e=>setEditing({...editing,start_date:e.target.value,end_date:editing.end_date<e.target.value?e.target.value:editing.end_date})} /></div>
             <div className="form-row"><label className="label">종료일</label><input className="input" type="date" value={editing.end_date} onChange={e=>setEditing({...editing,end_date:e.target.value})} /></div>
@@ -2014,7 +2110,9 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
             <div className="form-row"><label className="label">가능 시작 시간</label><input className="input" type="time" value={editing.start_time??""} onChange={e=>setEditing({...editing,start_time:e.target.value})} /></div>
             <div className="form-row"><label className="label">가능 종료 시간</label><input className="input" type="time" value={editing.end_time??""} onChange={e=>setEditing({...editing,end_time:e.target.value})} /></div>
           </div>
-          <div className="form-row"><label className="label">메모</label><textarea className="textarea" value={editing.note??""} onChange={e=>setEditing({...editing,note:e.target.value})} placeholder="예: 교육 기간에는 오후 근무 불가능" /></div>
+          <div className="form-row"><label className="label">메모</label><textarea className="textarea" value={editing.note??""} onChange={e=>setEditing({...editing,note:e.target.value})} placeholder="예: 교육으로 인한 근무 불가" /></div>
+          <label className="checkbox schedule-apply-all"><input type="checkbox" checked={!!editing.apply_all} onChange={e=>setEditing({...editing,apply_all:e.target.checked})} /> 일정 전체 변경하기</label>
+          <p className="subtle" style={{marginTop:6}}>{editing.fromBase?"체크하면 이 직원의 모든 기본 근무 일정에 제목·시간·메모가 적용됩니다.":"체크하면 이 직원의 같은 이름 일정 전체가 변경됩니다."} 일정 이름과 메모는 비워둘 수 있습니다.</p>
           <div className="schedule-modal-actions"><div>{editing.id&&<button className="button danger" onClick={deleteEvent}><i className="ti ti-trash" aria-hidden="true"></i>삭제</button>}</div><div className="actions"><button className="button ghost" onClick={()=>setEditing(null)}>취소</button><button className="button" onClick={saveEvent}><i className="ti ti-check" aria-hidden="true"></i>저장</button></div></div>
         </div>
       </div>}
