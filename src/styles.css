@@ -352,6 +352,8 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-time-event small { margin-top: 4px; color: inherit; font-size: 10px; line-height: 1.35; opacity: .82; }
 .week-time-event.event-unavailable { background: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 13%,white) 0,color-mix(in srgb,var(--employee-color) 13%,white) 7px,color-mix(in srgb,var(--employee-color) 5%,white) 7px,color-mix(in srgb,var(--employee-color) 5%,white) 14px); }
 .week-time-event.event-leave { background: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 18%,white) 0,color-mix(in srgb,var(--employee-color) 18%,white) 6px,color-mix(in srgb,var(--employee-color) 8%,white) 6px,color-mix(in srgb,var(--employee-color) 8%,white) 12px); cursor: default; }
+.week-time-event.event-overtime { border-style: dashed; background: color-mix(in srgb,var(--employee-color) 10%,white); cursor: default; }
+.week-time-event.event-overtime.overtime-approved { border-style: solid; box-shadow: inset 0 0 0 1px var(--employee-color); }
 .week-time-event.team-lane-event {
   margin: 3px 3px;
   padding: 14px 3px 9px;
@@ -374,6 +376,10 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .schedule-help { display: flex; align-items: center; gap: 7px; margin: 14px 0 0; color: #475467; font-size: 14px; line-height: 1.55; }
 .schedule-today-button { margin-left: 6px; }
 .schedule-apply-all { margin-top: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; font-weight: 700; }
+.schedule-edit-note { display: block; width: 100%; margin: 8px 0 0; }
+.schedule-type-control { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+.schedule-type-control button { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #475467; font-size: 12px; font-weight: 700; }
+.schedule-type-control button.active { border-color: var(--blue); background: #eef3fe; color: var(--blue-dark); box-shadow: 0 0 0 2px rgba(58,109,240,.08); }
 .consent-modal { max-width: 720px; }
 .consent-preview { max-height: 68vh; overflow-y: auto; padding-right: 4px; }
 .consent-preview dl { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin: 16px 0; }
