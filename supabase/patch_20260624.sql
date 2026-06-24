@@ -34,33 +34,33 @@ insert into public.employee_schedule_events(employee_id,title,event_type,start_d
 select e.id,'계절학기','info','2026-06-24','2026-07-14','계절 시험일 주간 출근 불가능',a.id
 from public.employees e
 left join public.employees a on a.employee_no='22061201'
-where e.employee_no='26062401'
+where e.employee_no='25110301'
 on conflict do nothing;
 
 insert into public.employee_schedule_events(employee_id,title,event_type,start_date,end_date,note,created_by)
 select e.id,'네이버교육','am_only','2026-06-29','2026-07-08','교육 기간 동안 오후 근무 불가능',a.id
 from public.employees e
 left join public.employees a on a.employee_no='22061201'
-where e.employee_no='26062401'
+where e.employee_no='25110301'
 on conflict do nothing;
 
 insert into public.employee_schedule_events(employee_id,title,event_type,start_date,end_date,note,created_by)
 select e.id,'해외봉사','unavailable','2026-07-27','2026-08-17','해외봉사 기간 출근 불가능',a.id
 from public.employees e
 left join public.employees a on a.employee_no='22061201'
-where e.employee_no='26062401'
+where e.employee_no='25110301'
 on conflict do nothing;
 
 insert into public.employee_schedule_events(employee_id,title,event_type,start_date,end_date,note,created_by)
 select e.id,'출근 불가','unavailable','2026-07-03','2026-07-03','출근 불가 전달일',a.id
 from public.employees e
 left join public.employees a on a.employee_no='22061201'
-where e.employee_no='26062401'
+where e.employee_no='25110301'
 on conflict do nothing;
 
 insert into public.employee_schedule_events(employee_id,title,event_type,start_date,end_date,note,created_by)
 select e.id,'출근 불가','unavailable','2026-07-14','2026-07-14','출근 불가 전달일',a.id
 from public.employees e
 left join public.employees a on a.employee_no='22061201'
-where e.employee_no='26062401'
+where e.employee_no='25110301'
 on conflict do nothing;
