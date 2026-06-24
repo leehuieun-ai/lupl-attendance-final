@@ -78,8 +78,25 @@ create table if not exists public.employee_absences (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.employee_schedule_events (
+  id uuid primary key default gen_random_uuid(),
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  title text not null,
+  event_type text not null default 'info' check (event_type in ('work','am_only','pm_only','unavailable','info')),
+  start_date date not null,
+  end_date date not null,
+  start_time time,
+  end_time time,
+  note text,
+  created_by uuid references public.employees(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint employee_schedule_events_date_check check (end_date >= start_date)
+);
+
 alter table public.weekly_schedule_overrides enable row level security;
 alter table public.employee_absences enable row level security;
+alter table public.employee_schedule_events enable row level security;
 
 drop policy if exists weekly_schedule_overrides_admin_all on public.weekly_schedule_overrides;
 create policy weekly_schedule_overrides_admin_all on public.weekly_schedule_overrides
@@ -87,6 +104,10 @@ for all to authenticated using (public.is_admin()) with check (public.is_admin()
 
 drop policy if exists employee_absences_admin_all on public.employee_absences;
 create policy employee_absences_admin_all on public.employee_absences
+for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists employee_schedule_events_admin_all on public.employee_schedule_events;
+create policy employee_schedule_events_admin_all on public.employee_schedule_events
 for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 drop policy if exists comp_delete_pending_self on public.comp_time_requests;

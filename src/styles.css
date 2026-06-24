@@ -184,6 +184,49 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .day-btn { border: 1px solid var(--line); background: #f6f8fb; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; transition: all .15s; }
 .day-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
 
+.schedule-board-card { overflow: hidden; }
+.schedule-board-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.schedule-board-toolbar .button { flex-shrink: 0; }
+.schedule-month-nav { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 20px 0 12px; }
+.icon-button { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.icon-button:hover { background: #f0f2f6; }
+.month-title { border: 0; background: transparent; padding: 6px 10px; font-size: 18px; font-weight: 750; color: var(--ink); }
+.schedule-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; font-size: 12px; color: #5a6475; }
+.schedule-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.schedule-legend i { width: 9px; height: 9px; border-radius: 50%; }
+.schedule-board-scroll { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.schedule-board { width: max-content; }
+.schedule-board-header, .schedule-board-row { display: grid; grid-template-columns: 150px 1fr; }
+.schedule-board-header { position: sticky; top: 0; z-index: 6; border-bottom: 1px solid var(--line); background: #f7f9fc; }
+.schedule-employee-head { display: flex; align-items: center; padding: 10px 12px; border-right: 1px solid var(--line); color: #5a6475; font-size: 12px; font-weight: 700; }
+.schedule-date-header { display: grid; }
+.schedule-date-header > div { height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-right: 1px solid var(--line); color: #6b7280; font-size: 10px; }
+.schedule-date-header b { font-size: 13px; color: var(--ink); }
+.schedule-date-header .weekend, .schedule-day-drop.weekend { background: #faf2f2; }
+.schedule-date-header .today { background: #eaf1fe; }
+.schedule-date-header .today b { color: var(--blue-dark); }
+.schedule-board-row { border-bottom: 1px solid var(--line); }
+.schedule-board-row:last-child { border-bottom: 0; }
+.schedule-employee-cell { position: sticky; left: 0; z-index: 5; min-height: 42px; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-right: 1px solid var(--line); background: #fff; }
+.schedule-employee-cell > span { width: 10px; height: 28px; border-radius: 4px; flex-shrink: 0; }
+.schedule-employee-cell b, .schedule-employee-cell small { display: block; }
+.schedule-employee-cell b { font-size: 13px; }
+.schedule-employee-cell small { margin-top: 2px; color: var(--muted); font-size: 10px; }
+.schedule-timeline { display: grid; min-height: 42px; padding: 4px 0; position: relative; }
+.schedule-day-drop { min-width: 44px; border-right: 1px solid var(--line); z-index: 0; }
+.schedule-day-drop.today { box-shadow: inset 2px 0 var(--blue), inset -2px 0 var(--blue); }
+.schedule-day-drop:hover { background: #eef3fe; }
+.schedule-event { z-index: 3; min-width: 0; height: 28px; align-self: center; margin: 0 2px; padding: 0 7px; border: 0; border-radius: 6px; color: #fff; display: flex; align-items: center; gap: 4px; overflow: hidden; cursor: grab; box-shadow: 0 1px 3px rgba(20,30,60,.18); }
+.schedule-event:active { cursor: grabbing; }
+.schedule-event span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 700; }
+.schedule-event small { margin-left: auto; font-size: 9px; white-space: nowrap; opacity: .9; }
+.schedule-event i { flex-shrink: 0; font-size: 12px; }
+.schedule-event.event-unavailable { background-image: repeating-linear-gradient(135deg,rgba(0,0,0,.18) 0,rgba(0,0,0,.18) 5px,transparent 5px,transparent 10px) !important; }
+.schedule-event.event-am_only, .schedule-event.event-pm_only { box-shadow: inset 0 -3px rgba(255,255,255,.65),0 1px 3px rgba(20,30,60,.18); }
+.schedule-event.event-info { opacity: .82; }
+.schedule-event-modal { max-width: 560px; }
+.schedule-modal-actions { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+
 @media (max-width: 880px) {
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
   .home-layout { grid-template-columns: 1fr; }
@@ -194,6 +237,8 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
   .leave-hero { flex-direction: column; align-items: center; text-align: center; }
   .leave-chips { justify-content: center; }
   .comp-time-grid { grid-template-columns: 1fr; }
+  .schedule-board-toolbar { align-items: stretch; flex-direction: column; }
+  .schedule-board-toolbar .button { width: 100%; justify-content: center; }
 }
 
 /* 휴가 유형 설명 박스 */
@@ -287,6 +332,9 @@ body { overflow-x: hidden; }
   .list-row > .actions, .device-row > .actions { width: 100%; }
   .actions .button { justify-content: center; }
   .modal-box { max-width: min(400px, calc(100vw - 28px)); padding: 20px; border-radius: 20px; }
+  .schedule-event-modal { max-width: calc(100vw - 28px); }
+  .schedule-modal-actions { align-items: stretch; flex-direction: column-reverse; }
+  .schedule-modal-actions > div, .schedule-modal-actions .actions, .schedule-modal-actions .button { width: 100%; }
 }
 
 /* 2026-06-15 휴가 신청/신청내역 모바일 가독성 보정 */
