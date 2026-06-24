@@ -554,7 +554,7 @@ export default function App() {
         <nav className="side-nav">
           <p className="side-nav-label">내 근무</p>
           {personalMenus.map(menuButton)}
-          {isAdmin&&<><p className="side-nav-label">관리자</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{menuButton({id:"reports",label:"보고서",icon:"ti-chart-bar"})}{menuButton({id:"consents",label:"직원 동의서",icon:"ti-file-signature"})}</>}
+          {isAdmin&&<><p className="side-nav-label">관리자</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{menuButton({id:"reports",label:"보고서",icon:"ti-chart-bar"})}{menuButton({id:"consents",label:"직원 동의서",icon:"ti-file-certificate"})}</>}
         </nav>
         <div className="sidebar-account">
           <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{isAdmin?"관리자":"직원"}</small></div></div>
@@ -1530,6 +1530,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   const [absences,setAbsences]=useState<any[]>([]);
   const [allLogs,setAllLogs]=useState<any[]>([]);
   const [message,setMessage]=useState("");
+  const [settledCompIds,setSettledCompIds]=useState<Set<string>>(new Set());
   const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});
   const [scheduleEmpId,setScheduleEmpId]=useState("");
   const [scheduleMsg,setScheduleMsg]=useState("");
@@ -1625,6 +1626,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         }).eq("id",request.id);
     if(result.error) setMessage(result.error.message);
     else{
+      if(completedLog) setSettledCompIds(previous=>new Set(previous).add(request.id));
       setMessage(status==="approved"
         ? completedLog?"실제 초과근무가 승인되어 대체휴가로 적립되었습니다.":"추가근무를 사전 승인했습니다. 승인 종료시간까지 퇴근 기준이 연장됩니다."
         : completedLog?"초과근무를 불인정하고 예정 퇴근시간으로 근태를 마감했습니다.":"추가근무를 불인정했습니다.");
@@ -1645,7 +1647,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     .forEach((l:any)=>{ if(!todayLogByEmployee[l.employee_id]) todayLogByEmployee[l.employee_id]=l; });
   const dailyRows=activeEmployees.map((e:any)=>({employee:e,log:todayLogByEmployee[e.id]}));
   const pW=workplaces.filter(w=>w.approval_status==="pending");
-  const pC=compRequests.filter(r=>r.status==="pending"||(r.status==="approved"&&!r.attendance_log_id&&!!compAttendance(r)));
+  const pC=compRequests.filter(r=>{
+    if(settledCompIds.has(r.id)||r.attendance_log_id||r.actual_overtime_hours!=null) return false;
+    return r.status==="pending"||(r.status==="approved"&&!!compAttendance(r));
+  });
   const pR=requests.filter(r=>r.status==="pending");
   const pD=devices.filter(d=>d.status==="pending");
   const reviewStatuses=["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음"];
@@ -2588,7 +2593,7 @@ function ConsentReportPage() {
     {message&&<div className="alert error">{message}</div>}
     <section className="card">
       <div className="schedule-board-toolbar">
-        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-signature" aria-hidden="true"></i>직원 동의서</h2><p className="subtle" style={{margin:0}}>직원별 최신 전자 동의서를 화면에서 확인하고 PDF로 저장할 수 있습니다.</p></div>
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원 동의서</h2><p className="subtle" style={{margin:0}}>직원별 최신 전자 동의서를 화면에서 확인하고 PDF로 저장할 수 있습니다.</p></div>
         <span className="badge good">동의 {employees.filter(e=>latestByEmployee[e.id]).length}명</span>
       </div>
       <div className="table-wrap" style={{marginTop:18}}>
@@ -2609,7 +2614,7 @@ function ConsentReportPage() {
     </section>
     {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}>
       <div className="modal-box consent-modal" onClick={e=>e.stopPropagation()}>
-        <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-file-signature" aria-hidden="true"></i>{selected.employee.name} 동의서</h2><button className="modal-close" title="닫기" onClick={()=>setSelected(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
+        <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-file-certificate" aria-hidden="true"></i>{selected.employee.name} 동의서</h2><button className="modal-close" title="닫기" onClick={()=>setSelected(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
         <div className="consent-preview">
           <p>주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.</p>
           <div className="alert">위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.</div>
