@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
 
-type Tab = "home" | "leave" | "workplaces" | "admin" | "settings" | "reports";
+type Tab = "attendance" | "leave" | "overtime" | "admin-dashboard" | "approvals" | "employees" | "workplaces" | "schedule" | "payroll" | "reports";
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
 const ALL_DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
@@ -420,10 +420,11 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [employee, setEmployee] = useState<any | null>(null);
   const [consent, setConsent] = useState<any | null>(null);
-  const [tab, setTab] = useState<Tab>("home");
+  const [tab, setTab] = useState<Tab>("attendance");
   const [loading, setLoading] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [showPwModal, setShowPwModal] = useState(false);
+  const [mobileNavOpen,setMobileNavOpen]=useState(false);
 
   async function load() {
     const r = await fetchCurrentEmployee();
@@ -469,37 +470,77 @@ export default function App() {
   if (!employee.is_active || employee.employment_status !== "active") return <InactivePage signOut={signOut} />;
   if (!consent) return <ConsentGate employee={employee} onDone={load} signOut={signOut} />;
   const isAdmin = employee.role === "admin";
+  const pageTitles:Record<Tab,string>={
+    attendance:"출퇴근",
+    leave:"휴가",
+    overtime:"추가근무",
+    "admin-dashboard":"직원 현황",
+    approvals:"승인 관리",
+    employees:"직원 관리",
+    workplaces:"근무지 관리",
+    schedule:"근무 일정",
+    payroll:"급여 계산",
+    reports:"근태 보고서",
+  };
+  const personalMenus:{id:Tab;label:string;icon:string}[]=[
+    {id:"attendance",label:"출퇴근",icon:"ti-clock"},
+    {id:"leave",label:"휴가",icon:"ti-calendar"},
+    {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
+  ];
+  const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
+    {id:"admin-dashboard",label:"직원 현황",icon:"ti-layout-dashboard"},
+    {id:"approvals",label:"승인 관리",icon:"ti-shield-check",badge:pendingCount},
+    {id:"employees",label:"직원 관리",icon:"ti-users"},
+    {id:"workplaces",label:"근무지 관리",icon:"ti-map-pin"},
+    {id:"schedule",label:"근무 일정",icon:"ti-calendar-time"},
+    {id:"payroll",label:"급여 계산",icon:"ti-coin"},
+  ];
+  function go(next:Tab){setTab(next);setMobileNavOpen(false);}
+  function menuButton(item:{id:Tab;label:string;icon:string;badge?:number}){
+    return <button key={item.id} className={`side-nav-item ${tab===item.id?"active":""}`} onClick={()=>go(item.id)}><i className={`ti ${item.icon}`} aria-hidden="true"></i><span>{item.label}</span>{!!item.badge&&<b className="count-badge">{item.badge}</b>}</button>;
+  }
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="topbar-inner">
-          <div className="brand">
-            <div className="logo"><span>근태</span></div>
-            <div><h1>러플 근태관리</h1><p>{employee.name} · {isAdmin ? "관리자" : "직원"} · 기기 {employee.device_limit ?? 3}대</p></div>
-          </div>
-          <div className="actions">
-            <button className="button ghost" onClick={() => setShowPwModal(true)}><i className="ti ti-lock" aria-hidden="true"></i>비밀번호 변경</button>
-            <button className="button ghost" onClick={signOut}><i className="ti ti-logout" aria-hidden="true"></i>로그아웃</button>
-          </div>
+      <aside className={`app-sidebar ${mobileNavOpen?"open":""}`}>
+        <div className="sidebar-brand">
+          <div className="logo"><span>근태</span></div>
+          <div><h1>러플 근태관리</h1><p>{isAdmin?"관리자 시스템":"직원 근태"}</p></div>
+          <button className="sidebar-close" title="메뉴 닫기" onClick={()=>setMobileNavOpen(false)}><i className="ti ti-x" aria-hidden="true"></i></button>
         </div>
-      </header>
-      <main className="container">
-        <nav className="tabs">
-          <button className={`tab ${tab==="home"?"active":""}`} onClick={()=>setTab("home")}><i className="ti ti-clock" aria-hidden="true"></i>출퇴근</button>
-          <button className={`tab ${tab==="leave"?"active":""}`} onClick={()=>setTab("leave")}><i className="ti ti-calendar" aria-hidden="true"></i>휴가</button>
-          <button className={`tab ${tab==="workplaces"?"active":""}`} onClick={()=>setTab("workplaces")}><i className="ti ti-map-pin" aria-hidden="true"></i>근무지</button>
-          {isAdmin && <button className={`tab ${tab==="admin"?"active":""}`} onClick={()=>setTab("admin")}><i className="ti ti-settings" aria-hidden="true"></i>관리자{pendingCount>0&&<span className="count-badge">{pendingCount}</span>}</button>}
-          {isAdmin && <button className={`tab ${tab==="settings"?"active":""}`} onClick={()=>setTab("settings")}><i className="ti ti-calendar-cog" aria-hidden="true"></i>운영설정</button>}
-          {isAdmin && <button className={`tab ${tab==="reports"?"active":""}`} onClick={()=>setTab("reports")}><i className="ti ti-chart-bar" aria-hidden="true"></i>보고서</button>}
+        <nav className="side-nav">
+          <p className="side-nav-label">내 근무</p>
+          {personalMenus.map(menuButton)}
+          {isAdmin&&<><p className="side-nav-label">관리자</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{menuButton({id:"reports",label:"보고서",icon:"ti-chart-bar"})}</>}
         </nav>
-        {tab==="home" && <HomePage employee={employee} />}
-        {tab==="leave" && <LeavePage employee={employee} />}
-        {tab==="workplaces" && <WorkplacePage employee={employee} />}
-        {tab==="admin" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} />}
-        {tab==="settings" && isAdmin && <SettingsPage currentEmployee={employee} />}
-        {tab==="reports" && isAdmin && <ReportsPage />}
-      </main>
+        <div className="sidebar-account">
+          <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{isAdmin?"관리자":"직원"}</small></div></div>
+          <button title="비밀번호 변경" onClick={()=>setShowPwModal(true)}><i className="ti ti-lock" aria-hidden="true"></i></button>
+          <button title="로그아웃" onClick={signOut}><i className="ti ti-logout" aria-hidden="true"></i></button>
+        </div>
+      </aside>
+      {mobileNavOpen&&<button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={()=>setMobileNavOpen(false)} />}
+      <div className="app-workspace">
+        <header className="topbar">
+          <div className="topbar-inner">
+            <button className="mobile-menu-button" title="메뉴 열기" onClick={()=>setMobileNavOpen(true)}><i className="ti ti-menu-2" aria-hidden="true"></i></button>
+            <div className="page-heading"><span>{tab==="reports"?"리포트":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리자":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
+            <div className="topbar-user"><span>{employee.name}</span><b>{isAdmin?"관리자":"직원"}</b></div>
+          </div>
+        </header>
+        <main className="container">
+          {tab==="attendance" && <HomePage employee={employee} />}
+          {tab==="leave" && <LeavePage employee={employee} mode="leave" />}
+          {tab==="overtime" && <LeavePage employee={employee} mode="overtime" />}
+          {tab==="admin-dashboard" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" />}
+          {tab==="approvals" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" />}
+          {tab==="employees" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="employees" />}
+          {tab==="workplaces" && isAdmin && <WorkplacePage employee={employee} />}
+          {tab==="schedule" && isAdmin && <SettingsPage currentEmployee={employee} section="schedule" />}
+          {tab==="payroll" && isAdmin && <SettingsPage currentEmployee={employee} section="payroll" />}
+          {tab==="reports" && isAdmin && <ReportsPage />}
+        </main>
+      </div>
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
     </div>
   );
@@ -977,7 +1018,7 @@ function HomePage({ employee }: { employee: any }) {
   );
 }
 
-function LeavePage({ employee }: { employee: any }) {
+function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"overtime" }) {
   const [requests,setRequests]=useState<any[]>([]);
   const [adjustments,setAdjustments]=useState<any[]>([]);
   const [compRequests,setCompRequests]=useState<any[]>([]);
@@ -1010,6 +1051,8 @@ function LeavePage({ employee }: { employee: any }) {
   const meta=LEAVE_TYPE_META[form.request_type];
   const isSingle=SINGLE_DAY_TYPES.includes(form.request_type);
   const isHourly=form.request_type==="hourly";
+  const showLeave=mode==="leave";
+  const showOvertime=mode==="overtime";
 
   function setType(t:string){
     const m=LEAVE_TYPE_META[t];
@@ -1078,7 +1121,7 @@ function LeavePage({ employee }: { employee: any }) {
   return (
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
-      <section className="card leave-summary-card">
+      {showLeave&&<section className="card leave-summary-card">
         <div className="leave-summary-header">
           <h2 className="card-title"><i className="ti ti-calendar-stats" aria-hidden="true"></i>연차 현황</h2>
           <span className="leave-summary-badge">잔여 {remaining.toFixed(1)}일</span>
@@ -1099,10 +1142,10 @@ function LeavePage({ employee }: { employee: any }) {
             <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {ent.description}<br />산정기간 {ent.periodStart??"-"} ~ {ent.periodEnd??"-"} (근로기준법 제60조)</p>
           </div>
         </div>
-      </section>
+      </section>}
 
-      <div className="grid two">
-        <section className="card">
+      <div className={`grid ${showLeave&&showOvertime?"two":""}`}>
+        {showLeave&&<section className="card">
           <h2 className="card-title"><i className="ti ti-beach" aria-hidden="true"></i>휴가 신청</h2>
           <div className="form-row"><label className="label">신청 유형</label>
             <select className="select" value={form.request_type} onChange={e=>setType(e.target.value)}>
@@ -1144,10 +1187,15 @@ function LeavePage({ employee }: { employee: any }) {
           {isHourly&&<div className="form-row"><label className="label">사용 시간 (시간)</label><input className="input" type="number" step="0.5" value={form.amount_hours} onChange={e=>setForm({...form,amount_hours:e.target.value})} /></div>}
           <div className="form-row"><label className="label">사유</label><textarea className="textarea" value={form.reason} onChange={e=>setForm({...form,reason:e.target.value})} /></div>
           <button className="button full" onClick={submitLeave}>휴가 신청</button>
-        </section>
+        </section>}
 
-        <section className="card">
+        {showOvertime&&<section className="card">
           <h2 className="card-title"><i className="ti ti-clock-plus" aria-hidden="true"></i>추가근무 신청</h2>
+          <div className="grid three" style={{marginBottom:14}}>
+            <div className="metric"><div className="metric-value">{compEarned.toFixed(1)}일</div><div className="metric-label">승인 적립</div></div>
+            <div className="metric"><div className="metric-value">{compRemainHours}시간</div><div className="metric-label">사용 가능</div></div>
+            <div className="metric"><div className="metric-value">{compRequests.filter(r=>r.status==="pending").length}건</div><div className="metric-label">승인 대기</div></div>
+          </div>
           <p className="body-text" style={{marginBottom:14}}>추가근무는 별도 수당이 아니라 대체휴가로 적립됩니다. 관리자 승인 후 휴가 잔여에 추가됩니다 (8시간 = 1일).</p>
           <div className="alert">※ 추가근무는 시작 시간 전에만 신청할 수 있습니다.<br/>※ 한 번 신청하면 수정이 불가능합니다. 수정이 필요하면 승인 전 취소 후 다시 신청해주세요.</div>
           <div className="form-row"><label className="label">추가근무일</label><input className="input" type="date" value={compForm.work_date} onChange={e=>setCompForm({...compForm,work_date:e.target.value})} /></div>
@@ -1158,10 +1206,10 @@ function LeavePage({ employee }: { employee: any }) {
           </div>
           <div className="form-row"><label className="label">사유</label><textarea className="textarea" value={compForm.reason} onChange={e=>setCompForm({...compForm,reason:e.target.value})} placeholder="예: 행사 운영, 외부 교육 연장 등" /></div>
           <button className="button full" onClick={submitCompTime}>추가근무 신청</button>
-        </section>
+        </section>}
       </div>
 
-      <section className="card">
+      {showOvertime&&<section className="card">
         <h2 className="card-title"><i className="ti ti-clock-edit" aria-hidden="true"></i>추가근무 신청 내역</h2>
         {compRequests.length===0?<p className="subtle">신청 내역이 없습니다.</p>:(
           <div className="grid">
@@ -1173,15 +1221,14 @@ function LeavePage({ employee }: { employee: any }) {
             ))}
           </div>
         )}
-      </section>
+      </section>}
 
-      <section className="card">
+      {showLeave&&<section className="card">
         <h2 className="card-title"><i className="ti ti-list" aria-hidden="true"></i>신청 내역</h2>
         <DataTable rows={[
           ...requests.map(r=>({구분:requestTypeLabels[r.request_type]??r.request_type,기간:`${r.start_date}${r.end_date!==r.start_date?"~"+r.end_date:""}`,시간:r.start_time?`${r.start_time?.slice(0,5)}~${r.end_time?.slice(0,5)}`:"-",환산:r.amount_days!=null?r.amount_days+"일":r.amount_hours!=null?r.amount_hours+"시간":"-",상태:r.status,사유:r.reason??"-"})),
-          ...compRequests.map(r=>({구분:"추가근무(대체휴가)",기간:r.work_date,시간:r.start_time?`${r.start_time?.slice(0,5)}~${r.end_time?.slice(0,5)}`:"-",환산:`${r.hours}시간→${r.converted_days}일`,상태:r.status,사유:r.reason??"-"})),
         ]} />
-      </section>
+      </section>}
     </div>
   );
 }
@@ -1374,7 +1421,7 @@ function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmp
   );
 }
 
-function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onChanged: () => void }) {
+function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEmployee: any; onChanged: () => void; view?:"dashboard"|"approvals"|"employees" }) {
   const [employees,setEmployees]=useState<any[]>([]);
   const [empMap,setEmpMap]=useState<Record<string,any>>({});
   const [employeeFilter,setEmployeeFilter]=useState("active");
@@ -1486,8 +1533,14 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
 
-      <section className="card">
+      {view==="dashboard"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>일일 직원 근무 현황</h2>
+        <div className="grid four" style={{marginBottom:16}}>
+          <div className="metric"><div className="metric-value">{activeEmployees.length}</div><div className="metric-label">재직 직원</div></div>
+          <div className="metric"><div className="metric-value">{dailyRows.filter(x=>x.log?.check_in_time).length}</div><div className="metric-label">오늘 출근</div></div>
+          <div className="metric"><div className="metric-value">{dailyRows.filter(x=>x.log?.check_out_time).length}</div><div className="metric-label">오늘 퇴근</div></div>
+          <div className="metric"><div className="metric-value">{pendingTotal}</div><div className="metric-label">확인 대기</div></div>
+        </div>
         <div className="table-wrap">
           <table>
             <thead><tr><th>직원</th><th>출근 위치</th><th>출근 시각</th><th>퇴근 시각</th><th>상태</th></tr></thead>
@@ -1504,9 +1557,9 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
             </tbody>
           </table>
         </div>
-      </section>
+      </section>}
 
-      <CollapsibleSection title={`승인 대기${pendingTotal>0?` (${pendingTotal})`:""}`} icon="ti-inbox" defaultOpen={pendingTotal>0}>
+      {view==="approvals"&&<CollapsibleSection title={`승인 대기${pendingTotal>0?` (${pendingTotal})`:""}`} icon="ti-inbox" defaultOpen={true}>
         <div className="grid two">
           <div>
             <h3 style={{marginTop:0}}>근무지 {pW.length>0&&<span className="count-badge">{pW.length}</span>}</h3>
@@ -1553,13 +1606,13 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
             {pD.map(d=>(<div className="list-row" key={d.id}><div><b>{empName(d.employee_id)}</b><div className="subtle">{d.device_info?.platform||"기기"}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewDevice(d.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewDevice(d.id,"rejected")}>반려</button></div></div>))}
           </div>
         </div>
-      </CollapsibleSection>
+      </CollapsibleSection>}
 
-      <WeekendCompCard employees={employees} empMap={empMap} allLogs={allLogs} compRequests={compRequests} currentEmployee={currentEmployee} onChanged={load} />
+      {view==="approvals"&&<WeekendCompCard employees={employees} empMap={empMap} allLogs={allLogs} compRequests={compRequests} currentEmployee={currentEmployee} onChanged={load} />}
 
-      <ApprovedCompCard compRequests={compRequests} empMap={empMap} onChanged={load} />
+      {view==="approvals"&&<ApprovedCompCard compRequests={compRequests} empMap={empMap} onChanged={load} />}
 
-      <section className="card">
+      {view==="employees"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-chart-pie" aria-hidden="true"></i>직원 연차 현황</h2>
         <div className="table-wrap">
           <table>
@@ -1572,9 +1625,9 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
             </tbody>
           </table>
         </div>
-      </section>
+      </section>}
 
-      <section className="card">
+      {view==="employees"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-user-plus" aria-hidden="true"></i>직원 계정 생성</h2>
         <div className="grid four">
           <div className="form-row"><label className="label">이름</label><input className="input" value={newEmployee.name} onChange={e=>setNewEmployee({...newEmployee,name:e.target.value})} /></div>
@@ -1591,9 +1644,9 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
           <div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${newEmployee.work_days.includes(d)?"active":""}`} onClick={()=>setNewEmployee({...newEmployee,work_days:toggleDay(newEmployee.work_days,d)})}>{DAY_LABELS[d]}</button>)}</div>
         </div>
         <button className="button" onClick={createEmployee}><i className="ti ti-plus" aria-hidden="true"></i>직원 생성</button>
-      </section>
+      </section>}
 
-      <section className="card">
+      {view==="employees"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>직원 관리</h2>
         <div className="tabs">
           <button className={`tab ${employeeFilter==="active"?"active":""}`} onClick={()=>setEmployeeFilter("active")}>재직</button>
@@ -1618,15 +1671,15 @@ function AdminPage({ currentEmployee, onChanged }: { currentEmployee: any; onCha
             </tbody>
           </table>
         </div>
-      </section>
+      </section>}
 
-      {leaveModalEmp&&<LeaveManageModal emp={leaveModalEmp} requests={requests.filter(r=>r.employee_id===leaveModalEmp.id)} adjustments={adjustments.filter(a=>a.employee_id===leaveModalEmp.id)} compRequests={compRequests.filter(c=>c.employee_id===leaveModalEmp.id)} currentEmployee={currentEmployee} onClose={()=>setLeaveModalEmp(null)} onChanged={load} />}
+      {view==="employees"&&leaveModalEmp&&<LeaveManageModal emp={leaveModalEmp} requests={requests.filter(r=>r.employee_id===leaveModalEmp.id)} adjustments={adjustments.filter(a=>a.employee_id===leaveModalEmp.id)} compRequests={compRequests.filter(c=>c.employee_id===leaveModalEmp.id)} currentEmployee={currentEmployee} onClose={()=>setLeaveModalEmp(null)} onChanged={load} />}
     </div>
   );
 }
 
 
-function SettingsPage({ currentEmployee }: { currentEmployee:any }) {
+function SettingsPage({ currentEmployee, section="schedule" }: { currentEmployee:any; section?:"schedule"|"payroll" }) {
   const [employees,setEmployees]=useState<any[]>([]);
   const [empMap,setEmpMap]=useState<Record<string,any>>({});
   const [overrides,setOverrides]=useState<any[]>([]);
@@ -1646,27 +1699,47 @@ function SettingsPage({ currentEmployee }: { currentEmployee:any }) {
   useEffect(()=>{load();},[]);
   function empName(id?:string|null){return id&&empMap[id]?empMap[id].name:"-";}
   return <div className="grid">
-    <TeamScheduleBoard employees={employees} events={scheduleEvents} currentEmployee={currentEmployee} onChanged={load} />
-    <ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setMsg} msg={msg} />
-    <PayrollCard employees={employees} absences={absences} overrides={overrides} />
+    {section==="schedule"&&<><TeamScheduleBoard employees={employees} events={scheduleEvents} currentEmployee={currentEmployee} onChanged={load} /><ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setMsg} msg={msg} /></>}
+    {section==="payroll"&&<PayrollCard employees={employees} absences={absences} overrides={overrides} />}
   </div>;
 }
 
 function TeamScheduleBoard({employees,events,currentEmployee,onChanged}:{employees:any[];events:any[];currentEmployee:any;onChanged:()=>void}) {
   const activeEmployees=employees.filter(e=>e.employment_status==="active");
-  const [month,setMonth]=useState(todayIso().slice(0,7)+"-01");
+  const [weekAnchor,setWeekAnchor]=useState(todayIso());
+  const [selectedEmpId,setSelectedEmpId]=useState("");
   const [editing,setEditing]=useState<any|null>(null);
   const [message,setMessage]=useState("");
   const [draggingId,setDraggingId]=useState<string|null>(null);
-  const dates=monthDates(month);
-  const monthStart=dates[0],monthEnd=dates[dates.length-1];
-  const visibleEvents=events.filter(e=>e.start_date<=monthEnd&&e.end_date>=monthStart);
-  function emptyEvent(employeeId=activeEmployees[0]?.id??"",date=todayIso()){
+  const weekStart=weekStartIso(weekAnchor);
+  const dates=Array.from({length:5},(_,i)=>addIsoDays(weekStart,i));
+  const weekEnd=dates[4];
+  const selectedEmployee=activeEmployees.find(e=>e.id===selectedEmpId)??activeEmployees[0]??null;
+  const selectedEvents=events.filter(e=>e.employee_id===selectedEmployee?.id&&e.start_date<=weekEnd&&e.end_date>=weekStart);
+  const allDayEvents=selectedEvents.filter(e=>e.event_type==="info"&&!e.start_time&&!e.end_time);
+  const timedEvents=selectedEvents.filter(e=>!allDayEvents.includes(e));
+  const hours=Array.from({length:11},(_,i)=>9+i);
+  useEffect(()=>{if(!selectedEmpId&&activeEmployees[0]) setSelectedEmpId(activeEmployees[0].id);},[activeEmployees.length]);
+  function emptyEvent(employeeId=selectedEmployee?.id??"",date=todayIso()){
     return {employee_id:employeeId,title:"",event_type:"info",start_date:date,end_date:date,start_time:"",end_time:"",note:""};
   }
-  function changeMonth(offset:number){
-    const d=dateFromIso(month);
-    setMonth(isoDate(new Date(d.getFullYear(),d.getMonth()+offset,1)));
+  function changeWeek(offset:number){setWeekAnchor(addIsoDays(weekStart,offset*7));}
+  function eventTime(event:any){
+    const defaults:Record<string,[string,string]>={
+      work:[String(selectedEmployee?.work_start??"09:00").slice(0,5),String(selectedEmployee?.work_end??"18:00").slice(0,5)],
+      am_only:["09:00","12:00"],
+      pm_only:["13:00","18:00"],
+      unavailable:["09:00","19:00"],
+      info:["09:00","18:00"],
+    };
+    const fallback=defaults[event.event_type]??defaults.info;
+    return [String(event.start_time??fallback[0]).slice(0,5),String(event.end_time??fallback[1]).slice(0,5)];
+  }
+  function timeGridPosition(event:any){
+    const [start,end]=eventTime(event);
+    const startMin=Math.max(9*60,Math.min(19*60,timeToMinutes(start)??9*60));
+    const endMin=Math.max(startMin+30,Math.min(19*60,timeToMinutes(end)??18*60));
+    return {row:Math.floor((startMin-9*60)/30)+1,span:Math.max(1,Math.ceil((endMin-startMin)/30)),label:`${start}~${end}`};
   }
   async function saveEvent(){
     if(!editing?.employee_id) return setMessage("직원을 선택해주세요.");
@@ -1712,49 +1785,60 @@ function TeamScheduleBoard({employees,events,currentEmployee,onChanged}:{employe
     <section className="card schedule-board-card">
       <div className="schedule-board-toolbar">
         <div>
-          <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-calendar-month" aria-hidden="true"></i>직원 월간 일정</h2>
-          <p className="subtle" style={{margin:0}}>일정 막대를 다른 날짜나 직원 행으로 드래그하면 기간을 유지한 채 이동합니다. 빈 날짜를 두 번 누르면 바로 추가할 수 있습니다.</p>
+          <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-calendar-week" aria-hidden="true"></i>직원 근무 일정</h2>
+          <p className="subtle" style={{margin:0}}>월요일부터 금요일까지 실제 시간대로 확인합니다. 일정 막대를 다른 날짜로 드래그하면 기간을 유지한 채 이동합니다.</p>
         </div>
-        <button className="button" onClick={()=>setEditing(emptyEvent(activeEmployees[0]?.id,monthStart))}><i className="ti ti-plus" aria-hidden="true"></i>일정 추가</button>
+        <button className="button" onClick={()=>setEditing(emptyEvent(selectedEmployee?.id,dates[0]))}><i className="ti ti-plus" aria-hidden="true"></i>일정 추가</button>
       </div>
       {message&&<div className={`alert ${message.includes("실패")?"error":"success"}`} style={{marginTop:14}}>{message}</div>}
+      <div className="schedule-employee-tabs">
+        <span>직원 선택</span>
+        {activeEmployees.map(emp=><button key={emp.id} className={selectedEmployee?.id===emp.id?"active":""} onClick={()=>setSelectedEmpId(emp.id)}><i style={{background:employeeScheduleColor(emp.id)}}></i>{emp.name}</button>)}
+      </div>
       <div className="schedule-month-nav">
-        <button className="icon-button" title="이전 달" onClick={()=>changeMonth(-1)}><i className="ti ti-chevron-left" aria-hidden="true"></i></button>
-        <button className="month-title" onClick={()=>setMonth(todayIso().slice(0,7)+"-01")}>{dateFromIso(month).toLocaleDateString("ko-KR",{year:"numeric",month:"long"})}</button>
-        <button className="icon-button" title="다음 달" onClick={()=>changeMonth(1)}><i className="ti ti-chevron-right" aria-hidden="true"></i></button>
+        <button className="icon-button" title="이전 주" onClick={()=>changeWeek(-1)}><i className="ti ti-chevron-left" aria-hidden="true"></i></button>
+        <button className="month-title" onClick={()=>setWeekAnchor(todayIso())}>{weekOfMonthLabel(weekStart)}</button>
+        <button className="icon-button" title="다음 주" onClick={()=>changeWeek(1)}><i className="ti ti-chevron-right" aria-hidden="true"></i></button>
       </div>
-      <div className="schedule-legend">
-        {activeEmployees.map(e=><span key={e.id}><i style={{background:employeeScheduleColor(e.id)}}></i>{e.name}</span>)}
-      </div>
-      <div className="schedule-board-scroll">
-        <div className="schedule-board" style={{minWidth:150+dates.length*44}}>
-          <div className="schedule-board-header">
-            <div className="schedule-employee-head">직원</div>
-            <div className="schedule-date-header" style={{gridTemplateColumns:`repeat(${dates.length},44px)`}}>
-              {dates.map(date=>{const d=dateFromIso(date);const weekend=d.getDay()===0||d.getDay()===6;return <div key={date} className={`${weekend?"weekend":""} ${date===todayIso()?"today":""}`}><b>{d.getDate()}</b><span>{["일","월","화","수","목","금","토"][d.getDay()]}</span></div>;})}
+      <div className="week-calendar-scroll">
+        <div className="week-calendar">
+          <div className="week-calendar-header">
+            <div className="week-time-head">시간</div>
+            {dates.map(date=>{const d=dateFromIso(date);return <div key={date} className={date===todayIso()?"today":""}><b>{["일","월","화","수","목","금","토"][d.getDay()]}</b><span>{d.getMonth()+1}/{d.getDate()}</span></div>;})}
+          </div>
+          <div className="week-all-day">
+            <div className="week-all-day-label">종일</div>
+            <div className="week-all-day-track">
+              {dates.map(date=><div key={date} className="week-drop-column" onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id,date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id,date))} />)}
+              {allDayEvents.map(event=>{
+                const visible=dates.map((date,index)=>({date,index})).filter(x=>x.date>=event.start_date&&x.date<=event.end_date);
+                if(!visible.length) return null;
+                return <button key={event.id} draggable className="week-all-day-event" style={{gridColumn:`${visible[0].index+1} / span ${visible.length}`,borderColor:employeeScheduleColor(selectedEmployee?.id??""),color:employeeScheduleColor(selectedEmployee?.id??"")}} onDragStart={e=>{setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{event.title}</b><span>{event.note??`${event.start_date}~${event.end_date}`}</span></button>;
+              })}
             </div>
           </div>
-          {activeEmployees.map(emp=>{
-            const laidOut=scheduleEventLanes(visibleEvents.filter(e=>e.employee_id===emp.id));
-            const laneCount=Math.max(1,...laidOut.map(e=>e.lane+1));
-            return <div className="schedule-board-row" key={emp.id}>
-              <div className="schedule-employee-cell"><span style={{background:employeeScheduleColor(emp.id)}}></span><div><b>{emp.name}</b><small>{String(emp.work_start??"09:00").slice(0,5)}~{String(emp.work_end??"18:00").slice(0,5)}</small></div></div>
-              <div className="schedule-timeline" style={{gridTemplateColumns:`repeat(${dates.length},44px)`,gridTemplateRows:`repeat(${laneCount},34px)`}}>
-                {dates.map((date,index)=>{const d=dateFromIso(date);return <div key={date} className={`schedule-day-drop ${d.getDay()===0||d.getDay()===6?"weekend":""} ${date===todayIso()?"today":""}`} style={{gridColumn:index+1,gridRow:`1 / span ${laneCount}`}} onDragOver={ev=>ev.preventDefault()} onDrop={()=>moveEvent(emp.id,date)} onDoubleClick={()=>setEditing(emptyEvent(emp.id,date))} title={`${emp.name} ${date} 일정 추가`} />;})}
-                {laidOut.map(event=>{
-                  const shownStart=event.start_date<monthStart?monthStart:event.start_date;
-                  const shownEnd=event.end_date>monthEnd?monthEnd:event.end_date;
-                  const startIndex=dates.indexOf(shownStart);
-                  const span=countDaysInclusive(shownStart,shownEnd);
+          <div className="week-time-grid">
+            <div className="week-time-axis">{hours.map(hour=><div key={hour}>{String(hour).padStart(2,"0")}:00</div>)}</div>
+            <div className="week-event-grid">
+              {dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""}`} style={{gridColumn:index+1}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id,date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id,date))} />)}
+              {dates.flatMap((date,index)=>{
+                const dayEvents=timedEvents.filter(event=>date>=event.start_date&&date<=event.end_date);
+                const unavailable=dayEvents.filter(event=>event.event_type==="unavailable");
+                const shown=unavailable.length?unavailable:dayEvents;
+                const isBaseWorkday=(selectedEmployee?.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
+                const baseWork=shown.length===0&&isBaseWorkday?{id:`base-${date}`,title:"기본 근무",event_type:"work",start_time:selectedEmployee?.work_start,end_time:selectedEmployee?.work_end,note:"직원 기본 스케줄",base:true}:null;
+                return [...shown,...(baseWork?[baseWork]:[])].map((event:any)=>{
+                  const pos=timeGridPosition(event);
                   const meta=SCHEDULE_EVENT_META[event.event_type]??SCHEDULE_EVENT_META.info;
-                  return <button key={event.id} draggable className={`schedule-event event-${event.event_type}`} style={{gridColumn:`${startIndex+1} / span ${span}`,gridRow:event.lane+1,background:employeeScheduleColor(emp.id)}} onDragStart={ev=>{setDraggingId(event.id);ev.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})} title={`${event.title} · ${meta.label}`}><i className={`ti ${meta.icon}`} aria-hidden="true"></i><span>{event.title}</span>{event.start_time&&<small>{String(event.start_time).slice(0,5)}~{String(event.end_time??"").slice(0,5)}</small>}</button>;
-                })}
-              </div>
-            </div>;
-          })}
+                  return <button key={`${event.id}-${date}`} draggable={!event.base} className={`week-time-event event-${event.event_type}`} style={{gridColumn:index+1,gridRow:`${pos.row} / span ${pos.span}`,borderColor:employeeScheduleColor(selectedEmployee?.id??"")}} onDragStart={e=>{if(event.base)return;setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>!event.base&&setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b><i className={`ti ${meta.icon}`} aria-hidden="true"></i>{event.title}</b><span>{pos.label}</span>{event.note&&<small>{event.note}</small>}</button>;
+                });
+              })}
+            </div>
+          </div>
         </div>
       </div>
-      {activeEmployees.length===0&&<p className="subtle">표시할 재직 직원이 없습니다.</p>}
+      <p className="schedule-help"><i className="ti ti-info-circle" aria-hidden="true"></i>빈 시간대를 두 번 누르면 일정을 추가할 수 있습니다. 토요일과 일요일은 표시하지 않습니다.</p>
+      {!selectedEmployee&&<p className="subtle">표시할 재직 직원이 없습니다.</p>}
       {editing&&<div className="modal-backdrop" onClick={()=>setEditing(null)}>
         <div className="modal-box schedule-event-modal" onClick={e=>e.stopPropagation()}>
           <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-calendar-event" aria-hidden="true"></i>{editing.id?"일정 수정":"일정 추가"}</h2><button className="modal-close" title="닫기" onClick={()=>setEditing(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
