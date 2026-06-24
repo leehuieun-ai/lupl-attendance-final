@@ -298,6 +298,19 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-calendar-header b { font-size: 13px; }
 .week-calendar-header span { color: var(--muted); font-size: 12px; }
 .week-calendar-header .today { background: #eef3fe; color: var(--blue-dark); }
+.week-calendar-header.team-calendar-header { grid-template-rows: 52px 44px; }
+.team-calendar-header .week-time-head { border-right: 1px solid var(--line); border-bottom: 0; background: #f8fafc; }
+.team-calendar-header .team-day-head { min-height: 52px; border-bottom: 1px solid var(--line); }
+.team-calendar-header .team-day-head b { font-size: 14px; }
+.team-employee-head {
+  min-width: 0; display: flex; align-items: center; justify-content: center; gap: 6px;
+  border: 0; border-right: 1px solid var(--line); background: #fff;
+  color: var(--employee-color); font-size: 12px; font-weight: 750;
+}
+.team-employee-head:hover { background: color-mix(in srgb,var(--employee-color) 8%,white); }
+.team-employee-head i { width: 9px; height: 9px; flex-shrink: 0; border-radius: 3px; background: var(--employee-color); }
+.team-employee-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: inherit; }
+.team-employee-head.team-day-end { border-right-color: #c4cad4; }
 .week-time-head { color: #667085; font-size: 12px; font-weight: 700; }
 .week-all-day { display: grid; grid-template-columns: 78px 1fr; min-height: 66px; border-bottom: 1px solid var(--line); }
 .week-all-day-label { display: grid; place-items: center; border-right: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; background: #fafbfc; }
@@ -305,10 +318,10 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-all-day-track.team-all-day-track { grid-template-rows: repeat(var(--employee-count),34px); grid-auto-rows: 34px; }
 .week-drop-column { grid-row: 1; border-right: 1px solid var(--line); }
 .week-drop-column:hover { background: #f2f6ff; }
-.week-all-day-event { z-index: 2; grid-row: 1; min-width: 0; align-self: center; height: 48px; margin: 0 5px; border: 1px solid var(--employee-color); border-radius: 6px; background: color-mix(in srgb,var(--employee-color) 12%,white); color: var(--employee-color); padding: 6px 10px; text-align: left; overflow: hidden; }
+.week-all-day-event { z-index: 2; grid-row: 1; min-width: 0; align-self: center; height: 48px; margin: 0 5px; border: 1px solid var(--employee-color); border-radius: 6px; background: var(--employee-color); color: #fff; padding: 6px 10px; text-align: left; overflow: hidden; }
 .week-all-day-event b, .week-all-day-event span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .week-all-day-event b { font-size: 12px; }
-.week-all-day-event span { margin-top: 3px; color: #667085; font-size: 10px; }
+.week-all-day-event span { margin-top: 3px; color: rgba(255,255,255,.86); font-size: 10px; }
 .week-all-day-event.team-all-day-event { height: 28px; margin: 2px 4px; padding: 4px 7px; }
 .week-all-day-event.team-all-day-event b { font-size: 10px; }
 .week-all-day-event.team-all-day-event span { display: none; }
@@ -327,25 +340,22 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-day-column:last-of-type { border-right: 0; }
 .week-day-column.today { background: rgba(58,109,240,.035); }
 .week-day-column:hover { background: rgba(58,109,240,.06); }
-.week-time-event { z-index: 3; min-width: 0; margin: 2px 5px; border: 1px solid var(--employee-color); border-left-width: 4px; border-radius: 6px; background: color-mix(in srgb,var(--employee-color) 12%,white); color: var(--employee-color); padding: 8px 9px; text-align: left; overflow: hidden; box-shadow: 0 1px 2px rgba(20,30,60,.08); }
+.team-event-grid .team-employee-column { border-right-color: #e4e7ec; }
+.team-event-grid .team-employee-column.team-day-end { border-right-color: #c4cad4; }
+.week-time-event { z-index: 3; min-width: 0; margin: 3px 5px; border: 1px solid var(--employee-color); border-radius: 6px; background: var(--employee-color); color: #fff; padding: 8px 9px; text-align: left; overflow: hidden; box-shadow: 0 1px 3px rgba(20,30,60,.16); }
 .week-time-event b, .week-time-event span, .week-time-event small { display: block; overflow: hidden; text-overflow: ellipsis; }
 .week-time-event b { font-size: 12px; white-space: nowrap; }
 .week-time-event b i { margin-right: 4px; }
 .week-time-event span { margin-top: 3px; font-size: 10px; white-space: nowrap; }
-.week-time-event small { margin-top: 4px; color: #667085; font-size: 10px; line-height: 1.35; }
-.week-time-event.event-unavailable { background-image: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 18%,white) 0,color-mix(in srgb,var(--employee-color) 18%,white) 7px,color-mix(in srgb,var(--employee-color) 7%,white) 7px,color-mix(in srgb,var(--employee-color) 7%,white) 14px); }
+.week-time-event small { margin-top: 4px; color: rgba(255,255,255,.84); font-size: 10px; line-height: 1.35; }
+.week-time-event.event-unavailable { background: var(--employee-color); }
 .week-time-event.team-lane-event {
-  justify-self: start;
-  margin-top: 2px;
-  margin-right: 0;
-  margin-bottom: 2px;
-  padding: 6px 4px;
-  border-left-width: 3px;
+  margin: 3px 5px;
+  padding: 8px 7px;
 }
-.week-time-event.team-lane-event b,
-.week-time-event.team-lane-event span,
-.week-time-event.team-lane-event small { font-size: 9px; line-height: 1.2; white-space: nowrap; }
-.week-time-event.team-lane-event small { margin-top: 3px; color: inherit; opacity: .78; }
+.week-time-event.team-lane-event b { font-size: 12px; line-height: 1.25; white-space: normal; }
+.week-time-event.team-lane-event span { font-size: 11px; line-height: 1.25; white-space: nowrap; }
+.week-time-event.team-lane-event small { margin-top: 4px; font-size: 10px; line-height: 1.25; white-space: normal; color: rgba(255,255,255,.84); }
 .team-color-legend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
 .team-color-legend span { display: inline-flex; align-items: center; gap: 5px; color: #475467; font-size: 11px; font-weight: 650; }
 .team-color-legend i { width: 9px; height: 9px; border-radius: 3px; }

@@ -1846,10 +1846,12 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
   const dates=Array.from({length:5},(_,i)=>addIsoDays(weekStart,i));
   const weekEnd=dates[4];
   const isAll=selectedEmpId==="all";
+  const employeeCount=Math.max(1,activeEmployees.length);
+  const teamColumnCount=dates.length*employeeCount;
   const selectedEmployee=isAll?null:(activeEmployees.find(e=>e.id===selectedEmpId)??activeEmployees[0]??null);
   const selectedEvents=events.filter(e=>(isAll||e.employee_id===selectedEmployee?.id)&&e.start_date<=weekEnd&&e.end_date>=weekStart);
-  const allDayEvents=selectedEvents.filter(e=>e.event_type==="info"&&!e.start_time&&!e.end_time);
-  const timedEvents=selectedEvents.filter(e=>!allDayEvents.includes(e));
+  const allDayEvents=isAll?[]:selectedEvents.filter(e=>e.event_type==="info"&&!e.start_time&&!e.end_time);
+  const timedEvents=isAll?selectedEvents:selectedEvents.filter(e=>!allDayEvents.includes(e));
   const hours=Array.from({length:11},(_,i)=>9+i);
   const selectedColor=selectedEmployee?employeeColorFromList(activeEmployees,selectedEmployee.id):EMPLOYEE_COLORS[0];
   useEffect(()=>{
@@ -1937,29 +1939,37 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
         <button className="icon-button" title="다음 주" onClick={()=>changeWeek(1)}><i className="ti ti-chevron-right" aria-hidden="true"></i></button>
       </div>
       <div className="week-calendar-scroll">
-        <div className={`week-calendar ${isAll?"team-view":""}`}>
-          <div className="week-calendar-header">
-            <div className="week-time-head">시간</div>
-            {dates.map(date=>{const d=dateFromIso(date);return <div key={date} className={date===todayIso()?"today":""}><b>{["일","월","화","수","목","금","토"][d.getDay()]}</b><span>{d.getMonth()+1}/{d.getDate()}{isAll?` · ${activeEmployees.length}명`:""}</span></div>;})}
+        <div className={`week-calendar ${isAll?"team-view":""}`} style={isAll?{minWidth:78+teamColumnCount*92}:undefined}>
+          <div className={`week-calendar-header ${isAll?"team-calendar-header":""}`} style={isAll?{gridTemplateColumns:`78px repeat(${teamColumnCount},minmax(92px,1fr))`}:undefined}>
+            <div className="week-time-head" style={isAll?{gridRow:"1 / span 2"}:undefined}>시간</div>
+            {dates.map((date,dateIndex)=>{
+              const d=dateFromIso(date);
+              return <div key={date} className={`${date===todayIso()?"today":""} ${isAll?"team-day-head":""}`} style={isAll?{gridColumn:`${dateIndex*employeeCount+2} / span ${employeeCount}`,gridRow:1}:undefined}><b>{["일","월","화","수","목","금","토"][d.getDay()]} {d.getMonth()+1}/{d.getDate()}</b>{!isAll&&<span>{d.getMonth()+1}/{d.getDate()}</span>}</div>;
+            })}
+            {isAll&&dates.flatMap((date,dateIndex)=>activeEmployees.map((employee,employeeIndex)=>{
+              const color=employeeColorFromList(activeEmployees,employee.id);
+              return <button key={`${date}-${employee.id}-head`} className={`team-employee-head ${employeeIndex===activeEmployees.length-1?"team-day-end":""}`} style={{gridColumn:dateIndex*employeeCount+employeeIndex+2,gridRow:2,"--employee-color":color} as React.CSSProperties} onClick={()=>setSelectedEmpId(employee.id)} title={`${employee.name} 개인 일정 보기`}><i></i><span>{employee.name}</span></button>;
+            }))}
           </div>
-          <div className="week-all-day">
+          {!isAll&&<div className="week-all-day">
             <div className="week-all-day-label">종일</div>
-            <div className={`week-all-day-track ${isAll?"team-all-day-track":""}`} style={isAll?{"--employee-count":Math.max(1,activeEmployees.length)} as React.CSSProperties:undefined}>
+            <div className="week-all-day-track">
               {dates.map(date=><div key={date} className="week-drop-column" onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
               {allDayEvents.map(event=>{
                 const visible=dates.map((date,index)=>({date,index})).filter(x=>x.date>=event.start_date&&x.date<=event.end_date);
                 if(!visible.length) return null;
                 const owner=activeEmployees.find(emp=>emp.id===event.employee_id);
-                const ownerIndex=Math.max(0,activeEmployees.findIndex(emp=>emp.id===event.employee_id));
                 const color=owner?employeeColorFromList(activeEmployees,owner.id):selectedColor;
-                return <button key={event.id} draggable className={`week-all-day-event ${isAll?"team-all-day-event":""}`} style={{gridColumn:`${visible[0].index+1} / span ${visible.length}`,gridRow:isAll?ownerIndex+1:1,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{isAll&&owner?`${owner.name} · `:""}{event.title}</b><span>{event.note??`${event.start_date}~${event.end_date}`}</span></button>;
+                return <button key={event.id} draggable className="week-all-day-event" style={{gridColumn:`${visible[0].index+1} / span ${visible.length}`,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{event.title}</b><span>{event.note??`${event.start_date}~${event.end_date}`}</span></button>;
               })}
             </div>
-          </div>
+          </div>}
           <div className="week-time-grid">
             <div className="week-time-axis">{hours.map(hour=><div key={hour}>{String(hour).padStart(2,"0")}:00</div>)}</div>
-            <div className="week-event-grid">
-              {dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""}`} style={{gridColumn:index+1}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
+            <div className={`week-event-grid ${isAll?"team-event-grid":""}`} style={isAll?{gridTemplateColumns:`repeat(${teamColumnCount},minmax(92px,1fr))`}:undefined}>
+              {isAll
+                ? dates.flatMap((date,dateIndex)=>activeEmployees.map((employee,employeeIndex)=><div key={`${date}-${employee.id}-drop`} className={`week-day-column team-employee-column ${employeeIndex===activeEmployees.length-1?"team-day-end":""} ${date===todayIso()?"today":""}`} style={{gridColumn:dateIndex*employeeCount+employeeIndex+1}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(employee.id,date)} onDoubleClick={()=>setEditing(emptyEvent(employee.id,date))} />))
+                : dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""}`} style={{gridColumn:index+1}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
               {dates.flatMap((date,index)=>{
                 const shownEmployees=isAll?activeEmployees:(selectedEmployee?[selectedEmployee]:[]);
                 return shownEmployees.flatMap((employee:any,employeeIndex:number)=>{
@@ -1973,9 +1983,11 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
                   return [...shown,...(baseWork?[baseWork]:[])].map((event:any)=>{
                     const pos=timeGridPosition(event,employee);
                     const meta=SCHEDULE_EVENT_META[event.event_type]??SCHEDULE_EVENT_META.info;
-                    const laneWidth=100/Math.max(1,activeEmployees.length);
-                    const laneStyle=isAll?{width:`calc(${laneWidth}% - 4px)`,marginLeft:`calc(${laneWidth*employeeIndex}% + 2px)`} as React.CSSProperties:{};
-                    return <button key={`${event.id}-${date}`} title={`${employee.name} · ${event.title} · ${pos.label}`} draggable={!event.base} className={`week-time-event event-${event.event_type} ${isAll?"team-lane-event":""}`} style={{gridColumn:index+1,gridRow:`${pos.row} / span ${pos.span}`,"--employee-color":color,...laneStyle} as React.CSSProperties} onDragStart={e=>{if(event.base)return;setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>!event.base&&setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{!isAll&&<i className={`ti ${meta.icon}`} aria-hidden="true"></i>}{isAll?employee.name:event.title}</b><span>{pos.label}</span>{isAll?<small>{event.title}</small>:event.note&&<small>{event.note}</small>}</button>;
+                    const gridColumn=isAll?index*employeeCount+employeeIndex+1:index+1;
+                    const openEditor=()=>setEditing(event.base
+                      ? {...event,id:undefined,base:undefined,fromBase:true,start_date:date,end_date:date,start_time:String(event.start_time??"09:00").slice(0,5),end_time:String(event.end_time??"18:00").slice(0,5)}
+                      : {...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""});
+                    return <button key={`${event.id}-${date}`} title={`${employee.name} · ${event.title} · ${pos.label} · 눌러서 수정`} draggable={!event.base} className={`week-time-event event-${event.event_type} ${isAll?"team-lane-event":""}`} style={{gridColumn,gridRow:`${pos.row} / span ${pos.span}`,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{if(event.base)return;setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={openEditor}><b>{!isAll&&<i className={`ti ${meta.icon}`} aria-hidden="true"></i>}{event.title}</b><span>{pos.label}</span>{event.note&&<small>{event.note}</small>}</button>;
                   });
                 });
               })}
@@ -1984,11 +1996,11 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
         </div>
       </div>
       <div className="team-color-legend">{isAll&&activeEmployees.map(emp=><span key={emp.id}><i style={{background:employeeColorFromList(activeEmployees,emp.id)}}></i>{emp.name}</span>)}</div>
-      <p className="schedule-help"><i className="ti ti-info-circle" aria-hidden="true"></i>{isAll?"각 날짜 안에서 직원별 세로 레인으로 실제 근무시간을 표시합니다. 직원 이름을 누르면 개인 일정을 넓게 볼 수 있습니다.":"빈 시간대를 두 번 누르면 일정을 추가할 수 있습니다."} 토요일과 일요일은 표시하지 않습니다.</p>
-      {!selectedEmployee&&<p className="subtle">표시할 재직 직원이 없습니다.</p>}
+      <p className="schedule-help"><i className="ti ti-info-circle" aria-hidden="true"></i>{isAll?"요일 아래 직원별 열을 표시합니다. 이름을 누르면 개인 일정으로 이동하고, 모든 일정칸은 눌러서 수정할 수 있습니다.":"빈 시간대를 두 번 누르면 일정을 추가하고, 일정칸을 누르면 수정할 수 있습니다."} 토요일과 일요일은 표시하지 않습니다.</p>
+      {activeEmployees.length===0&&<p className="subtle">표시할 재직 직원이 없습니다.</p>}
       {editing&&<div className="modal-backdrop" onClick={()=>setEditing(null)}>
         <div className="modal-box schedule-event-modal" onClick={e=>e.stopPropagation()}>
-          <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-calendar-event" aria-hidden="true"></i>{editing.id?"일정 수정":"일정 추가"}</h2><button className="modal-close" title="닫기" onClick={()=>setEditing(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
+          <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-calendar-event" aria-hidden="true"></i>{editing.id||editing.fromBase?"일정 수정":"일정 추가"}</h2><button className="modal-close" title="닫기" onClick={()=>setEditing(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
           <div className="grid two">
             <div className="form-row"><label className="label">직원</label><select className="select" value={editing.employee_id} onChange={e=>setEditing({...editing,employee_id:e.target.value})}>{activeEmployees.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
             <div className="form-row"><label className="label">일정 종류</label><select className="select" value={editing.event_type} onChange={e=>setEditing({...editing,event_type:e.target.value})}>{Object.entries(SCHEDULE_EVENT_META).map(([key,value])=><option key={key} value={key}>{value.label}</option>)}</select></div>
