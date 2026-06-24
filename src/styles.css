@@ -380,6 +380,9 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .schedule-type-control { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
 .schedule-type-control button { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #475467; font-size: 12px; font-weight: 700; }
 .schedule-type-control button.active { border-color: var(--blue); background: #eef3fe; color: var(--blue-dark); box-shadow: 0 0 0 2px rgba(58,109,240,.08); }
+.overtime-baseline-alert { margin-top: 10px; border-color: #9ec5fe; background: #eef6ff; }
+.overtime-baseline-alert b, .overtime-baseline-alert span { display: block; }
+.overtime-baseline-alert span { margin-top: 4px; color: #475467; font-size: 13px; }
 .consent-modal { max-width: 720px; }
 .consent-preview { max-height: 68vh; overflow-y: auto; padding-right: 4px; }
 .consent-preview dl { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin: 16px 0; }

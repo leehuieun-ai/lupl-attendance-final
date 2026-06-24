@@ -1068,6 +1068,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   const [compRequests,setCompRequests]=useState<any[]>([]);
   const [form,setForm]=useState({request_type:"annual",start_date:todayIso(),end_date:todayIso(),start_time:"09:00",end_time:"18:00",amount_hours:"",reason:""});
   const [compForm,setCompForm]=useState({work_date:todayIso(),start_time:"18:00",end_time:"20:00",hours:2,reason:""});
+  const [compBaseline,setCompBaseline]=useState<any|null>(null);
   const [message,setMessage]=useState(""); const [showCompAlert,setShowCompAlert]=useState(false);
 
   async function load() {
@@ -1079,6 +1080,37 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
     setRequests(r.data??[]); setAdjustments(a.data??[]); setCompRequests(c.data??[]);
   }
   useEffect(()=>{load();},[]);
+  useEffect(()=>{
+    if(mode!=="overtime") return;
+    let cancelled=false;
+    async function loadCompBaseline(){
+      const date=compForm.work_date;
+      const dayStart=new Date(`${date}T00:00:00+09:00`).toISOString();
+      const dayEnd=new Date(`${date}T23:59:59.999+09:00`).toISOString();
+      const [logResult,overrideResult]=await Promise.all([
+        supabase.from("attendance_logs").select("check_in_time").eq("employee_id",employee.id).gte("check_in_time",dayStart).lte("check_in_time",dayEnd).order("check_in_time",{ascending:false}).limit(1).maybeSingle(),
+        supabase.from("weekly_schedule_overrides").select("*").eq("employee_id",employee.id).eq("week_start",weekStartIso(date)).maybeSingle(),
+      ]);
+      const workStart=overrideResult.data?.work_start??employee.work_start??"09:00";
+      const workEnd=overrideResult.data?.work_end??employee.work_end??"18:00";
+      const startMin=timeToMinutes(workStart)??9*60;
+      const endMin=timeToMinutes(workEnd)??18*60;
+      const shiftMinutes=endMin>startMin?endMin-startMin:(24*60-startMin)+endMin;
+      const checkIn=logResult.data?.check_in_time?new Date(logResult.data.check_in_time):null;
+      const expectedEnd=checkIn?addMinutes(checkIn,shiftMinutes):kstDateTime(date,workEnd);
+      if(cancelled) return;
+      const expectedEndHHMM=new Intl.DateTimeFormat("ko-KR",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Seoul"}).format(expectedEnd);
+      setCompBaseline({hasCheckIn:!!checkIn,checkInTime:checkIn?.toISOString()??null,expectedEndTime:expectedEnd.toISOString(),expectedEndHHMM,shiftMinutes});
+      setCompForm(current=>{
+        if(current.work_date!==date||(timeToMinutes(current.start_time)??0)>=(timeToMinutes(expectedEndHHMM)??0)) return current;
+        const durationMinutes=Math.max(30,Math.round(Number(current.hours||2)*60));
+        const nextEnd=Math.min(23*60+59,(timeToMinutes(expectedEndHHMM)??0)+durationMinutes);
+        return {...current,start_time:expectedEndHHMM,end_time:minutesToTime(nextEnd),hours:Math.round((nextEnd-(timeToMinutes(expectedEndHHMM)??0))/6)/10};
+      });
+    }
+    loadCompBaseline();
+    return ()=>{cancelled=true;};
+  },[compForm.work_date,employee.id,employee.work_start,employee.work_end,mode]);
 
   const ent=calculateLeaveEntitlement(employee.joined_at);
   const fullTime=isFullTimeEmployee(employee);
@@ -1149,11 +1181,23 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   async function submitCompTime() {
     setMessage("");
     if(!compForm.hours||compForm.hours<=0) return setMessage("추가 근무 시간을 입력해주세요.");
+    if(!compBaseline) return setMessage("정상 퇴근 기준을 계산 중입니다. 잠시 후 다시 신청해주세요.");
+    const requestedStart=timeToMinutes(compForm.start_time)??0;
+    const overtimeStart=timeToMinutes(compBaseline.expectedEndHHMM)??0;
+    if(requestedStart<overtimeStart){
+      const basis=compBaseline.hasCheckIn
+        ? `${timeOnly(compBaseline.checkInTime)} 출근 기준 정상 퇴근은 ${compBaseline.expectedEndHHMM}입니다.`
+        : `출근기록이 없어 등록된 스케줄 기준 정상 퇴근은 ${compBaseline.expectedEndHHMM}입니다.`;
+      return setMessage(`${basis} ${compBaseline.expectedEndHHMM} 이후 시간만 추가근무로 신청할 수 있습니다.`);
+    }
     const startAt=new Date(`${compForm.work_date}T${compForm.start_time}:00`);
     if(new Date().getTime()>=startAt.getTime()) return setMessage("추가근무 신청은 신청 시작 시간 전에만 가능합니다.");
     const duplicate=compRequests.find(r=>r.work_date===compForm.work_date&&r.start_time===compForm.start_time&&r.end_time===compForm.end_time&&["pending","approved"].includes(r.status));
     if(duplicate) return setMessage("이미 신청한 시간입니다. 관리자의 승인을 기다려주세요.");
-    if(!window.confirm("추가근무를 신청하시겠습니까?\n신청 후 수정이 불가능합니다.")) return;
+    const basis=compBaseline.hasCheckIn
+      ? `실제 출근 ${timeOnly(compBaseline.checkInTime)} + 정상 근무 ${Math.round(compBaseline.shiftMinutes/6)/10}시간 = 정상 퇴근 ${compBaseline.expectedEndHHMM}`
+      : `출근 전이므로 등록 스케줄 기준 정상 퇴근 ${compBaseline.expectedEndHHMM}`;
+    if(!window.confirm(`${basis}\n${compBaseline.expectedEndHHMM} 이후부터 추가근무로 인정됩니다.\n\n추가근무를 신청하시겠습니까?\n신청 후 수정이 불가능합니다.`)) return;
     const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:compForm.work_date,start_time:compForm.start_time,end_time:compForm.end_time,hours:compForm.hours,converted_days:Number((compForm.hours/8).toFixed(2)),reason:compForm.reason,status:"pending"});
     if(error) setMessage(error.message); else{setMessage("추가근무 신청이 저장되었습니다. 관리자 승인 후 대체휴가로 적립됩니다.");await load();}
   }
@@ -1244,6 +1288,12 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
           </div>
           <p className="body-text" style={{marginBottom:14}}>추가근무는 별도 수당이 아니라 대체휴가로 적립됩니다. 관리자 승인 후 휴가 잔여에 추가됩니다 (8시간 = 1일).</p>
           <div className="alert">※ 추가근무는 시작 시간 전에만 신청할 수 있습니다.<br/>※ 한 번 신청하면 수정이 불가능합니다. 수정이 필요하면 승인 전 취소 후 다시 신청해주세요.</div>
+          {compBaseline&&<div className="alert overtime-baseline-alert">
+            <b>추가근무 인정 시작: {compBaseline.expectedEndHHMM} 이후</b>
+            <span>{compBaseline.hasCheckIn
+              ? `${timeOnly(compBaseline.checkInTime)} 출근 · 정상 근무 ${Math.round(compBaseline.shiftMinutes/6)/10}시간 · 정상 퇴근 ${compBaseline.expectedEndHHMM}`
+              : "아직 출근기록이 없어 등록된 출근 스케줄 기준으로 계산했습니다."}</span>
+          </div>}
           <div className="form-row"><label className="label">추가근무일</label><input className="input" type="date" value={compForm.work_date} onChange={e=>setCompForm({...compForm,work_date:e.target.value})} /></div>
           <div className="comp-time-grid">
             <div className="form-row"><label className="label">시작</label><input className="input" type="time" value={compForm.start_time} onChange={e=>handleCompTimeChange("start_time",e.target.value)} /></div>
