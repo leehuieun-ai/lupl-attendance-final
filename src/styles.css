@@ -129,6 +129,10 @@ button { cursor: pointer; }
 .badge.good { background: #e4f6ee; color: var(--green); }
 .badge.warn { background: #fcf2df; color: var(--amber); }
 .badge.bad { background: #fdeceb; color: var(--red); }
+.status-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.badge.work-type { background: #eef3fe; color: var(--blue-dark); }
+.late-detail { display: block; margin-top: 5px; color: var(--red); font-size: 11px; white-space: nowrap; }
+.readonly-field { min-height: 43px; display: flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: #f6f8fb; padding: 11px 13px; color: var(--blue-dark); font-weight: 700; }
 
 .metric { border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 16px; }
 .metric-value { font-size: 25px; font-weight: 700; letter-spacing: -0.04em; }
@@ -226,6 +230,25 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .schedule-employee-tabs button { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: #fff; color: #5a6475; font-size: 13px; font-weight: 650; }
 .schedule-employee-tabs button i { width: 10px; height: 10px; border-radius: 50%; }
 .schedule-employee-tabs button.active { border-color: var(--blue); background: #eef3fe; color: var(--blue-dark); box-shadow: 0 0 0 2px rgba(58,109,240,.08); }
+.team-week-overview { margin-top: 18px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.team-week-title { min-height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 13px; border-bottom: 1px solid var(--line); background: #f8fafc; }
+.team-week-title b, .team-week-title span { display: block; }
+.team-week-title b { font-size: 13px; }
+.team-week-title div span, .team-week-title > span { color: var(--muted); font-size: 11px; }
+.team-week-title div span { margin-top: 2px; }
+.team-week-grid { display: grid; grid-template-columns: 150px repeat(5,minmax(150px,1fr)); min-width: 920px; }
+.team-week-head { min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 4px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fff; color: #475467; font-size: 12px; font-weight: 700; }
+.team-week-head small { color: var(--muted); font-size: 10px; font-weight: 500; }
+.team-week-employee { min-height: 58px; display: flex; align-items: center; gap: 9px; padding: 8px 11px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fff; }
+.team-week-employee i { width: 7px; height: 34px; border-radius: 3px; flex-shrink: 0; }
+.team-week-employee b, .team-week-employee small { display: block; }
+.team-week-employee b { font-size: 12px; }
+.team-week-employee small { margin-top: 2px; color: var(--muted); font-size: 10px; }
+.team-week-cell { min-height: 58px; padding: 9px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: color-mix(in srgb,var(--employee-color) 10%,white); color: var(--employee-color); }
+.team-week-cell b, .team-week-cell small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-week-cell b { font-size: 11px; }
+.team-week-cell small { margin-top: 5px; font-size: 10px; opacity: .85; }
+.team-week-cell.off { background: #fafbfc; color: #98a2b3; }
 .schedule-month-nav { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 18px 0 12px; }
 .icon-button { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
 .icon-button:hover { background: #f0f2f6; }
@@ -280,7 +303,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-all-day-track { position: relative; display: grid; grid-template-columns: repeat(5,minmax(180px,1fr)); grid-auto-rows: 58px; padding: 4px 0; }
 .week-drop-column { grid-row: 1; border-right: 1px solid var(--line); }
 .week-drop-column:hover { background: #f2f6ff; }
-.week-all-day-event { z-index: 2; grid-row: 1; min-width: 0; align-self: center; height: 48px; margin: 0 5px; border: 1px solid; border-radius: 6px; background: #f4f7ff; padding: 6px 10px; text-align: left; overflow: hidden; }
+.week-all-day-event { z-index: 2; grid-row: 1; min-width: 0; align-self: center; height: 48px; margin: 0 5px; border: 1px solid var(--employee-color); border-radius: 6px; background: color-mix(in srgb,var(--employee-color) 12%,white); color: var(--employee-color); padding: 6px 10px; text-align: left; overflow: hidden; }
 .week-all-day-event b, .week-all-day-event span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .week-all-day-event b { font-size: 12px; }
 .week-all-day-event span { margin-top: 3px; color: #667085; font-size: 10px; }
@@ -299,17 +322,13 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-day-column:last-of-type { border-right: 0; }
 .week-day-column.today { background: rgba(58,109,240,.035); }
 .week-day-column:hover { background: rgba(58,109,240,.06); }
-.week-time-event { z-index: 3; min-width: 0; margin: 2px 5px; border: 1px solid; border-left-width: 4px; border-radius: 6px; background: #eef6ff; color: #1f4f9f; padding: 8px 9px; text-align: left; overflow: hidden; box-shadow: 0 1px 2px rgba(20,30,60,.08); }
+.week-time-event { z-index: 3; min-width: 0; margin: 2px 5px; border: 1px solid var(--employee-color); border-left-width: 4px; border-radius: 6px; background: color-mix(in srgb,var(--employee-color) 12%,white); color: var(--employee-color); padding: 8px 9px; text-align: left; overflow: hidden; box-shadow: 0 1px 2px rgba(20,30,60,.08); }
 .week-time-event b, .week-time-event span, .week-time-event small { display: block; overflow: hidden; text-overflow: ellipsis; }
 .week-time-event b { font-size: 12px; white-space: nowrap; }
 .week-time-event b i { margin-right: 4px; }
 .week-time-event span { margin-top: 3px; font-size: 10px; white-space: nowrap; }
 .week-time-event small { margin-top: 4px; color: #667085; font-size: 10px; line-height: 1.35; }
-.week-time-event.event-am_only { background: #fff7e6; color: #9a5b00; }
-.week-time-event.event-pm_only { background: #f4edff; color: #6941c6; }
-.week-time-event.event-unavailable { background: #fff0ef; color: #b42318; }
-.week-time-event.event-work { background: #ecfdf3; color: #067647; }
-.week-time-event.event-info { background: #eef3ff; color: #3448a1; }
+.week-time-event.event-unavailable { background-image: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 18%,white) 0,color-mix(in srgb,var(--employee-color) 18%,white) 7px,color-mix(in srgb,var(--employee-color) 7%,white) 7px,color-mix(in srgb,var(--employee-color) 7%,white) 14px); }
 .schedule-help { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; color: var(--muted); font-size: 11px; }
 
 @media (max-width: 880px) {
@@ -432,6 +451,7 @@ body { overflow-x: hidden; }
   .schedule-employee-tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
   .schedule-employee-tabs > span { display: none; }
   .schedule-employee-tabs button { flex-shrink: 0; }
+  .team-week-overview { overflow-x: auto; }
   .schedule-modal-actions { align-items: stretch; flex-direction: column-reverse; }
   .schedule-modal-actions > div, .schedule-modal-actions .actions, .schedule-modal-actions .button { width: 100%; }
 }
