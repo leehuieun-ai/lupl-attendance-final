@@ -298,17 +298,18 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-calendar-header b { font-size: 13px; }
 .week-calendar-header span { color: var(--muted); font-size: 12px; }
 .week-calendar-header .today { background: #eef3fe; color: var(--blue-dark); }
-.week-calendar-header.team-calendar-header { grid-template-rows: 52px 44px; }
+.week-calendar-header.team-calendar-header { grid-template-rows: 52px 64px; }
 .team-calendar-header .week-time-head { border-right: 1px solid var(--line); border-bottom: 0; background: #f8fafc; }
 .team-calendar-header .team-day-head { min-height: 52px; border-bottom: 1px solid var(--line); }
 .team-calendar-header .team-day-head b { font-size: 14px; }
 .team-employee-head {
-  min-width: 0; display: flex; align-items: center; justify-content: center;
+  min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   border: 0; border-right: 1px solid var(--line); background: #fff;
-  color: var(--employee-color); font-size: 14px; font-weight: 800;
+  color: var(--employee-color); font-size: 11px; font-weight: 800;
 }
 .team-employee-head:hover { background: color-mix(in srgb,var(--employee-color) 8%,white); }
-.team-employee-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: inherit; }
+.team-employee-head > i { width: 23px; height: 23px; display: grid; place-items: center; flex-shrink: 0; border-radius: 50%; background: color-mix(in srgb,var(--employee-color) 16%,white); border: 1px solid var(--employee-color); color: var(--employee-color); font-size: 11px; font-style: normal; font-weight: 850; }
+.team-employee-head span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: inherit; text-align: center; }
 .team-employee-head.team-day-end { border-right-color: #c4cad4; }
 .week-time-head { color: #667085; font-size: 12px; font-weight: 700; }
 .week-all-day { display: grid; grid-template-columns: 78px 1fr; min-height: 66px; border-bottom: 1px solid var(--line); }
@@ -349,11 +350,13 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-time-event small { margin-top: 4px; color: inherit; font-size: 10px; line-height: 1.35; opacity: .82; }
 .week-time-event.event-unavailable { background: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 13%,white) 0,color-mix(in srgb,var(--employee-color) 13%,white) 7px,color-mix(in srgb,var(--employee-color) 5%,white) 7px,color-mix(in srgb,var(--employee-color) 5%,white) 14px); }
 .week-time-event.team-lane-event {
-  margin: 3px 6px;
-  padding: 14px 8px 10px;
+  margin: 3px 3px;
+  padding: 14px 3px 9px;
 }
-.week-time-event.team-lane-event b { font-size: 14px; line-height: 1.25; white-space: normal; }
-.week-time-event.team-lane-event .event-time-label { font-size: 12px; line-height: 1.35; white-space: normal; font-weight: 700; }
+.week-time-event.team-lane-event b { font-size: 12px; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; }
+.week-time-event.team-lane-event .event-time-label { display: flex; flex-direction: column; align-items: center; gap: 0; margin-top: 5px; font-size: 10px; line-height: 1.1; white-space: normal; font-weight: 750; }
+.week-time-event.team-lane-event .event-time-label em { font-style: normal; }
+.week-time-event.team-lane-event .event-time-label i { font-style: normal; line-height: .8; }
 .week-time-event.team-lane-event small { margin-top: 4px; font-size: 10px; line-height: 1.25; white-space: normal; color: rgba(255,255,255,.84); }
 .week-time-event.team-lane-event small { color: inherit; opacity: .82; }
 .time-resize-handle { position: absolute; left: 5px; right: 5px; z-index: 5; opacity: 0; transition: opacity .12s; touch-action: none; }
