@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "admin-dashboard" | "approvals" | "employees" | "workplaces" | "schedule" | "payroll" | "reports";
+type Tab = "attendance" | "leave" | "overtime" | "admin-dashboard" | "approvals" | "employees" | "workplaces" | "schedule" | "payroll" | "reports" | "consents";
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
 const ALL_DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
@@ -21,7 +21,7 @@ const SCHEDULE_EVENT_META: Record<string,{label:string;icon:string}> = {
   unavailable:{label:"출근 불가",icon:"ti-ban"},
   info:{label:"교육·학기·기타",icon:"ti-book"},
 };
-const EMPLOYEE_COLORS = ["#2563eb","#059669","#ea580c","#c026d3","#0891b2","#7c3aed","#dc2626","#4f46e5","#65a30d","#b45309"];
+const EMPLOYEE_COLORS = ["#2563eb","#059669","#ea580c","#dc2626","#7c3aed","#0891b2","#b45309","#4f46e5","#65a30d","#be185d"];
 
 const workplaceTypeLabels: Record<string,string> = { office:"사무실", special_school:"특수학교", external_education:"외부 교육장", remote:"재택", other_field:"기타 외근지" };
 const requestTypeLabels: Record<string,string> = { annual:"연차", half_am:"오전 반차", half_pm:"오후 반차", hourly:"시간차", sick:"병가", official:"공가", remote:"재택", field:"외근", special:"특별휴가", substitute:"대체휴가", compensatory:"보상휴가", time_fix:"근무시간 수정", comp_leave_use:"대체휴가 시간 사용" };
@@ -30,6 +30,14 @@ const SINGLE_DAY_TYPES = ["half_am","half_pm","hourly","comp_leave_use"];
 
 function internalEmail(no: string) { return `${no.trim().toLowerCase()}@lupl.local`; }
 function won(n: number) { return Math.round(n).toLocaleString("ko-KR") + "원"; }
+function escapeHtml(value: any) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 /* 휴대폰 자동 하이픈 */
 function formatPhone(v: string) {
@@ -138,6 +146,11 @@ function timeDiffHours(start: string, end: string) {
 function numberValue(v:any){return Number(String(v??"").replace(/[^0-9.]/g,""))||0;}
 function moneyInput(v:any){return (Number(String(v??"").replace(/[^0-9]/g,""))||0).toLocaleString("ko-KR");}
 function scheduleHours(start?:string|null,end?:string|null){return start&&end?timeDiffHours(String(start).slice(0,5),String(end).slice(0,5)):8;}
+function isFullTimeEmployee(employee:any){
+  const days=Array.isArray(employee?.work_days)?employee.work_days.length:Number(employee?.weekly_work_days||0);
+  const hours=scheduleHours(employee?.work_start,employee?.work_end);
+  return employee?.contract_type==="daily"&&days>=5&&hours>=8;
+}
 function timeToMinutes(time?: string | null) {
   if (!time) return null;
   const [h, m] = String(time).slice(0, 5).split(":").map(Number);
@@ -500,6 +513,7 @@ export default function App() {
     schedule:"근무 일정",
     payroll:"급여 계산",
     reports:"근태 보고서",
+    consents:"직원 동의서",
   };
   const personalMenus:{id:Tab;label:string;icon:string}[]=[
     {id:"attendance",label:"출퇴근",icon:"ti-clock"},
@@ -530,7 +544,7 @@ export default function App() {
         <nav className="side-nav">
           <p className="side-nav-label">내 근무</p>
           {personalMenus.map(menuButton)}
-          {isAdmin&&<><p className="side-nav-label">관리자</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{menuButton({id:"reports",label:"보고서",icon:"ti-chart-bar"})}</>}
+          {isAdmin&&<><p className="side-nav-label">관리자</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{menuButton({id:"reports",label:"보고서",icon:"ti-chart-bar"})}{menuButton({id:"consents",label:"직원 동의서",icon:"ti-file-signature"})}</>}
         </nav>
         <div className="sidebar-account">
           <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{isAdmin?"관리자":"직원"}</small></div></div>
@@ -543,7 +557,7 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-inner">
             <button className="mobile-menu-button" title="메뉴 열기" onClick={()=>setMobileNavOpen(true)}><i className="ti ti-menu-2" aria-hidden="true"></i></button>
-            <div className="page-heading"><span>{tab==="reports"?"리포트":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리자":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
+            <div className="page-heading"><span>{["reports","consents"].includes(tab)?"리포트":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리자":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
             <div className="topbar-user"><span>{employee.name}</span><b>{isAdmin?"관리자":"직원"}</b></div>
           </div>
         </header>
@@ -558,6 +572,7 @@ export default function App() {
           {tab==="schedule" && isAdmin && <SettingsPage currentEmployee={employee} section="schedule" />}
           {tab==="payroll" && isAdmin && <SettingsPage currentEmployee={employee} section="payroll" />}
           {tab==="reports" && isAdmin && <ReportsPage />}
+          {tab==="consents" && isAdmin && <ConsentReportPage />}
         </main>
       </div>
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
@@ -1056,11 +1071,13 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   useEffect(()=>{load();},[]);
 
   const ent=calculateLeaveEntitlement(employee.joined_at);
+  const fullTime=isFullTimeEmployee(employee);
   const adj=calculateAdjustmentDays(adjustments);
   const compEarned=calculateApprovedCompDays(compRequests);
   const approvedUsed=calculateUsedDays(requests,false);
   const pendingUsed=calculateUsedDays(requests,true);
-  const totalGranted=ent.baseGrantedDays+adj;
+  const automaticAnnual=fullTime?ent.baseGrantedDays:0;
+  const totalGranted=automaticAnnual+adj;
   const remaining=Math.max(0,totalGranted-approvedUsed);
   const expectedRemaining=Math.max(0,totalGranted-pendingUsed);
   const compEarnedHours=Math.round(compEarned*8*10)/10;
@@ -1152,13 +1169,13 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
           <div className="leave-info">
             <div className="leave-chips">
               <div className="leave-chip"><span>총 부여</span><b>{totalGranted.toFixed(1)}일</b></div>
-              <div className="leave-chip"><span>기본 발생</span><b>{ent.baseGrantedDays}일</b></div>
+              <div className="leave-chip"><span>기본 발생</span><b>{automaticAnnual}일</b></div>
               <div className="leave-chip"><span>조정</span><b>{adj>=0?"+":""}{adj.toFixed(1)}일</b></div>
               <div className="leave-chip"><span>사용(승인)</span><b>{approvedUsed.toFixed(1)}일</b></div>
               <div className="leave-chip"><span>잔여(예상)</span><b>{expectedRemaining.toFixed(1)}일</b></div>
               <div className="leave-chip leave-chip-highlight"><span>대체휴가 적립</span><b>{compEarned.toFixed(1)}일 ({compRemainHours}시간)</b></div>
             </div>
-            <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {ent.description}<br />산정기간 {ent.periodStart??"-"} ~ {ent.periodEnd??"-"} (근로기준법 제60조)</p>
+            <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {fullTime?ent.description:"비풀타임: 자동 연차 미발생"}<br />{fullTime?`산정기간 ${ent.periodStart??"-"} ~ ${ent.periodEnd??"-"} (근로기준법 제60조)`:"관리자가 별도로 부여한 특별·대체휴가는 사용할 수 있습니다."}</p>
           </div>
         </div>
       </section>}
@@ -1450,9 +1467,10 @@ function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmp
   { emp:any; requests:any[]; adjustments:any[]; compRequests:any[]; currentEmployee:any; onClose:()=>void; onChanged:()=>void }) {
   const [days,setDays]=useState(""); const [reason,setReason]=useState(""); const [adjType,setAdjType]=useState("add"); const [msg,setMsg]=useState("");
   const ent=calculateLeaveEntitlement(emp.joined_at);
+  const fullTime=isFullTimeEmployee(emp);
   const adj=calculateAdjustmentDays(adjustments);
   const used=calculateUsedDays(requests,false);
-  const total=ent.baseGrantedDays+adj;
+  const total=(fullTime?ent.baseGrantedDays:0)+adj;
   const remain=Math.max(0,total-used);
   async function apply() {
     setMsg(""); const d=Number(days);
@@ -1520,7 +1538,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
       supabase.from("leave_adjustments").select("*").order("created_at",{ascending:false}),
       supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(50),
       supabase.from("employee_absences").select("*").order("start_date",{ascending:false}),
-      supabase.from("attendance_logs").select("id, employee_id, workplace_id, check_in_time, check_out_time, status, workplaces(name,type)").order("check_in_time",{ascending:false}).limit(300),
+      supabase.from("attendance_logs").select("id, employee_id, workplace_id, check_in_time, check_out_time, original_check_out_time, scheduled_check_out_time, overtime_review_status, status, workplaces(name,type)").order("check_in_time",{ascending:false}).limit(300),
     ]);
     setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]);
   }
@@ -1530,13 +1548,14 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   function leaveForEmployee(empId:string) {
     const emp=empMap[empId]; if(!emp) return null;
     const ent=calculateLeaveEntitlement(emp.joined_at);
+    const fullTime=isFullTimeEmployee(emp);
     const adj=adjustments.filter(a=>a.employee_id===empId);
     const reqs=requests.filter(r=>r.employee_id===empId);
     const comps=compRequests.filter(c=>c.employee_id===empId);
     const adjDays=calculateAdjustmentDays(adj);
     const compEarned=calculateApprovedCompDays(comps);
     const used=calculateUsedDays(reqs,false);
-    const total=ent.baseGrantedDays+adjDays;
+    const total=(fullTime?ent.baseGrantedDays:0)+adjDays;
     const remain=Math.max(0,total-used);
     const compH=Math.round(compEarned*8*10)/10;
     const compUsedH=reqs.filter(r=>r.request_type==="comp_leave_use"&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
@@ -1570,7 +1589,33 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   }
   async function setWorkplaceType(id:string,type:string){const {error}=await supabase.from("workplaces").update({type}).eq("id",id);if(error)setMessage(error.message);else await load();}
   async function reviewRequest(id:string,status:string){const {error}=await supabase.rpc("review_attendance_request",{p_request_id:id,p_status:status,p_review_note:""});if(error)setMessage(error.message);else{await load();onChanged();}}
-  async function reviewCompRequest(id:string,status:string){const {error}=await supabase.rpc("review_comp_time_request",{p_request_id:id,p_status:status,p_review_note:""});if(error)setMessage(error.message);else{setMessage(status==="approved"?"추가근무가 승인되어 대체휴가로 적립되었습니다.":"반려했습니다.");await load();onChanged();}}
+  function compAttendance(request:any){
+    return allLogs.find((log:any)=>log.employee_id===request.employee_id&&localDateStr(log.check_in_time)===request.work_date&&!!log.check_out_time);
+  }
+  function compSchedule(request:any){
+    return getScheduleForDate(empMap[request.employee_id],request.work_date,overrides);
+  }
+  function estimatedOvertime(request:any){
+    const log=compAttendance(request);
+    if(!log?.check_out_time) return null;
+    const scheduledEnd=kstDateTime(request.work_date,compSchedule(request).work_end);
+    return Math.max(0,Math.round(((new Date(log.check_out_time).getTime()-scheduledEnd.getTime())/3600000)*100)/100);
+  }
+  async function reviewCompRequest(request:any,status:string){
+    const usesActualCheckout=request.work_date>="2026-06-24";
+    const log=compAttendance(request);
+    if(usesActualCheckout&&!log?.check_out_time) return setMessage("직원이 퇴근한 뒤 초과근무를 처리할 수 있습니다.");
+    const schedule=compSchedule(request);
+    const result=usesActualCheckout
+      ? await supabase.rpc("review_comp_time_attendance",{p_request_id:request.id,p_status:status,p_scheduled_end:String(schedule.work_end??"18:00").slice(0,5),p_review_note:status==="approved"?"실제 퇴근시간 기준 승인":"초과근무 미인정 및 예정 퇴근시간 적용"})
+      : await supabase.rpc("review_comp_time_request",{p_request_id:request.id,p_status:status,p_review_note:""});
+    if(result.error) setMessage(result.error.message);
+    else{
+      setMessage(status==="approved"?"실제 초과근무가 승인되어 대체휴가로 적립되었습니다.":"초과근무를 인정하지 않고 예정 퇴근시간으로 근태를 마감했습니다.");
+      await load();
+      onChanged();
+    }
+  }
   async function reviewDevice(id:string,status:string){const {error}=await supabase.from("registered_devices").update({status}).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function confirmAttendanceLog(id:string){const {error}=await supabase.rpc("confirm_attendance_log",{p_log_id:id,p_status:"확인 완료"});if(error)setMessage(error.message);else{setMessage("근태 기록을 확인 완료 처리했습니다.");await load();onChanged();}}
   async function forceClockOut(id:string){if(!window.confirm("이 기록을 현재 시각으로 강제 퇴근 처리할까요?")) return; const {error}=await supabase.rpc("close_attendance_log",{p_log_id:id,p_status:"관리자 강제퇴근",p_device_fingerprint_hash:null,p_device_info:{}});if(error)setMessage(error.message);else{setMessage("강제 퇴근 처리했습니다.");await load();onChanged();}}
@@ -1664,7 +1709,22 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
           <div>
             <h3>추가근무 {pC.length>0&&<span className="count-badge">{pC.length}</span>}</h3>
             {pC.length===0&&<p className="subtle">없음</p>}
-            {pC.map(r=>(<div className="list-row" key={r.id}><div><b>{empName(r.employee_id)}</b><div className="subtle">{r.work_date} · {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)} · {r.hours}시간 → {r.converted_days}일</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewCompRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewCompRequest(r.id,"rejected")}>반려</button></div></div>))}
+            {pC.map(r=>{
+              const log=compAttendance(r);
+              const actual=estimatedOvertime(r);
+              const usesActualCheckout=r.work_date>="2026-06-24";
+              return <div className="list-row" key={r.id}>
+                <div>
+                  <b>{empName(r.employee_id)}</b>
+                  <div className="subtle">{r.work_date} · 신청 {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)} · {r.hours}시간</div>
+                  {usesActualCheckout&&<div className="type-desc" style={{marginTop:6}}>예정 퇴근 {String(compSchedule(r).work_end??"18:00").slice(0,5)} · 실제 퇴근 {log?.check_out_time?timeOnly(log.check_out_time):"아직 퇴근 전"} · 인정 예상 {actual==null?"-":`${actual}시간`}</div>}
+                </div>
+                <div className="actions">
+                  <button className="button secondary" disabled={usesActualCheckout&&!log?.check_out_time} onClick={()=>reviewCompRequest(r,"approved")}>{usesActualCheckout?"초과근무 승인":"승인"}</button>
+                  <button className="button danger" disabled={usesActualCheckout&&!log?.check_out_time} onClick={()=>reviewCompRequest(r,"rejected")}>{usesActualCheckout?"인정 안 함":"반려"}</button>
+                </div>
+              </div>;
+            })}
           </div>
           <div>
             <h3>휴가 신청 {pR.length>0&&<span className="count-badge">{pR.length}</span>}</h3>
@@ -1778,27 +1838,30 @@ function SettingsPage({ currentEmployee, section="schedule" }: { currentEmployee
 function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged}:{employees:any[];events:any[];overrides:any[];currentEmployee:any;onChanged:()=>void}) {
   const activeEmployees=employees.filter(e=>e.employment_status==="active");
   const [weekAnchor,setWeekAnchor]=useState(todayIso());
-  const [selectedEmpId,setSelectedEmpId]=useState("");
+  const [selectedEmpId,setSelectedEmpId]=useState("all");
   const [editing,setEditing]=useState<any|null>(null);
   const [message,setMessage]=useState("");
   const [draggingId,setDraggingId]=useState<string|null>(null);
   const weekStart=weekStartIso(weekAnchor);
   const dates=Array.from({length:5},(_,i)=>addIsoDays(weekStart,i));
   const weekEnd=dates[4];
-  const selectedEmployee=activeEmployees.find(e=>e.id===selectedEmpId)??activeEmployees[0]??null;
-  const selectedEvents=events.filter(e=>e.employee_id===selectedEmployee?.id&&e.start_date<=weekEnd&&e.end_date>=weekStart);
+  const isAll=selectedEmpId==="all";
+  const selectedEmployee=isAll?null:(activeEmployees.find(e=>e.id===selectedEmpId)??activeEmployees[0]??null);
+  const selectedEvents=events.filter(e=>(isAll||e.employee_id===selectedEmployee?.id)&&e.start_date<=weekEnd&&e.end_date>=weekStart);
   const allDayEvents=selectedEvents.filter(e=>e.event_type==="info"&&!e.start_time&&!e.end_time);
   const timedEvents=selectedEvents.filter(e=>!allDayEvents.includes(e));
   const hours=Array.from({length:11},(_,i)=>9+i);
   const selectedColor=selectedEmployee?employeeColorFromList(activeEmployees,selectedEmployee.id):EMPLOYEE_COLORS[0];
-  useEffect(()=>{if(!selectedEmpId&&activeEmployees[0]) setSelectedEmpId(activeEmployees[0].id);},[activeEmployees.length]);
-  function emptyEvent(employeeId=selectedEmployee?.id??"",date=todayIso()){
+  useEffect(()=>{
+    if(selectedEmpId!=="all"&&!activeEmployees.some(e=>e.id===selectedEmpId)) setSelectedEmpId("all");
+  },[activeEmployees.length,selectedEmpId]);
+  function emptyEvent(employeeId=selectedEmployee?.id??activeEmployees[0]?.id??"",date=todayIso()){
     return {employee_id:employeeId,title:"",event_type:"info",start_date:date,end_date:date,start_time:"",end_time:"",note:""};
   }
   function changeWeek(offset:number){setWeekAnchor(addIsoDays(weekStart,offset*7));}
-  function eventTime(event:any){
+  function eventTime(event:any,employee=selectedEmployee){
     const defaults:Record<string,[string,string]>={
-      work:[String(selectedEmployee?.work_start??"09:00").slice(0,5),String(selectedEmployee?.work_end??"18:00").slice(0,5)],
+      work:[String(employee?.work_start??"09:00").slice(0,5),String(employee?.work_end??"18:00").slice(0,5)],
       am_only:["09:00","12:00"],
       pm_only:["13:00","18:00"],
       unavailable:["09:00","19:00"],
@@ -1807,8 +1870,8 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
     const fallback=defaults[event.event_type]??defaults.info;
     return [String(event.start_time??fallback[0]).slice(0,5),String(event.end_time??fallback[1]).slice(0,5)];
   }
-  function timeGridPosition(event:any){
-    const [start,end]=eventTime(event);
+  function timeGridPosition(event:any,employee=selectedEmployee){
+    const [start,end]=eventTime(event,employee);
     const startMin=Math.max(9*60,Math.min(19*60,timeToMinutes(start)??9*60));
     const endMin=Math.max(startMin+30,Math.min(19*60,timeToMinutes(end)??18*60));
     return {row:Math.floor((startMin-9*60)/30)+1,span:Math.max(1,Math.ceil((endMin-startMin)/30)),label:`${start}~${end}`};
@@ -1846,7 +1909,7 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
     if(!event) return;
     const duration=countDaysInclusive(event.start_date,event.end_date);
     const {error}=await supabase.from("employee_schedule_events").update({
-      employee_id:targetEmployeeId,
+      employee_id:targetEmployeeId||event.employee_id,
       start_date:targetDate,
       end_date:addIsoDays(targetDate,duration-1),
       updated_at:new Date().toISOString(),
@@ -1863,31 +1926,9 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
         <button className="button" onClick={()=>setEditing(emptyEvent(selectedEmployee?.id,dates[0]))}><i className="ti ti-plus" aria-hidden="true"></i>일정 추가</button>
       </div>
       {message&&<div className={`alert ${message.includes("실패")?"error":"success"}`} style={{marginTop:14}}>{message}</div>}
-      <div className="team-week-overview">
-        <div className="team-week-title"><div><b>전체 직원 근무시간</b><span>이번 주 월~금 기본 일정과 예외 일정을 한눈에 봅니다.</span></div><span>{weekStart} ~ {weekEnd}</span></div>
-        <div className="team-week-grid">
-          <div className="team-week-head">직원</div>
-          {dates.map(date=>{const d=dateFromIso(date);return <div className="team-week-head" key={date}>{["일","월","화","수","목","금","토"][d.getDay()]}<small>{d.getMonth()+1}/{d.getDate()}</small></div>;})}
-          {activeEmployees.flatMap(emp=>{
-            const color=employeeColorFromList(activeEmployees,emp.id);
-            return [
-              <div className="team-week-employee" key={`${emp.id}-name`}><i style={{background:color}}></i><div><b>{emp.name}</b><small>{emp.employee_no}</small></div></div>,
-              ...dates.map(date=>{
-                const schedule=getScheduleForDate(emp,date,overrides);
-                const isWorkday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
-                const dayEvents=events.filter(event=>event.employee_id===emp.id&&date>=event.start_date&&date<=event.end_date);
-                const unavailable=dayEvents.find(event=>event.event_type==="unavailable");
-                const limited=dayEvents.find(event=>["am_only","pm_only"].includes(event.event_type));
-                const text=unavailable?"출근 불가":limited?.event_type==="am_only"?"오전 가능":limited?.event_type==="pm_only"?"오후 가능":isWorkday?`${String(schedule.work_start).slice(0,5)}~${String(schedule.work_end).slice(0,5)}`:"휴무";
-                const note=unavailable?.title??limited?.title??dayEvents.find(event=>event.event_type==="info")?.title??"";
-                return <div key={`${emp.id}-${date}`} className={`team-week-cell ${!isWorkday&&!unavailable&&!limited?"off":""}`} style={{"--employee-color":color} as React.CSSProperties}><b>{text}</b>{note&&<small>{note}</small>}</div>;
-              })
-            ];
-          })}
-        </div>
-      </div>
       <div className="schedule-employee-tabs">
         <span>직원 선택</span>
+        <button className={isAll?"active":""} onClick={()=>setSelectedEmpId("all")}><i className="ti ti-users" aria-hidden="true"></i>전체</button>
         {activeEmployees.map(emp=><button key={emp.id} className={selectedEmployee?.id===emp.id?"active":""} onClick={()=>setSelectedEmpId(emp.id)}><i style={{background:employeeColorFromList(activeEmployees,emp.id)}}></i>{emp.name}</button>)}
       </div>
       <div className="schedule-month-nav">
@@ -1896,43 +1937,54 @@ function TeamScheduleBoard({employees,events,overrides,currentEmployee,onChanged
         <button className="icon-button" title="다음 주" onClick={()=>changeWeek(1)}><i className="ti ti-chevron-right" aria-hidden="true"></i></button>
       </div>
       <div className="week-calendar-scroll">
-        <div className="week-calendar">
+        <div className={`week-calendar ${isAll?"team-view":""}`}>
           <div className="week-calendar-header">
             <div className="week-time-head">시간</div>
-            {dates.map(date=>{const d=dateFromIso(date);return <div key={date} className={date===todayIso()?"today":""}><b>{["일","월","화","수","목","금","토"][d.getDay()]}</b><span>{d.getMonth()+1}/{d.getDate()}</span></div>;})}
+            {dates.map(date=>{const d=dateFromIso(date);return <div key={date} className={date===todayIso()?"today":""}><b>{["일","월","화","수","목","금","토"][d.getDay()]}</b><span>{d.getMonth()+1}/{d.getDate()}{isAll?` · ${activeEmployees.length}명`:""}</span></div>;})}
           </div>
           <div className="week-all-day">
             <div className="week-all-day-label">종일</div>
-            <div className="week-all-day-track">
-              {dates.map(date=><div key={date} className="week-drop-column" onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id,date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id,date))} />)}
+            <div className={`week-all-day-track ${isAll?"team-all-day-track":""}`} style={isAll?{"--employee-count":Math.max(1,activeEmployees.length)} as React.CSSProperties:undefined}>
+              {dates.map(date=><div key={date} className="week-drop-column" onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
               {allDayEvents.map(event=>{
                 const visible=dates.map((date,index)=>({date,index})).filter(x=>x.date>=event.start_date&&x.date<=event.end_date);
                 if(!visible.length) return null;
-                return <button key={event.id} draggable className="week-all-day-event" style={{gridColumn:`${visible[0].index+1} / span ${visible.length}`,"--employee-color":selectedColor} as React.CSSProperties} onDragStart={e=>{setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{event.title}</b><span>{event.note??`${event.start_date}~${event.end_date}`}</span></button>;
+                const owner=activeEmployees.find(emp=>emp.id===event.employee_id);
+                const ownerIndex=Math.max(0,activeEmployees.findIndex(emp=>emp.id===event.employee_id));
+                const color=owner?employeeColorFromList(activeEmployees,owner.id):selectedColor;
+                return <button key={event.id} draggable className={`week-all-day-event ${isAll?"team-all-day-event":""}`} style={{gridColumn:`${visible[0].index+1} / span ${visible.length}`,gridRow:isAll?ownerIndex+1:1,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{isAll&&owner?`${owner.name} · `:""}{event.title}</b><span>{event.note??`${event.start_date}~${event.end_date}`}</span></button>;
               })}
             </div>
           </div>
           <div className="week-time-grid">
             <div className="week-time-axis">{hours.map(hour=><div key={hour}>{String(hour).padStart(2,"0")}:00</div>)}</div>
             <div className="week-event-grid">
-              {dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""}`} style={{gridColumn:index+1}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id,date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id,date))} />)}
+              {dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""}`} style={{gridColumn:index+1}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
               {dates.flatMap((date,index)=>{
-                const dayEvents=timedEvents.filter(event=>date>=event.start_date&&date<=event.end_date);
-                const unavailable=dayEvents.filter(event=>event.event_type==="unavailable");
-                const shown=unavailable.length?unavailable:dayEvents;
-                const isBaseWorkday=(selectedEmployee?.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
-                const baseWork=shown.length===0&&isBaseWorkday?{id:`base-${date}`,title:"기본 근무",event_type:"work",start_time:selectedEmployee?.work_start,end_time:selectedEmployee?.work_end,note:"직원 기본 스케줄",base:true}:null;
-                return [...shown,...(baseWork?[baseWork]:[])].map((event:any)=>{
-                  const pos=timeGridPosition(event);
-                  const meta=SCHEDULE_EVENT_META[event.event_type]??SCHEDULE_EVENT_META.info;
-                  return <button key={`${event.id}-${date}`} draggable={!event.base} className={`week-time-event event-${event.event_type}`} style={{gridColumn:index+1,gridRow:`${pos.row} / span ${pos.span}`,"--employee-color":selectedColor} as React.CSSProperties} onDragStart={e=>{if(event.base)return;setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>!event.base&&setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b><i className={`ti ${meta.icon}`} aria-hidden="true"></i>{event.title}</b><span>{pos.label}</span>{event.note&&<small>{event.note}</small>}</button>;
+                const shownEmployees=isAll?activeEmployees:(selectedEmployee?[selectedEmployee]:[]);
+                return shownEmployees.flatMap((employee:any,employeeIndex:number)=>{
+                  const dayEvents=timedEvents.filter(event=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date);
+                  const unavailable=dayEvents.filter(event=>event.event_type==="unavailable");
+                  const shown=unavailable.length?unavailable:dayEvents;
+                  const schedule=getScheduleForDate(employee,date,overrides);
+                  const isBaseWorkday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
+                  const baseWork=shown.length===0&&isBaseWorkday?{id:`base-${employee.id}-${date}`,employee_id:employee.id,title:"기본 근무",event_type:"work",start_time:schedule.work_start,end_time:schedule.work_end,note:"직원 기본 스케줄",base:true}:null;
+                  const color=employeeColorFromList(activeEmployees,employee.id);
+                  return [...shown,...(baseWork?[baseWork]:[])].map((event:any)=>{
+                    const pos=timeGridPosition(event,employee);
+                    const meta=SCHEDULE_EVENT_META[event.event_type]??SCHEDULE_EVENT_META.info;
+                    const laneWidth=100/Math.max(1,activeEmployees.length);
+                    const laneStyle=isAll?{width:`calc(${laneWidth}% - 4px)`,marginLeft:`calc(${laneWidth*employeeIndex}% + 2px)`} as React.CSSProperties:{};
+                    return <button key={`${event.id}-${date}`} title={`${employee.name} · ${event.title} · ${pos.label}`} draggable={!event.base} className={`week-time-event event-${event.event_type} ${isAll?"team-lane-event":""}`} style={{gridColumn:index+1,gridRow:`${pos.row} / span ${pos.span}`,"--employee-color":color,...laneStyle} as React.CSSProperties} onDragStart={e=>{if(event.base)return;setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>!event.base&&setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{!isAll&&<i className={`ti ${meta.icon}`} aria-hidden="true"></i>}{isAll?employee.name:event.title}</b><span>{pos.label}</span>{isAll?<small>{event.title}</small>:event.note&&<small>{event.note}</small>}</button>;
+                  });
                 });
               })}
             </div>
           </div>
         </div>
       </div>
-      <p className="schedule-help"><i className="ti ti-info-circle" aria-hidden="true"></i>빈 시간대를 두 번 누르면 일정을 추가할 수 있습니다. 토요일과 일요일은 표시하지 않습니다.</p>
+      <div className="team-color-legend">{isAll&&activeEmployees.map(emp=><span key={emp.id}><i style={{background:employeeColorFromList(activeEmployees,emp.id)}}></i>{emp.name}</span>)}</div>
+      <p className="schedule-help"><i className="ti ti-info-circle" aria-hidden="true"></i>{isAll?"각 날짜 안에서 직원별 세로 레인으로 실제 근무시간을 표시합니다. 직원 이름을 누르면 개인 일정을 넓게 볼 수 있습니다.":"빈 시간대를 두 번 누르면 일정을 추가할 수 있습니다."} 토요일과 일요일은 표시하지 않습니다.</p>
       {!selectedEmployee&&<p className="subtle">표시할 재직 직원이 없습니다.</p>}
       {editing&&<div className="modal-backdrop" onClick={()=>setEditing(null)}>
         <div className="modal-box schedule-event-modal" onClick={e=>e.stopPropagation()}>
@@ -2267,6 +2319,98 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
   );
 }
 
+const CONSENT_TERMS = [
+  "개인정보 및 위치정보 수집·이용에 동의합니다.",
+  "위치·기기 정보는 근태 확인 목적 외로 사용하지 않는다는 설명을 확인했습니다.",
+  "추가근무는 별도 수당이 아니라 대체휴가로 적립되며, 관리자 승인 후 사용 가능하다는 점에 동의합니다.",
+];
+
+function ConsentReportPage() {
+  const [employees,setEmployees]=useState<any[]>([]);
+  const [consents,setConsents]=useState<any[]>([]);
+  const [selected,setSelected]=useState<{employee:any;consent:any}|null>(null);
+  const [message,setMessage]=useState("");
+
+  async function load(){
+    const [employeeResult,consentResult]=await Promise.all([
+      supabase.from("employees").select("id,name,employee_no,employment_status,is_active").order("employee_no",{ascending:true}),
+      supabase.from("privacy_consents").select("*").order("created_at",{ascending:false}),
+    ]);
+    if(employeeResult.error||consentResult.error) setMessage(employeeResult.error?.message??consentResult.error?.message??"동의서를 불러오지 못했습니다.");
+    setEmployees(employeeResult.data??[]);
+    setConsents(consentResult.data??[]);
+  }
+  useEffect(()=>{load();},[]);
+
+  const latestByEmployee:Record<string,any>={};
+  consents.forEach(consent=>{if(!latestByEmployee[consent.employee_id]) latestByEmployee[consent.employee_id]=consent;});
+
+  function printConsent(employee:any,consent:any){
+    const popup=window.open("","_blank","width=860,height=1000");
+    if(!popup) return setMessage("인쇄 창이 차단되었습니다. 브라우저의 팝업 차단을 해제해주세요.");
+    popup.opener=null;
+    const signature=String(consent.signature_data??"").startsWith("data:image/")?consent.signature_data:"";
+    popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(employee.name)} 동의서</title><style>
+      @page{size:A4;margin:18mm}body{font-family:Arial,"Malgun Gothic",sans-serif;color:#111827;line-height:1.65;margin:0}
+      h1{font-size:24px;margin:0 0 8px}h2{font-size:15px;margin:28px 0 8px;border-bottom:1px solid #d1d5db;padding-bottom:7px}
+      .meta{width:100%;border-collapse:collapse;margin-top:24px}.meta th,.meta td{border:1px solid #d1d5db;padding:9px;text-align:left;font-size:13px}.meta th{width:100px;background:#f3f4f6}
+      ol{padding-left:22px}.notice{padding:12px 14px;background:#f3f6fb;border:1px solid #dbe3ef;border-radius:6px}
+      .signature{height:150px;border:1px solid #d1d5db;display:flex;align-items:center;justify-content:center}.signature img{max-width:95%;max-height:135px}
+      .footer{margin-top:28px;text-align:right;font-size:13px}@media print{button{display:none}}
+    </style></head><body>
+      <h1>개인정보 수집·이용 및 위치정보 동의서</h1>
+      <p>주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.</p>
+      <div class="notice">위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.</div>
+      <table class="meta"><tr><th>직원명</th><td>${escapeHtml(employee.name)}</td><th>사번</th><td>${escapeHtml(employee.employee_no)}</td></tr>
+      <tr><th>동의 일시</th><td colspan="3">${escapeHtml(formatDateTime(consent.created_at))}</td></tr>
+      <tr><th>동의 버전</th><td>${escapeHtml(consent.consent_version)}</td><th>기기</th><td>${escapeHtml(consent.device_info?.platform??"-")}</td></tr></table>
+      <h2>동의 내용</h2><ol>${CONSENT_TERMS.map(term=>`<li>${escapeHtml(term)}</li>`).join("")}</ol>
+      <h2>전자 서명</h2><div class="signature">${signature?`<img src="${escapeHtml(signature)}" alt="전자 서명">`:"서명 이미지 없음"}</div>
+      <p class="footer">${escapeHtml(employee.name)} (전자 동의)</p>
+      <script>window.addEventListener("load",()=>setTimeout(()=>window.print(),250));<\/script>
+    </body></html>`);
+    popup.document.close();
+  }
+
+  return <div className="grid">
+    {message&&<div className="alert error">{message}</div>}
+    <section className="card">
+      <div className="schedule-board-toolbar">
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-signature" aria-hidden="true"></i>직원 동의서</h2><p className="subtle" style={{margin:0}}>직원별 최신 전자 동의서를 화면에서 확인하고 PDF로 저장할 수 있습니다.</p></div>
+        <span className="badge good">동의 {employees.filter(e=>latestByEmployee[e.id]).length}명</span>
+      </div>
+      <div className="table-wrap" style={{marginTop:18}}>
+        <table>
+          <thead><tr><th>직원</th><th>상태</th><th>동의 일시</th><th>버전</th><th>관리</th></tr></thead>
+          <tbody>{employees.map(employee=>{
+            const consent=latestByEmployee[employee.id];
+            return <tr key={employee.id}>
+              <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
+              <td><span className={`badge ${consent?"good":"warn"}`}>{consent?"동의 완료":"미동의"}</span></td>
+              <td>{consent?formatDateTime(consent.created_at):"-"}</td>
+              <td>{consent?.consent_version??"-"}</td>
+              <td><div className="actions"><button className="button secondary compact" disabled={!consent} onClick={()=>consent&&setSelected({employee,consent})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!consent} onClick={()=>consent&&printConsent(employee,consent)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button></div></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+    </section>
+    {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}>
+      <div className="modal-box consent-modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-file-signature" aria-hidden="true"></i>{selected.employee.name} 동의서</h2><button className="modal-close" title="닫기" onClick={()=>setSelected(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
+        <div className="consent-preview">
+          <p>주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.</p>
+          <div className="alert">위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.</div>
+          <dl><div><dt>사번</dt><dd>{selected.employee.employee_no}</dd></div><div><dt>동의 일시</dt><dd>{formatDateTime(selected.consent.created_at)}</dd></div><div><dt>버전</dt><dd>{selected.consent.consent_version}</dd></div></dl>
+          <ol>{CONSENT_TERMS.map(term=><li key={term}>{term}</li>)}</ol>
+          <div className="consent-signature"><span>전자 서명</span>{selected.consent.signature_data?<img src={selected.consent.signature_data} alt={`${selected.employee.name} 전자 서명`} />:<p>서명 이미지가 없습니다.</p>}</div>
+        </div>
+        <div className="actions" style={{justifyContent:"flex-end",marginTop:16}}><button className="button ghost" onClick={()=>setSelected(null)}>닫기</button><button className="button" onClick={()=>printConsent(selected.employee,selected.consent)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF 저장·인쇄</button></div>
+      </div>
+    </div>}
+  </div>;
+}
+
 function ReportsPage() {
   const [logs,setLogs]=useState<any[]>([]);
   const [employees,setEmployees]=useState<any[]>([]);
@@ -2292,8 +2436,10 @@ function ReportsPage() {
     유형:workplaceTypeLabels[l.workplaces?.type]??"-",
     출근:formatDateTime(l.check_in_time),
     퇴근:formatDateTime(l.check_out_time),
+    실제퇴근원본:formatDateTime(l.original_check_out_time),
     실근무:fmtMin(workedMinutes(l.check_in_time,l.check_out_time)),
     상태:l.status,
+    초과근무심사:l.overtime_review_status==="approved"?"승인":l.overtime_review_status==="rejected"?"미인정":"-",
     기기:l.device_status??"-"
   }));
 

@@ -229,6 +229,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .schedule-employee-tabs > span { margin-right: 4px; color: #5a6475; font-size: 12px; font-weight: 700; }
 .schedule-employee-tabs button { min-height: 38px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: #fff; color: #5a6475; font-size: 13px; font-weight: 650; }
 .schedule-employee-tabs button i { width: 10px; height: 10px; border-radius: 50%; }
+.schedule-employee-tabs button i.ti { width: auto; height: auto; border-radius: 0; font-size: 15px; }
 .schedule-employee-tabs button.active { border-color: var(--blue); background: #eef3fe; color: var(--blue-dark); box-shadow: 0 0 0 2px rgba(58,109,240,.08); }
 .team-week-overview { margin-top: 18px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .team-week-title { min-height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 13px; border-bottom: 1px solid var(--line); background: #f8fafc; }
@@ -290,8 +291,8 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .schedule-modal-actions { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 
 .week-calendar-scroll { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-.week-calendar { min-width: 1040px; }
-.week-calendar-header { display: grid; grid-template-columns: 78px repeat(5,minmax(180px,1fr)); border-bottom: 1px solid var(--line); background: #f8fafc; }
+.week-calendar { min-width: 1428px; }
+.week-calendar-header { display: grid; grid-template-columns: 78px repeat(5,minmax(270px,1fr)); border-bottom: 1px solid var(--line); background: #f8fafc; }
 .week-calendar-header > div { min-height: 56px; display: flex; align-items: center; justify-content: center; gap: 5px; border-right: 1px solid var(--line); }
 .week-calendar-header > div:last-child { border-right: 0; }
 .week-calendar-header b { font-size: 13px; }
@@ -300,20 +301,24 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-time-head { color: #667085; font-size: 12px; font-weight: 700; }
 .week-all-day { display: grid; grid-template-columns: 78px 1fr; min-height: 66px; border-bottom: 1px solid var(--line); }
 .week-all-day-label { display: grid; place-items: center; border-right: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; background: #fafbfc; }
-.week-all-day-track { position: relative; display: grid; grid-template-columns: repeat(5,minmax(180px,1fr)); grid-auto-rows: 58px; padding: 4px 0; }
+.week-all-day-track { position: relative; display: grid; grid-template-columns: repeat(5,minmax(270px,1fr)); grid-auto-rows: 58px; padding: 4px 0; }
+.week-all-day-track.team-all-day-track { grid-template-rows: repeat(var(--employee-count),34px); grid-auto-rows: 34px; }
 .week-drop-column { grid-row: 1; border-right: 1px solid var(--line); }
 .week-drop-column:hover { background: #f2f6ff; }
 .week-all-day-event { z-index: 2; grid-row: 1; min-width: 0; align-self: center; height: 48px; margin: 0 5px; border: 1px solid var(--employee-color); border-radius: 6px; background: color-mix(in srgb,var(--employee-color) 12%,white); color: var(--employee-color); padding: 6px 10px; text-align: left; overflow: hidden; }
 .week-all-day-event b, .week-all-day-event span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .week-all-day-event b { font-size: 12px; }
 .week-all-day-event span { margin-top: 3px; color: #667085; font-size: 10px; }
+.week-all-day-event.team-all-day-event { height: 28px; margin: 2px 4px; padding: 4px 7px; }
+.week-all-day-event.team-all-day-event b { font-size: 10px; }
+.week-all-day-event.team-all-day-event span { display: none; }
 .week-time-grid { display: grid; grid-template-columns: 78px 1fr; }
 .week-time-axis { height: 640px; display: flex; flex-direction: column; justify-content: space-between; border-right: 1px solid var(--line); background: #fafbfc; }
 .week-time-axis div { transform: translateY(-7px); padding-right: 11px; color: #667085; font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
 .week-time-axis div:last-child { transform: translateY(7px); }
 .week-event-grid {
   position: relative; height: 640px; display: grid;
-  grid-template-columns: repeat(5,minmax(180px,1fr)); grid-template-rows: repeat(20,32px);
+  grid-template-columns: repeat(5,minmax(270px,1fr)); grid-template-rows: repeat(20,32px);
   background:
     repeating-linear-gradient(to bottom,transparent 0,transparent 31px,#f2f4f7 31px,#f2f4f7 32px),
     repeating-linear-gradient(to bottom,transparent 0,transparent 63px,#e4e7ec 63px,#e4e7ec 64px);
@@ -329,7 +334,32 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-time-event span { margin-top: 3px; font-size: 10px; white-space: nowrap; }
 .week-time-event small { margin-top: 4px; color: #667085; font-size: 10px; line-height: 1.35; }
 .week-time-event.event-unavailable { background-image: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 18%,white) 0,color-mix(in srgb,var(--employee-color) 18%,white) 7px,color-mix(in srgb,var(--employee-color) 7%,white) 7px,color-mix(in srgb,var(--employee-color) 7%,white) 14px); }
+.week-time-event.team-lane-event {
+  justify-self: start;
+  margin-top: 2px;
+  margin-right: 0;
+  margin-bottom: 2px;
+  padding: 6px 4px;
+  border-left-width: 3px;
+}
+.week-time-event.team-lane-event b,
+.week-time-event.team-lane-event span,
+.week-time-event.team-lane-event small { font-size: 9px; line-height: 1.2; white-space: nowrap; }
+.week-time-event.team-lane-event small { margin-top: 3px; color: inherit; opacity: .78; }
+.team-color-legend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.team-color-legend span { display: inline-flex; align-items: center; gap: 5px; color: #475467; font-size: 11px; font-weight: 650; }
+.team-color-legend i { width: 9px; height: 9px; border-radius: 3px; }
 .schedule-help { display: flex; align-items: center; gap: 6px; margin: 12px 0 0; color: var(--muted); font-size: 11px; }
+.consent-modal { max-width: 720px; }
+.consent-preview { max-height: 68vh; overflow-y: auto; padding-right: 4px; }
+.consent-preview dl { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin: 16px 0; }
+.consent-preview dl div { padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; }
+.consent-preview dt { color: var(--muted); font-size: 11px; font-weight: 700; }
+.consent-preview dd { margin: 4px 0 0; font-size: 13px; font-weight: 650; }
+.consent-preview ol { padding-left: 22px; color: #344054; line-height: 1.65; }
+.consent-signature { margin-top: 18px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
+.consent-signature span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.consent-signature img { display: block; width: 100%; max-height: 180px; object-fit: contain; background: #fff; }
 
 @media (max-width: 880px) {
   .app-workspace { margin-left: 0; }
@@ -454,6 +484,7 @@ body { overflow-x: hidden; }
   .team-week-overview { overflow-x: auto; }
   .schedule-modal-actions { align-items: stretch; flex-direction: column-reverse; }
   .schedule-modal-actions > div, .schedule-modal-actions .actions, .schedule-modal-actions .button { width: 100%; }
+  .consent-preview dl { grid-template-columns: 1fr; }
 }
 
 /* 2026-06-15 휴가 신청/신청내역 모바일 가독성 보정 */
