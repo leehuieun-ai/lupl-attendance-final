@@ -303,13 +303,15 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .team-calendar-header .team-day-head { min-height: 52px; border-bottom: 1px solid var(--line); }
 .team-calendar-header .team-day-head b { font-size: 14px; }
 .team-employee-head {
-  min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-width: 0; display: flex; align-items: center; justify-content: center;
   border: 0; border-right: 1px solid var(--line); background: #fff;
-  color: var(--employee-color); font-size: 11px; font-weight: 800;
+  color: var(--employee-color); font-size: 12px; font-weight: 850;
+  cursor: grab;
 }
 .team-employee-head:hover { background: color-mix(in srgb,var(--employee-color) 8%,white); }
-.team-employee-head > i { width: 23px; height: 23px; display: grid; place-items: center; flex-shrink: 0; border-radius: 50%; background: color-mix(in srgb,var(--employee-color) 16%,white); border: 1px solid var(--employee-color); color: var(--employee-color); font-size: 11px; font-style: normal; font-weight: 850; }
 .team-employee-head span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font-size: inherit; text-align: center; }
+.team-employee-head:active { cursor: grabbing; }
+.team-employee-head.dragging { opacity: .4; background: color-mix(in srgb,var(--employee-color) 12%,white); }
 .team-employee-head.team-day-end { border-right-color: #c4cad4; }
 .week-time-head { color: #667085; font-size: 12px; font-weight: 700; }
 .week-all-day { display: grid; grid-template-columns: 78px 1fr; min-height: 66px; border-bottom: 1px solid var(--line); }
@@ -331,10 +333,10 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-time-axis div:last-child { transform: translateY(7px); }
 .week-event-grid {
   position: relative; height: 640px; display: grid;
-  grid-template-columns: repeat(5,minmax(270px,1fr)); grid-template-rows: repeat(20,32px);
+  grid-template-columns: repeat(5,minmax(270px,1fr)); grid-template-rows: repeat(20,24px);
   background:
-    repeating-linear-gradient(to bottom,transparent 0,transparent 31px,#f2f4f7 31px,#f2f4f7 32px),
-    repeating-linear-gradient(to bottom,transparent 0,transparent 63px,#e4e7ec 63px,#e4e7ec 64px);
+    repeating-linear-gradient(to bottom,transparent 0,transparent 23px,#f2f4f7 23px,#f2f4f7 24px),
+    repeating-linear-gradient(to bottom,transparent 0,transparent 47px,#e4e7ec 47px,#e4e7ec 48px);
 }
 .week-day-column { grid-row: 1 / span 20; border-right: 1px solid var(--line); z-index: 0; }
 .week-day-column:last-of-type { border-right: 0; }
@@ -349,6 +351,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .week-time-event span { margin-top: 3px; font-size: 10px; white-space: nowrap; }
 .week-time-event small { margin-top: 4px; color: inherit; font-size: 10px; line-height: 1.35; opacity: .82; }
 .week-time-event.event-unavailable { background: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 13%,white) 0,color-mix(in srgb,var(--employee-color) 13%,white) 7px,color-mix(in srgb,var(--employee-color) 5%,white) 7px,color-mix(in srgb,var(--employee-color) 5%,white) 14px); }
+.week-time-event.event-leave { background: repeating-linear-gradient(135deg,color-mix(in srgb,var(--employee-color) 18%,white) 0,color-mix(in srgb,var(--employee-color) 18%,white) 6px,color-mix(in srgb,var(--employee-color) 8%,white) 6px,color-mix(in srgb,var(--employee-color) 8%,white) 12px); cursor: default; }
 .week-time-event.team-lane-event {
   margin: 3px 3px;
   padding: 14px 3px 9px;
@@ -369,6 +372,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .team-color-legend span { display: inline-flex; align-items: center; gap: 5px; color: #475467; font-size: 11px; font-weight: 650; }
 .team-color-legend i { width: 9px; height: 9px; border-radius: 3px; }
 .schedule-help { display: flex; align-items: center; gap: 7px; margin: 14px 0 0; color: #475467; font-size: 14px; line-height: 1.55; }
+.schedule-today-button { margin-left: 6px; }
 .schedule-apply-all { margin-top: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: #f8fafc; font-weight: 700; }
 .consent-modal { max-width: 720px; }
 .consent-preview { max-height: 68vh; overflow-y: auto; padding-right: 4px; }
