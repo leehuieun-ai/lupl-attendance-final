@@ -138,7 +138,10 @@ button { cursor: pointer; }
 .metric-value { font-size: 25px; font-weight: 700; letter-spacing: -0.04em; }
 .metric-label { color: var(--muted); font-size: 12px; margin-top: 4px; }
 
-.home-layout { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+.home-layout { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; align-items: start; }
+.home-side-stack { display: grid; gap: 16px; align-content: start; }
+.desktop-only { display: block; }
+.mobile-only { display: none; }
 .date-line { color: var(--muted); font-size: 14px; margin: 0 0 2px; }
 
 .clock { font-size: clamp(42px, 12vw, 70px); font-weight: 700; letter-spacing: -0.05em; margin: 6px 0 12px; font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1; }
@@ -221,6 +224,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .days-grid { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .day-btn { border: 1px solid var(--line); background: #f6f8fb; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; transition: all .15s; }
 .day-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+.day-btn:disabled { cursor: default; opacity: 1; }
 
 .schedule-board-card { overflow: hidden; padding: 24px; }
 .schedule-board-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
@@ -405,6 +409,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
   .topbar-user { margin-left: auto; }
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
   .home-layout { grid-template-columns: 1fr; }
+  .home-side-stack { gap: 14px; }
   .topbar-inner { align-items: flex-start; flex-direction: column; }
   .punch-grid { grid-template-columns: 1fr; }
   .container { padding-inline: 14px; }
@@ -420,7 +425,9 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .type-desc { background:#f6f8fb; border:1px solid var(--line); border-radius:12px; padding:11px 13px; margin-bottom:14px; font-size:13px; line-height:1.6; }
 .type-desc b { display:block; color:var(--ink); margin-bottom:2px; }
 .type-desc span { color:var(--muted); }
-.work-time-detail { white-space: pre-line; }
+.work-time-detail { white-space: normal; }
+.work-time-detail-space { margin-top: 10px; }
+.work-time-legal { font-size: calc(1em - 2px); color: var(--muted); }
 
 /* 토글 섹션 버튼 */
 .collapsible-btn {
@@ -487,6 +494,8 @@ body { overflow-x: hidden; }
 
   .card { width: 100%; padding: 16px 14px; border-radius: 10px; overflow: hidden; }
   .home-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .desktop-only { display: none !important; }
+  .mobile-only { display: grid; }
   .home-layout > .card:first-child { padding-top: 20px; }
   .clock { font-size: clamp(40px, 11.5vw, 50px); letter-spacing: 0; text-align: center; margin: 10px 0 14px; }
   .date-line { font-size: 13px; }
