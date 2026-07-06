@@ -818,6 +818,9 @@ function WorkTimeConsentModal({ employee, onDone }: { employee:any; onDone:()=>v
         <div className="popup-mark"><i className="ti ti-check" aria-hidden="true"></i></div>
         <h2 className="card-title" style={{display:"block",marginBottom:8}}>근무시간 변경 안내</h2>
         <p className="body-text">{WORK_TIME_CONSENT_TEXT}</p>
+        <div className="alert" style={{margin:"13px 0 0"}}>
+          기존 직원에게 필요한 필수 확인 절차입니다. 서명을 완료해야 출퇴근, 휴가, 추가근무 등 다른 메뉴를 이용할 수 있습니다.
+        </div>
         <button className="collapsible-btn" style={{marginTop:13}} onClick={()=>setShowDetail(v=>!v)}>
           상세 설명 보기
           <i className={`ti ${showDetail?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
