@@ -130,6 +130,9 @@ Deno.serve(async (req) => {
     const workStartDate = String(body.work_start_date || joinedAt);
     const role = body.role === "admin" ? "admin" : "employee";
     const deviceLimit = Math.min(3, Math.max(1, Number(body.device_limit ?? 3)));
+    const department = String(body.department ?? "").trim();
+    const position = String(body.position ?? "").trim();
+    const noAnnualLeave = !!body.no_annual_leave;
     const workDays = normalizeWorkDays(body.work_days);
     if (!name || !employeeNo || !phone) return json({ error: "이름, 사번, 휴대폰 번호는 필수입니다." }, 400);
 
@@ -164,6 +167,9 @@ Deno.serve(async (req) => {
         internal_email: email,
         role,
         device_limit: deviceLimit,
+        department,
+        position,
+        no_annual_leave: noAnnualLeave,
         work_days: workDays,
         joined_at: joinedAt,
         work_start_date: workStartDate,

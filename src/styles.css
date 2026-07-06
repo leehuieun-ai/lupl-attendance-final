@@ -552,6 +552,58 @@ body { overflow-x: hidden; }
   .period-card .grid.two { gap: 0; }
 }
 
+.today-task-button {
+  width: 100%;
+  margin: 0 0 14px;
+  padding: 13px 14px;
+  border: 1px solid #d8e2f3;
+  border-radius: 16px;
+  background: #f7fbff;
+  color: #182235;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 9px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+.today-task-button i { font-size: 20px; color: var(--blue); }
+.today-task-button span { font-weight: 800; }
+.today-task-button b { grid-column: 2; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.today-task-button.has-task { background: #eef6ff; border-color: #bfdbfe; }
+.today-task-modal { max-width: 520px; }
+.today-task-view h3 { margin: 0 0 10px; font-size: 20px; }
+.today-task-view p { white-space: pre-wrap; color: #364154; line-height: 1.65; margin: 0 0 18px; }
+.role-guide-card {
+  margin: 0 0 14px;
+  padding: 13px 14px;
+  border-radius: 16px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+}
+.role-guide-card div { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.role-guide-card b { color: #182235; }
+.role-guide-card span { color: var(--muted); font-size: 13px; }
+.role-guide-card ul { margin: 10px 0 0; padding-left: 18px; color: #364154; font-size: 13px; line-height: 1.55; }
+.rnr-card .textarea, .rnr-textarea { min-height: 150px; }
+.rnr-suggestion-box {
+  min-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+  background: #fbfcfe;
+}
+.rnr-result-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.rnr-result-head b { font-size: 18px; color: #182235; }
+.rnr-result-head span { color: var(--muted); font-size: 13px; font-weight: 700; }
+.rnr-suggestion-box p { white-space: pre-wrap; line-height: 1.6; color: #364154; }
+.rnr-checklist { margin: 0 0 14px; padding-left: 18px; line-height: 1.55; color: #364154; }
+.rnr-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 16px; }
+.rnr-entry { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; }
+.rnr-entry span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; margin-bottom: 5px; }
+.rnr-entry b { display: block; color: #182235; margin-bottom: 6px; }
+.rnr-entry p { margin: 0; color: #596579; font-size: 13px; line-height: 1.5; }
+
 /* 2026-06-15 휴가 신청/신청내역 모바일 가독성 보정 */
 @media (max-width: 640px) {
   .comp-time-grid {

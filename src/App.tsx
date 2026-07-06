@@ -30,6 +30,13 @@ const WORK_TIME_CHANGE_CONSENT_VERSION = "2026-07-work-time-change-process";
 const WORK_TIME_LEGAL_NOTICE_VERSION = "2026-07";
 const WORK_TIME_CONSENT_TEXT = "앞으로 근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 서명해 주세요. 변경 내용은 직원 요청과 회사 승인 후 적용되며, 서명한 기록은 자동으로 저장됩니다.";
 const WORK_TIME_DETAIL_TEXT = "근무요일, 근무시간, 휴게시간은 근로조건에 해당할 수 있어 변경 내용을 명확히 남겨야 합니다. 관련 법령: 근로기준법 제17조, 제53조 / 기간제 및 단시간근로자 보호 등에 관한 법률 제17조. 이 서명은 위 변경 내용에만 적용되며, 연장근로·야간근로·휴일근로에 대한 포괄 동의가 아닙니다.";
+const ANNUAL_LEAVE_LEGAL_NOTE = "파트타임이라는 이유만으로 연차가 항상 없는 것은 아닙니다. 4주 평균 1주 소정근로시간이 15시간 미만이면 연차 규정 적용 제외가 가능하고, 15시간 이상 단시간근로자는 연차가 발생할 수 있습니다.";
+const RNR_BASELINE_ROLES = [
+  {department:"운영", position:"사무보조", keywords:["문서","서류","파일","일정","비품","입력"], duties:["문서 정리","데이터 입력","일정 확인","비품/소모품 확인","전화/방문 응대"]},
+  {department:"고객", position:"고객응대", keywords:["문의","전화","예약","민원","상담","안내"], duties:["문의 응대","예약/일정 안내","고객 이력 기록","불만 접수 후 전달"]},
+  {department:"회계", position:"정산보조", keywords:["영수증","입금","정산","청구","급여","계산서"], duties:["영수증 정리","입출금 기록","청구/정산 자료 취합","급여 기초자료 확인"]},
+  {department:"현장", position:"교육운영", keywords:["수업","학교","교육장","강사","교구","현장"], duties:["현장 준비","교육 자료/교구 확인","강사 일정 공유","교육장 정리"]},
+];
 
 const workplaceTypeLabels: Record<string,string> = { office:"사무실", special_school:"특수학교", external_education:"외부 교육장", remote:"재택", other_field:"기타 외근지" };
 const requestTypeLabels: Record<string,string> = { annual:"연차", half_am:"오전 반차", half_pm:"오후 반차", hourly:"시간차", sick:"병가", official:"공가", remote:"재택", field:"외근", special:"특별휴가", substitute:"대체휴가", compensatory:"보상휴가", time_fix:"근무시간 수정", comp_leave_use:"대체휴가 시간 사용" };
@@ -154,10 +161,15 @@ function timeDiffHours(start: string, end: string) {
 function numberValue(v:any){return Number(String(v??"").replace(/[^0-9.]/g,""))||0;}
 function moneyInput(v:any){return (Number(String(v??"").replace(/[^0-9]/g,""))||0).toLocaleString("ko-KR");}
 function scheduleHours(start?:string|null,end?:string|null){return start&&end?timeDiffHours(String(start).slice(0,5),String(end).slice(0,5)):8;}
+function isAnnualLeaveDisabled(employee:any){ return !!employee?.no_annual_leave; }
 function isFullTimeEmployee(employee:any){
+  if(isAnnualLeaveDisabled(employee)) return false;
   const days=Array.isArray(employee?.work_days)?employee.work_days.length:Number(employee?.weekly_work_days||0);
   const hours=scheduleHours(employee?.work_start,employee?.work_end);
   return employee?.contract_type==="daily"&&days>=5&&hours>=8;
+}
+function automaticAnnualLeaveDays(employee:any, entitlement:any) {
+  return isAnnualLeaveDisabled(employee) ? 0 : (isFullTimeEmployee(employee) ? entitlement.baseGrantedDays : 0);
 }
 function timeToMinutes(time?: string | null) {
   if (!time) return null;
@@ -783,6 +795,10 @@ function HomePage({ employee }: { employee: any }) {
   const [compTimeRows,setCompTimeRows] = useState<any[]>([]);
   const [todayOverrides,setTodayOverrides] = useState<any[]>([]);
   const [workTimeChanges,setWorkTimeChanges] = useState<any[]>([]);
+  const [todayTask,setTodayTask] = useState<any|null>(null);
+  const [todoDraft,setTodoDraft] = useState({title:"",content:""});
+  const [showTodoModal,setShowTodoModal] = useState(false);
+  const [roleGuideEntries,setRoleGuideEntries] = useState<any[]>([]);
   const [notificationPermission,setNotificationPermission] = useState<NotificationPermission|"unsupported">("unsupported");
   const [lastReminderMessage,setLastReminderMessage] = useState("");
   const sentReminderKeys = useRef<Set<string>>(new Set());
@@ -815,18 +831,30 @@ function HomePage({ employee }: { employee: any }) {
   }
   async function load() {
     const today=todayIso();
-    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes}]=await Promise.all([
+    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:taskRows},{data:rnrRows}]=await Promise.all([
       supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name"),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("check_in_time",{ascending:false}).limit(10),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).is("check_out_time",null).order("check_in_time",{ascending:false}),
       supabase.from("comp_time_requests").select("*").eq("employee_id",employee.id).eq("work_date",today).in("status",["pending","approved"]).order("start_time"),
       supabase.from("weekly_schedule_overrides").select("*").eq("employee_id",employee.id).eq("week_start",weekStartIso(today)).limit(1),
       supabase.from("work_time_change_requests").select("*").eq("employee_id",employee.id).eq("status","approved").order("created_at",{ascending:false}).limit(100),
+      supabase.from("daily_tasks").select("*").eq("task_date",today).eq("is_active",true).order("created_at",{ascending:false}).limit(1),
+      supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(80),
     ]);
     setWorkplaces(places??[]);
     setCompTimeRows(compRows??[]);
     setTodayOverrides(overrides??[]);
     setWorkTimeChanges(changes??[]);
+    const task=(taskRows??[])[0]??null;
+    setTodayTask(task);
+    setTodoDraft({title:task?.title??"",content:task?.content??""});
+    const employeeDept=String(employee.department??"").trim();
+    const employeePosition=String(employee.position??"").trim();
+    setRoleGuideEntries((rnrRows??[]).filter((entry:any)=>
+      entry.assigned_employee_id===employee.id ||
+      (!!employeeDept&&String(entry.department??"").trim()===employeeDept) ||
+      (!!employeePosition&&String(entry.position??"").trim()===employeePosition)
+    ).slice(0,5));
     const merged=uniqueLogs([...(openLogs??[]), ...(logs??[])]).sort(byCheckInDesc);
     setOpenLogRows(openLogs??[]);
     setTodayLog(merged.find((l:any)=>isToday(l.check_in_time))??null);
@@ -888,6 +916,28 @@ function HomePage({ employee }: { employee: any }) {
       setMessage(data?.device_status==="approved"?"이 기기가 등록·승인되었습니다.":"이 기기 등록을 신청했습니다. 관리자 승인 후 사용됩니다.");
       await loadDevices();
     } catch(e:any){setMessage(e.message);}
+  }
+  function openTodo() {
+    setTodoDraft({title:todayTask?.title??"",content:todayTask?.content??""});
+    setShowTodoModal(true);
+  }
+  async function saveTodayTask() {
+    if(employee.role!=="admin") return;
+    const title=todoDraft.title.trim();
+    const content=todoDraft.content.trim();
+    if(!title||!content) return setMessage("오늘의 할일 제목과 내용을 입력해주세요.");
+    const payload={task_date:todayIso(),title,content,is_active:true,created_by:employee.id};
+    const result=todayTask?.id
+      ? await supabase.from("daily_tasks").update({title,content,is_active:true,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
+      : await supabase.from("daily_tasks").insert(payload).select().single();
+    if(result.error) setMessage(result.error.message);
+    else { setTodayTask(result.data); setShowTodoModal(false); setMessage("오늘의 할일이 저장되었습니다."); await load(); }
+  }
+  async function hideTodayTask() {
+    if(employee.role!=="admin"||!todayTask?.id) return;
+    const {error}=await supabase.from("daily_tasks").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",todayTask.id);
+    if(error) setMessage(error.message);
+    else { setTodayTask(null); setTodoDraft({title:"",content:""}); setShowTodoModal(false); setMessage("오늘의 할일을 숨겼습니다."); }
   }
   function detectPlace(lat:number,lng:number,ip:string|null) {
     const approved=workplaces.filter(w=>w.approval_status==="approved"&&w.lat!=null&&w.lng!=null);
@@ -1059,6 +1109,19 @@ function HomePage({ employee }: { employee: any }) {
           <div className="today-time-item"><span className="today-time-label">퇴근</span><span className="today-time-val">{checkedOut?timeOnly(todayLog.check_out_time):"--:--"}</span></div>
           {worked!=null&&<div className="today-time-item"><span className="today-time-label">실근무</span><span className="today-time-val" style={{fontSize:17}}>{fmtMin(worked)}</span></div>}
         </div>
+        {(employee.role==="admin"||todayTask)&&(
+          <button className={`today-task-button ${todayTask?"has-task":""}`} onClick={openTodo}>
+            <i className="ti ti-clipboard-list" aria-hidden="true"></i>
+            <span>{employee.role==="admin" ? (todayTask?"오늘의 할일 수정":"오늘의 할일 적기") : "오늘의 할일 확인"}</span>
+            {todayTask&&<b>{todayTask.title}</b>}
+          </button>
+        )}
+        {roleGuideEntries.length>0&&(
+          <div className="role-guide-card">
+            <div><b>내 업무 안내</b><span>{roleGuideEntries[0].position||roleGuideEntries[0].department||"역할"} 기준으로 정리된 업무가 있습니다.</span></div>
+            <ul>{roleGuideEntries.slice(0,3).map((entry:any)=><li key={entry.id}>{entry.title}</li>)}</ul>
+          </div>
+        )}
         <div className="punch-grid">
           <button className="button punch" disabled={busy||hasBlockingOpenLog} onClick={handleCheckInClick}>출근하기</button>
           <button className="button secondary punch" disabled={busy||openLogs.length===0} onClick={()=>checkedIn?checkOut():closeSpecificLog(openLogs[0])}>퇴근하기</button>
@@ -1148,6 +1211,33 @@ function HomePage({ employee }: { employee: any }) {
           <p style={{margin:"0 0 8px"}}>오늘 <b>{timeOnly(recheckAsk.check_in_time)}</b>에 이미 출근 처리되었습니다.</p>
           <p style={{margin:0}}>재출근하면 현재 시각으로 출근 시간이 갱신되며, 지각 등 근태 상태가 다시 판정될 수 있습니다.</p>
         </ConfirmModal>)}
+        {showTodoModal&&(
+          <div className="modal-backdrop" onClick={()=>setShowTodoModal(false)}>
+            <div className="modal-box today-task-modal" onClick={e=>e.stopPropagation()}>
+              <div className="modal-header">
+                <h2 className="card-title" style={{margin:0}}><i className="ti ti-clipboard-list" aria-hidden="true"></i>오늘의 할일</h2>
+                <button className="modal-close" onClick={()=>setShowTodoModal(false)}>✕</button>
+              </div>
+              {employee.role==="admin" ? (
+                <div className="grid">
+                  <div className="form-row"><label className="label">제목</label><input className="input" value={todoDraft.title} onChange={e=>setTodoDraft({...todoDraft,title:e.target.value})} placeholder="예: 오늘 오전 준비사항" /></div>
+                  <div className="form-row"><label className="label">내용</label><textarea className="textarea" value={todoDraft.content} onChange={e=>setTodoDraft({...todoDraft,content:e.target.value})} placeholder="직원들이 출근 후 확인할 내용을 적어주세요." /></div>
+                  <div className="modal-actions">
+                    {todayTask&&<button className="button danger" onClick={hideTodayTask}>숨기기</button>}
+                    <button className="button ghost" onClick={()=>setShowTodoModal(false)}>닫기</button>
+                    <button className="button" onClick={saveTodayTask}>저장</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="today-task-view">
+                  <h3>{todayTask?.title}</h3>
+                  <p>{todayTask?.content}</p>
+                  <button className="button full" onClick={()=>setShowTodoModal(false)}>확인</button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card">
@@ -1435,12 +1525,11 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   },[compForm.work_date,employee.id,employee.work_start,employee.work_end,mode]);
 
   const ent=calculateLeaveEntitlement(employee.joined_at);
-  const fullTime=isFullTimeEmployee(employee);
   const adj=calculateAdjustmentDays(adjustments);
   const compEarned=calculateApprovedCompDays(compRequests);
   const approvedUsed=calculateUsedDays(requests,false);
   const pendingUsed=calculateUsedDays(requests,true);
-  const automaticAnnual=fullTime?ent.baseGrantedDays:0;
+  const automaticAnnual=automaticAnnualLeaveDays(employee,ent);
   const totalGranted=automaticAnnual+adj;
   const remaining=Math.max(0,totalGranted-approvedUsed);
   const expectedRemaining=Math.max(0,totalGranted-pendingUsed);
@@ -1551,7 +1640,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
               <div className="leave-chip"><span>잔여(예상)</span><b>{expectedRemaining.toFixed(1)}일</b></div>
               <div className="leave-chip leave-chip-highlight"><span>대체휴가 적립</span><b>{compEarned.toFixed(1)}일 ({compRemainHours}시간)</b></div>
             </div>
-            <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {fullTime?ent.description:"비풀타임: 자동 연차 미발생"}<br />{fullTime?`산정기간 ${ent.periodStart??"-"} ~ ${ent.periodEnd??"-"} (근로기준법 제60조)`:"관리자가 별도로 부여한 특별·대체휴가는 사용할 수 있습니다."}</p>
+            <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {automaticAnnual>0?ent.description:"자동 연차 미발생"}<br />{automaticAnnual>0?`산정기간 ${ent.periodStart??"-"} ~ ${ent.periodEnd??"-"} (근로기준법 제60조)`:isAnnualLeaveDisabled(employee)?ANNUAL_LEAVE_LEGAL_NOTE:"관리자가 별도로 부여한 특별·대체휴가는 사용할 수 있습니다."}</p>
           </div>
         </div>
       </section>}
@@ -1848,12 +1937,19 @@ function WorkplacePage({ employee }: { employee: any }) {
 function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmployee, onClose, onChanged }:
   { emp:any; requests:any[]; adjustments:any[]; compRequests:any[]; currentEmployee:any; onClose:()=>void; onChanged:()=>void }) {
   const [days,setDays]=useState(""); const [reason,setReason]=useState(""); const [adjType,setAdjType]=useState("add"); const [msg,setMsg]=useState("");
+  const [noAnnualLeave,setNoAnnualLeave]=useState(!!emp.no_annual_leave);
   const ent=calculateLeaveEntitlement(emp.joined_at);
-  const fullTime=isFullTimeEmployee(emp);
+  const annualBase=noAnnualLeave?0:automaticAnnualLeaveDays(emp,ent);
   const adj=calculateAdjustmentDays(adjustments);
   const used=calculateUsedDays(requests,false);
-  const total=(fullTime?ent.baseGrantedDays:0)+adj;
+  const total=annualBase+adj;
   const remain=Math.max(0,total-used);
+  async function toggleNoAnnualLeave(next:boolean) {
+    setNoAnnualLeave(next);
+    const {error}=await supabase.from("employees").update({no_annual_leave:next}).eq("id",emp.id);
+    if(error) { setNoAnnualLeave(!next); setMsg(error.message); }
+    else { setMsg(next?"연차 없음으로 설정했습니다. 자동 연차가 생성되지 않습니다.":"연차 없음 설정을 해제했습니다."); onChanged(); }
+  }
   async function apply() {
     setMsg(""); const d=Number(days);
     if(!d||d<=0) return setMsg("일수를 입력해주세요.");
@@ -1870,11 +1966,16 @@ function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmp
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="leave-chips" style={{marginBottom:14}}>
+          <div className="leave-chip"><span>자동 연차</span><b>{annualBase.toFixed(1)}일</b></div>
           <div className="leave-chip"><span>총 부여</span><b>{total.toFixed(1)}일</b></div>
           <div className="leave-chip"><span>사용</span><b>{used.toFixed(1)}일</b></div>
           <div className="leave-chip"><span>잔여</span><b>{remain.toFixed(1)}일</b></div>
         </div>
         {msg&&<div className={`alert ${msg.includes("반영")?"success":"error"}`}>{msg}</div>}
+        <label className="checkbox" style={{alignItems:"flex-start",marginBottom:12}}>
+          <input type="checkbox" checked={noAnnualLeave} onChange={e=>toggleNoAnnualLeave(e.target.checked)} />
+          <span><b>연차 없음</b><br/><small>{ANNUAL_LEAVE_LEGAL_NOTE}</small></span>
+        </label>
         <div className="form-row"><label className="label">조정 유형</label>
           <select className="select" value={adjType} onChange={e=>setAdjType(e.target.value)}>
             <option value="add">추가 (특별휴가 부여 등)</option>
@@ -1902,9 +2003,15 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   const [overrides,setOverrides]=useState<any[]>([]);
   const [absences,setAbsences]=useState<any[]>([]);
   const [allLogs,setAllLogs]=useState<any[]>([]);
+  const [rnrEntries,setRnrEntries]=useState<any[]>([]);
+  const [rnrInput,setRnrInput]=useState("");
+  const [rnrSuggestion,setRnrSuggestion]=useState<any|null>(null);
+  const [rnrAssigneeId,setRnrAssigneeId]=useState("");
+  const [rnrBusy,setRnrBusy]=useState(false);
+  const [rnrMsg,setRnrMsg]=useState("");
   const [message,setMessage]=useState("");
   const [settledCompIds,setSettledCompIds]=useState<Set<string>>(new Set());
-  const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});
+  const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,department:"",position:"",no_annual_leave:false,work_days:["mon","tue","wed","thu","fri"]});
   const [scheduleEmpId,setScheduleEmpId]=useState("");
   const [scheduleMsg,setScheduleMsg]=useState("");
   const [leaveModalEmp,setLeaveModalEmp]=useState<any|null>(null);
@@ -1914,7 +2021,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     const list=emps??[]; const map:Record<string,any>={};
     list.forEach((e:any)=>{map[e.id]=e;});
     setEmployees(list); setEmpMap(map);
-    const [d,w,r,c,wt,a,ov,ab,lg]=await Promise.all([
+    const [d,w,r,c,wt,a,ov,ab,lg,rn]=await Promise.all([
       supabase.from("registered_devices").select("*").order("created_at",{ascending:false}),
       supabase.from("workplaces").select("*").order("created_at",{ascending:false}),
       supabase.from("attendance_requests").select("*").order("created_at",{ascending:false}),
@@ -1924,8 +2031,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
       supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(50),
       supabase.from("employee_absences").select("*").order("start_date",{ascending:false}),
       supabase.from("attendance_logs").select("id, employee_id, workplace_id, check_in_time, check_out_time, original_check_out_time, scheduled_check_out_time, overtime_review_status, status, workplaces(name,type)").order("check_in_time",{ascending:false}).limit(300),
+      supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
     ]);
-    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]);
+    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]);
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
@@ -1933,14 +2041,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   function leaveForEmployee(empId:string) {
     const emp=empMap[empId]; if(!emp) return null;
     const ent=calculateLeaveEntitlement(emp.joined_at);
-    const fullTime=isFullTimeEmployee(emp);
     const adj=adjustments.filter(a=>a.employee_id===empId);
     const reqs=requests.filter(r=>r.employee_id===empId);
     const comps=compRequests.filter(c=>c.employee_id===empId);
     const adjDays=calculateAdjustmentDays(adj);
     const compEarned=calculateApprovedCompDays(comps);
     const used=calculateUsedDays(reqs,false);
-    const total=(fullTime?ent.baseGrantedDays:0)+adjDays;
+    const total=automaticAnnualLeaveDays(emp,ent)+adjDays;
     const remain=Math.max(0,total-used);
     const compH=Math.round(compEarned*8*10)/10;
     const compUsedH=reqs.filter(r=>r.request_type==="comp_leave_use"&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
@@ -1951,10 +2058,83 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   async function createEmployee() {
     setMessage(""); const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:newEmployee});
     if(error) setMessage(error.message); else if(data?.error) setMessage(data.error);
-    else{setMessage(`직원 계정이 생성되었습니다. 초기 비밀번호: ${data.initial_password}`);setNewEmployee({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,work_days:["mon","tue","wed","thu","fri"]});await load();onChanged();}
+    else{
+      await supabase.from("employees").update({department:newEmployee.department,position:newEmployee.position,no_annual_leave:newEmployee.no_annual_leave}).eq("employee_no",newEmployee.employee_no);
+      setMessage(`직원 계정이 생성되었습니다. 초기 비밀번호: ${data.initial_password}`);
+      setNewEmployee({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,department:"",position:"",no_annual_leave:false,work_days:["mon","tue","wed","thu","fri"]});
+      await load();onChanged();
+    }
   }
   async function updateEmployee(id:string,patch:Record<string,any>){const {error}=await supabase.from("employees").update(patch).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function toggleEmployee(id:string,cur:string){const n=cur!=="active";await updateEmployee(id,{is_active:n,employment_status:n?"active":"inactive"});}
+  function localRnrSuggestion(text:string) {
+    const normalized=text.toLowerCase();
+    const picked=RNR_BASELINE_ROLES.find(role=>role.keywords.some(keyword=>normalized.includes(keyword.toLowerCase())))??RNR_BASELINE_ROLES[0];
+    const firstLine=text.split(/\r?\n/).map(x=>x.trim()).find(Boolean)??"업무 정리";
+    return {
+      title:firstLine.length>34?`${firstLine.slice(0,34)}...`:firstLine,
+      summary:text.trim(),
+      department:picked.department,
+      position:picked.position,
+      category:picked.position,
+      priority:"normal",
+      checklist:picked.duties,
+      assigned_person_name:"",
+    };
+  }
+  async function suggestRnr() {
+    const raw=rnrInput.trim();
+    if(!raw) return setRnrMsg("정리할 업무 내용을 입력해주세요.");
+    setRnrBusy(true); setRnrMsg("");
+    try {
+      const {data:sessionData}=await supabase.auth.getSession();
+      const token=sessionData.session?.access_token;
+      if(!token) throw new Error("로그인이 필요합니다.");
+      const response=await fetch("/api/rnr-suggest",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+        body:JSON.stringify({
+          input:raw,
+          employees:employees.map((e:any)=>({id:e.id,name:e.name,department:e.department,position:e.position,role:e.role})),
+          existing:rnrEntries.slice(0,80).map((e:any)=>({title:e.title,department:e.department,position:e.position,category:e.category})),
+          baseline:RNR_BASELINE_ROLES,
+        }),
+      });
+      const data=await response.json();
+      if(!response.ok) throw new Error(data?.error||"AI 정리 실패");
+      const suggestion=data?.suggestion??localRnrSuggestion(raw);
+      setRnrSuggestion(suggestion);
+      const matched=employees.find((e:any)=>e.name&&suggestion.assigned_person_name&&String(suggestion.assigned_person_name).includes(e.name));
+      if(matched) setRnrAssigneeId(matched.id);
+    } catch(e:any) {
+      setRnrSuggestion(localRnrSuggestion(raw));
+      setRnrMsg(`AI 호출 대신 기본 추천으로 정리했습니다. ${e.message}`);
+    } finally {
+      setRnrBusy(false);
+    }
+  }
+  async function saveRnrEntry() {
+    if(!rnrSuggestion) return setRnrMsg("먼저 업무를 정리해주세요.");
+    const assignee=employees.find((e:any)=>e.id===rnrAssigneeId);
+    const payload={
+      raw_input:rnrInput.trim(),
+      title:rnrSuggestion.title||"업무 정리",
+      summary:rnrSuggestion.summary||rnrInput.trim(),
+      department:rnrSuggestion.department||assignee?.department||"",
+      position:rnrSuggestion.position||assignee?.position||"",
+      category:rnrSuggestion.category||rnrSuggestion.position||"",
+      priority:rnrSuggestion.priority||"normal",
+      checklist:Array.isArray(rnrSuggestion.checklist)?rnrSuggestion.checklist:[],
+      assigned_employee_id:rnrAssigneeId||null,
+      assigned_person_name:assignee?.name||rnrSuggestion.assigned_person_name||"",
+      created_by:currentEmployee.id,
+      source:"admin_note",
+      is_active:true,
+    };
+    const {error}=await supabase.from("rnr_entries").insert(payload);
+    if(error) setRnrMsg(error.message);
+    else { setRnrMsg("업무 R&R이 저장되었습니다."); setRnrInput(""); setRnrSuggestion(null); setRnrAssigneeId(""); await load(); }
+  }
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
     if(!nw||nw===emp.employee_no) return;
@@ -2186,6 +2366,48 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
       </section>}
 
+      {view==="employees"&&<section className="card rnr-card">
+        <h2 className="card-title"><i className="ti ti-sitemap" aria-hidden="true"></i>업무 R&R 정리</h2>
+        <p className="subtle" style={{marginBottom:12}}>업무를 편하게 적으면 부서/직책/업무명으로 정리해서 누적합니다. 다음 직원이 같은 역할을 맡을 때 기준 업무로 볼 수 있습니다.</p>
+        {rnrMsg&&<div className={`alert ${rnrMsg.includes("저장")?"success":""}`}>{rnrMsg}</div>}
+        <div className="grid two">
+          <div>
+            <div className="form-row"><label className="label">업무 메모</label><textarea className="textarea rnr-textarea" value={rnrInput} onChange={e=>setRnrInput(e.target.value)} placeholder="예: 내일 오전에 학교 제출용 서류 정리하고, 영수증은 민지한테 맡기고, 교육장 비품은 사무보조가 체크하게 해줘." /></div>
+            <button className="button" disabled={rnrBusy} onClick={suggestRnr}><i className="ti ti-sparkles" aria-hidden="true"></i>{rnrBusy?"정리 중":"AI로 정리"}</button>
+          </div>
+          <div className="rnr-suggestion-box">
+            {rnrSuggestion ? (
+              <>
+                <div className="rnr-result-head"><b>{rnrSuggestion.title}</b><span>{rnrSuggestion.department||"부서 미정"} · {rnrSuggestion.position||"직책 미정"}</span></div>
+                <p>{rnrSuggestion.summary}</p>
+                <div className="form-row"><label className="label">담당 직원</label>
+                  <select className="select" value={rnrAssigneeId} onChange={e=>setRnrAssigneeId(e.target.value)}>
+                    <option value="">직책 기준으로 저장</option>
+                    {employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name} {e.department||e.position?`· ${e.department??""} ${e.position??""}`:""}</option>)}
+                  </select>
+                </div>
+                <ul className="rnr-checklist">{(rnrSuggestion.checklist??[]).map((item:string,index:number)=><li key={index}>{item}</li>)}</ul>
+                <button className="button full" onClick={saveRnrEntry}>R&R에 저장</button>
+              </>
+            ) : (
+              <div className="type-desc">
+                <b>기본 역할 추천</b>
+                {RNR_BASELINE_ROLES.map(role=><span key={role.position}>{role.department} / {role.position}: {role.duties.slice(0,3).join(", ")}</span>)}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="rnr-board">
+          {rnrEntries.length===0 ? <p className="subtle">아직 저장된 R&R이 없습니다.</p> : rnrEntries.slice(0,12).map(entry=>(
+            <div className="rnr-entry" key={entry.id}>
+              <span>{entry.department||"공통"} · {entry.position||entry.category||"업무"}</span>
+              <b>{entry.title}</b>
+              <p>{entry.summary}</p>
+            </div>
+          ))}
+        </div>
+      </section>}
+
       {view==="employees"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-user-plus" aria-hidden="true"></i>직원 계정 생성</h2>
         <div className="grid four">
@@ -2198,6 +2420,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         <div className="grid two">
           <div className="form-row"><label className="label">권한</label><select className="select" value={newEmployee.role} onChange={e=>setNewEmployee({...newEmployee,role:e.target.value})}><option value="employee">직원</option><option value="admin">관리자</option></select></div>
           <div className="form-row"><label className="label">기기 제한</label><select className="select" value={newEmployee.device_limit} onChange={e=>setNewEmployee({...newEmployee,device_limit:Number(e.target.value)})}><option value={1}>1대</option><option value={2}>2대</option><option value={3}>3대</option></select></div>
+        </div>
+        <div className="grid three">
+          <div className="form-row"><label className="label">부서</label><input className="input" value={newEmployee.department} onChange={e=>setNewEmployee({...newEmployee,department:e.target.value})} placeholder="예: 운영" /></div>
+          <div className="form-row"><label className="label">직책/역할</label><input className="input" value={newEmployee.position} onChange={e=>setNewEmployee({...newEmployee,position:e.target.value})} placeholder="예: 사무보조" /></div>
+          <label className="checkbox" style={{alignSelf:"end",marginBottom:10}}><input type="checkbox" checked={newEmployee.no_annual_leave} onChange={e=>setNewEmployee({...newEmployee,no_annual_leave:e.target.checked})} /> 연차 없음</label>
         </div>
         <div className="form-row"><label className="label">출근 요일</label>
           <div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${newEmployee.work_days.includes(d)?"active":""}`} onClick={()=>setNewEmployee({...newEmployee,work_days:toggleDay(newEmployee.work_days,d)})}>{DAY_LABELS[d]}</button>)}</div>
@@ -2214,15 +2441,17 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>직원</th><th>권한</th><th>상태</th><th>입사일</th><th>출근 시작일</th><th>계정</th><th>처리</th></tr></thead>
+            <thead><tr><th>직원</th><th>부서/직책</th><th>권한</th><th>상태</th><th>입사일</th><th>출근 시작일</th><th>연차</th><th>계정</th><th>처리</th></tr></thead>
             <tbody>
               {filtered.map(e=>(
                 <tr key={e.id}>
                   <td>{e.name}<br /><span className="subtle">{e.employee_no} · {e.phone}</span></td>
+                  <td><div className="grid" style={{gap:6}}><input className="input" value={e.department??""} onChange={ev=>updateEmployee(e.id,{department:ev.target.value})} placeholder="부서" /><input className="input" value={e.position??""} onChange={ev=>updateEmployee(e.id,{position:ev.target.value})} placeholder="직책/역할" /></div></td>
                   <td><select className="select" value={e.role} onChange={ev=>updateEmployee(e.id,{role:ev.target.value})}><option value="admin">관리자</option><option value="employee">직원</option></select></td>
                   <td><span className={`badge ${badgeClass(e.employment_status)}`}>{e.employment_status==="active"?"재직":"비활성"}</span></td>
                   <td><input className="input" type="date" value={e.joined_at??""} onChange={ev=>updateEmployee(e.id,{joined_at:ev.target.value})} /></td>
                   <td><input className="input" type="date" value={e.work_start_date??e.joined_at??""} onChange={ev=>updateEmployee(e.id,{work_start_date:ev.target.value})} /></td>
+                  <td><label className="checkbox" style={{margin:0}}><input type="checkbox" checked={!!e.no_annual_leave} onChange={ev=>updateEmployee(e.id,{no_annual_leave:ev.target.checked})} /> 없음</label></td>
                   <td><div className="actions"><button className="button ghost" onClick={()=>resetEmployeeNo(e)}>사번 변경</button><button className="button ghost" onClick={()=>resetPassword(e)}>비번 초기화</button></div></td>
                   <td><button className={e.employment_status==="active"?"button danger":"button secondary"} onClick={()=>toggleEmployee(e.id,e.employment_status)}>{e.employment_status==="active"?"비활성화":"활성화"}</button></td>
                 </tr>
