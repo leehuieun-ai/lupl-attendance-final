@@ -458,8 +458,10 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .readonly-grid { display: grid; gap: 9px; }
 .readonly-field { min-height: 58px; display: grid; grid-template-columns: 90px minmax(0,1fr); gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 13px; background: #f6f8fb; padding: 11px 12px; }
 .readonly-field span { color: var(--muted); font-size: 12px; font-weight: 700; }
-.readonly-field b { color: #5a6475; font-size: 14px; line-height: 1.45; }
+.readonly-field b { color: #5a6475; font-size: 14px; line-height: 1.45; font-weight: 500; }
 .work-change-guide { margin-bottom: 14px; }
+.natural-change-box { border: 1px solid #d7e6ff; background: #f7fbff; border-radius: 15px; padding: 12px; margin-bottom: 14px; }
+.input-action-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; }
 .period-stack { display: grid; gap: 10px; margin-bottom: 14px; }
 .period-card { border: 1px solid #d7e6ff; background: #f3f7ff; border-radius: 15px; padding: 12px; }
 .period-card .form-row { margin-bottom: 10px; }
@@ -558,6 +560,7 @@ body { overflow-x: hidden; }
   .work-change-title { align-items: flex-start; margin-bottom: 16px; }
   .work-change-title .badge { margin-top: 2px; }
   .readonly-field { grid-template-columns: 78px minmax(0,1fr); padding: 12px; }
+  .input-action-row { grid-template-columns: minmax(0,1fr); }
   .period-summary, .work-change-summary { grid-template-columns: minmax(0,1fr); }
   .period-card .grid.two { gap: 0; }
 }
@@ -582,6 +585,8 @@ body { overflow-x: hidden; }
 .today-task-button b { grid-column: 2; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .today-task-button.has-task { background: #eef6ff; border-color: #bfdbfe; }
 .today-task-modal { max-width: 520px; }
+.today-task-editor { display: grid; gap: 10px; }
+.compact-textarea { min-height: 86px; }
 .today-task-view h3 { margin: 0 0 10px; font-size: 20px; }
 .today-task-view p { white-space: pre-wrap; color: #364154; line-height: 1.65; margin: 0 0 18px; }
 .role-guide-card {
@@ -607,6 +612,10 @@ body { overflow-x: hidden; }
 .rnr-result-head b { font-size: 18px; color: #182235; }
 .rnr-result-head span { color: var(--muted); font-size: 13px; font-weight: 700; }
 .rnr-suggestion-box p { white-space: pre-wrap; line-height: 1.6; color: #364154; }
+.rnr-role-guide { display: grid; gap: 10px; margin-top: 10px; }
+.rnr-role-guide-row { display: grid; gap: 3px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.rnr-role-guide-row strong { color: #182235; font-size: 14px; }
+.rnr-role-guide-row span { color: #596579; font-size: 13px; line-height: 1.55; }
 .rnr-checklist { margin: 0 0 14px; padding-left: 18px; line-height: 1.55; color: #364154; }
 .rnr-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 16px; }
 .rnr-entry { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; }
@@ -623,6 +632,8 @@ body { overflow-x: hidden; }
 .rnr-person-task { width: 100%; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; padding: 10px; text-align: left; margin-top: 8px; }
 .rnr-person-task b { display: block; color: #182235; font-size: 14px; margin-bottom: 4px; }
 .rnr-person-task span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; }
+.nowrap-select { white-space: nowrap; min-width: 92px; }
+.no-wrap-checkbox { white-space: nowrap; word-break: keep-all; align-items: center; }
 
 /* 2026-06-15 휴가 신청/신청내역 모바일 가독성 보정 */
 @media (max-width: 640px) {
