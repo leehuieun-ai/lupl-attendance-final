@@ -35,17 +35,19 @@ const WORK_TIME_DETAIL_SIGN_TEXT = "이 서명은 위 변경 내용에만 적용
 const WORK_TIME_DETAIL_TEXT = `${WORK_TIME_DETAIL_MAIN_TEXT}\n${WORK_TIME_DETAIL_LEGAL_TEXT}\n${WORK_TIME_DETAIL_SIGN_TEXT}`;
 const ANNUAL_LEAVE_LEGAL_NOTE = "파트타임이라는 이유만으로 연차가 항상 없는 것은 아닙니다. 4주 평균 1주 소정근로시간이 15시간 미만이면 연차 규정 적용 제외가 가능하고, 15시간 이상 단시간근로자는 연차가 발생할 수 있습니다.";
 const RNR_BASELINE_ROLES = [
-  {department:"운영", position:"사무보조", keywords:["문서","서류","파일","일정","비품","입력"], duties:["문서 정리","데이터 입력","일정 확인","비품/소모품 확인","전화/방문 응대"]},
-  {department:"고객", position:"고객응대", keywords:["문의","전화","예약","민원","상담","안내"], duties:["문의 응대","예약/일정 안내","고객 이력 기록","불만 접수 후 전달"]},
-  {department:"회계", position:"정산보조", keywords:["영수증","입금","정산","청구","급여","계산서"], duties:["영수증 정리","입출금 기록","청구/정산 자료 취합","급여 기초자료 확인"]},
-  {department:"현장", position:"교육운영", keywords:["수업","학교","교육장","강사","교구","현장"], duties:["현장 준비","교육 자료/교구 확인","강사 일정 공유","교육장 정리"]},
+  {department:"홍보마케팅부서", position:"선임", keywords:["홍보","마케팅","광고","SNS","콘텐츠","제휴"], duties:["홍보 콘텐츠 기획","SNS/광고 운영","제휴 제안 정리","성과 지표 확인","브랜드 메시지 관리"]},
+  {department:"경영지원부서", position:"선임", keywords:["문서","서류","계약","인사","정산","운영"], duties:["문서/계약 자료 정리","인사·근태 자료 확인","정산 기초자료 취합","운영 일정 조율"]},
+  {department:"경영지원부서", position:"매니저", keywords:["일정","비품","입력","응대","지원","사무"], duties:["사무 지원","데이터 입력","비품/소모품 확인","전화/방문 응대","부서 요청 접수"]},
+  {department:"AI부서", position:"선임", keywords:["AI","자동화","데이터","프롬프트","모델","분석"], duties:["AI 자동화 기획","데이터 정리","프롬프트/결과 검수","업무 효율화 제안"]},
+  {department:"개발부서", position:"매니저", keywords:["개발","버그","배포","시스템","앱","기능"], duties:["서비스 기능 개발","버그 확인 및 수정","배포 상태 점검","운영 기능 개선"]},
+  {department:"디자인부서", position:"매니저", keywords:["디자인","브랜드","UI","이미지","콘텐츠","시안"], duties:["브랜드/콘텐츠 디자인","UI 화면 정리","홍보 이미지 제작","시안 관리"]},
 ];
 const DEPARTMENT_OPTIONS = ["", ...Array.from(new Set(RNR_BASELINE_ROLES.map(role=>role.department)))];
-const POSITION_OPTIONS = ["", ...Array.from(new Set(RNR_BASELINE_ROLES.map(role=>role.position)))];
+const POSITION_OPTIONS = ["","대표","본부장","선임","매니저"];
 const WORK_TIME_CHANGE_MODE_LABELS:Record<string,string> = {
   work_time:"근무시간 변경",
-  date_change:"근무 날짜 변경",
-  no_work:"근무 안함",
+  date_change:"근무일 변경",
+  no_work:"근무 안 함",
 };
 
 const workplaceTypeLabels: Record<string,string> = { office:"사무실", special_school:"특수학교", external_education:"외부 교육장", remote:"재택", other_field:"기타 외근지" };
@@ -620,7 +622,7 @@ export default function App() {
     attendance:"출퇴근",
     leave:"휴가",
     overtime:"추가근무",
-    worktime:"근무시간 변경요청",
+    worktime:"근무시간 변경 요청",
     "admin-dashboard":"직원 현황",
     approvals:"승인 관리",
     employees:"직원 관리",
@@ -635,12 +637,11 @@ export default function App() {
     {id:"attendance",label:"출퇴근",icon:"ti-clock"},
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
-    {id:"worktime",label:"근무시간 변경요청",icon:"ti-calendar-time"},
+    {id:"worktime",label:"근무시간 변경 요청",icon:"ti-calendar-time"},
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
     {id:"schedule",label:"근무 일정",icon:"ti-calendar-time"},
-    {id:"approvals",label:"승인 관리",icon:"ti-shield-check",badge:pendingCount},
-    {id:"admin-dashboard",label:"직원 현황",icon:"ti-layout-dashboard"},
+    {id:"admin-dashboard",label:"직원 현황",icon:"ti-layout-dashboard",badge:pendingCount},
     {id:"employees",label:"직원 관리",icon:"ti-users"},
     {id:"workplaces",label:"근무지 관리",icon:"ti-map-pin"},
   ];
@@ -901,6 +902,11 @@ function HomePage({ employee }: { employee: any }) {
   const todoTargetLabel = todoTargetEmployeeId
     ? (todoEmployees.find((e:any)=>e.id===todoTargetEmployeeId)?.name??"선택 직원")
     : "전체 직원";
+  function todoTaskTargetLabel(task:any) {
+    return task?.target_employee_id
+      ? (todoEmployees.find((e:any)=>e.id===task.target_employee_id)?.name??"선택 직원")
+      : "전체 직원";
+  }
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t); },[]);
   useEffect(()=>{
@@ -1334,6 +1340,17 @@ function HomePage({ employee }: { employee: any }) {
                 <button className="button compact" onClick={saveTodayTask}>{todayTask?"수정 저장":"저장"}</button>
               </div>
               <p className="subtle" style={{marginTop:8}}>{todoTargetLabel}에게 표시됩니다.</p>
+              {todayTasks.length>0&&(
+                <div className="today-task-list">
+                  <b>오늘 등록된 할일</b>
+                  {todayTasks.slice(0,5).map((task:any)=>(
+                    <button key={task.id} className="today-task-mini" onClick={()=>selectTodoTarget(String(task.target_employee_id??""))}>
+                      <span>{todoTaskTargetLabel(task)}</span>
+                      <strong>{task.title}</strong>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : todayTask ? (
             <div className="today-task-view">
@@ -2465,12 +2482,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     ...(unassignedRnrEntries.length>0?[{key:"role",title:"직책 기준",subtitle:"담당자 미지정",entries:unassignedRnrEntries}]:[]),
   ];
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
+  const showsApprovals=view==="dashboard"||view==="approvals";
 
   return (
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
 
-      {view==="dashboard"&&<section className="card">
+      {view==="dashboard"&&<section className="card dashboard-status-card">
         <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>일일 직원 근무 현황</h2>
         <div className="grid four" style={{marginBottom:16}}>
           <div className="metric"><div className="metric-value">{activeEmployees.length}</div><div className="metric-label">재직 직원</div></div>
@@ -2499,7 +2517,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
       </section>}
 
-      {view==="approvals"&&<CollapsibleSection title={`승인 대기${pendingTotal>0?` (${pendingTotal})`:""}`} icon="ti-inbox" defaultOpen={true}>
+      {showsApprovals&&<CollapsibleSection title={`승인 대기${pendingTotal>0?` (${pendingTotal})`:""}`} icon="ti-inbox" defaultOpen={true}>
         <div className="grid two">
           <div>
             <h3 style={{marginTop:0}}>근무지 {pW.length>0&&<span className="count-badge">{pW.length}</span>}</h3>
@@ -2581,9 +2599,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
       </CollapsibleSection>}
 
-      {view==="approvals"&&<WeekendCompCard employees={employees} empMap={empMap} allLogs={allLogs} compRequests={compRequests} currentEmployee={currentEmployee} onChanged={load} />}
+      {showsApprovals&&<WeekendCompCard employees={employees} empMap={empMap} allLogs={allLogs} compRequests={compRequests} currentEmployee={currentEmployee} onChanged={load} />}
 
-      {view==="approvals"&&<section className="card">
+      {showsApprovals&&<section className="card">
         <h2 className="card-title"><i className="ti ti-file-description" aria-hidden="true"></i>근무시간 변경 기록</h2>
         <DataTable rows={workTimeRequests.slice(0,50).map(r=>({
           직원: empName(r.employee_id),
@@ -2714,7 +2732,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
             <label className="checkbox no-wrap-checkbox" style={{alignSelf:"end",marginBottom:10}}><input type="checkbox" checked={newEmployee.no_annual_leave} onChange={e=>{const checked=e.target.checked; setNewEmployee({...newEmployee,no_annual_leave:checked}); if(checked) setMessage(annualLeaveEligibilityNote({...newEmployee,work_start:"09:00",work_end:"18:00"}));}} /> 연차 없음</label>
           </div>
           <div className="form-row"><label className="label">출근 요일</label>
-            <div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${newEmployee.work_days.includes(d)?"active":""}`} onClick={()=>setNewEmployee({...newEmployee,work_days:toggleDay(newEmployee.work_days,d)})}>{DAY_LABELS[d]}</button>)}</div>
+            <div className="days-grid">{ALL_DAYS.map(d=><button key={d} type="button" className={`day-btn ${newEmployee.work_days.includes(d)?"active":""}`} onClick={()=>setNewEmployee(current=>({...current,work_days:toggleDay(current.work_days,d)}))}>{DAY_LABELS[d]}</button>)}</div>
           </div>
           {newEmployee.no_annual_leave&&<div className="alert">{annualLeaveEligibilityNote({...newEmployee,work_start:"09:00",work_end:"18:00"})}</div>}
           <button className="button" onClick={createEmployee}><i className="ti ti-plus" aria-hidden="true"></i>직원 생성</button>
@@ -2728,14 +2746,14 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
           <button className={`tab ${employeeFilter==="inactive"?"active":""}`} onClick={()=>setEmployeeFilter("inactive")}>비활성</button>
           <button className={`tab ${employeeFilter==="all"?"active":""}`} onClick={()=>setEmployeeFilter("all")}>전체</button>
         </div>
-        <div className="table-wrap">
-          <table>
+        <div className="table-wrap employee-table-wrap">
+          <table className="employee-admin-table">
             <thead><tr><th>직원</th><th>부서/직책</th><th>권한</th><th>상태</th><th>입사일</th><th>출근 시작일</th><th>연차</th><th>계정</th><th>처리</th></tr></thead>
             <tbody>
               {filtered.map(e=>(
                 <tr key={e.id}>
-                  <td>{e.name}<br /><span className="subtle">{e.employee_no} · {e.phone}</span></td>
-                  <td><div className="grid" style={{gap:6}}>
+                  <td data-label="직원"><div className="employee-identity"><b>{e.name}</b><span>{e.employee_no}</span><small>{e.phone||"-"}</small></div></td>
+                  <td data-label="부서/직책"><div className="grid" style={{gap:6}}>
                     <select className="select nowrap-select" value={e.department??""} onChange={ev=>updateEmployee(e.id,{department:ev.target.value})}>
                       {DEPARTMENT_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"없음"}</option>)}
                       {e.department&&!DEPARTMENT_OPTIONS.includes(e.department)&&<option value={e.department}>{e.department}</option>}
@@ -2745,13 +2763,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
                       {e.position&&!POSITION_OPTIONS.includes(e.position)&&<option value={e.position}>{e.position}</option>}
                     </select>
                   </div></td>
-                  <td><select className="select" value={e.role} onChange={ev=>updateEmployee(e.id,{role:ev.target.value})}><option value="admin">관리자</option><option value="employee">직원</option></select></td>
-                  <td><span className={`badge ${badgeClass(e.employment_status)}`}>{e.employment_status==="active"?"재직":"비활성"}</span></td>
-                  <td><input className="input" type="date" value={e.joined_at??""} onChange={ev=>updateEmployee(e.id,{joined_at:ev.target.value})} /></td>
-                  <td><input className="input" type="date" value={e.work_start_date??e.joined_at??""} onChange={ev=>updateEmployee(e.id,{work_start_date:ev.target.value})} /></td>
-                  <td><label className="checkbox no-wrap-checkbox" title={annualLeaveEligibilityNote(e)} style={{margin:0}}><input type="checkbox" checked={!!e.no_annual_leave} onChange={ev=>{if(ev.target.checked) setMessage(annualLeaveEligibilityNote(e)); updateEmployee(e.id,{no_annual_leave:ev.target.checked});}} /> 없음</label></td>
-                  <td><div className="actions"><button className="button ghost" onClick={()=>resetEmployeeNo(e)}>사번 변경</button><button className="button ghost" onClick={()=>resetPassword(e)}>비번 초기화</button></div></td>
-                  <td><button className={e.employment_status==="active"?"button danger":"button secondary"} onClick={()=>toggleEmployee(e.id,e.employment_status)}>{e.employment_status==="active"?"비활성화":"활성화"}</button></td>
+                  <td data-label="권한"><select className="select" value={e.role} onChange={ev=>updateEmployee(e.id,{role:ev.target.value})}><option value="admin">관리자</option><option value="employee">직원</option></select></td>
+                  <td data-label="상태"><span className={`badge employee-status-badge ${badgeClass(e.employment_status)}`}>{e.employment_status==="active"?"재직":"비활성"}</span></td>
+                  <td data-label="입사일"><input className="input" type="date" value={e.joined_at??""} onChange={ev=>updateEmployee(e.id,{joined_at:ev.target.value})} /></td>
+                  <td data-label="출근 시작일"><input className="input" type="date" value={e.work_start_date??e.joined_at??""} onChange={ev=>updateEmployee(e.id,{work_start_date:ev.target.value})} /></td>
+                  <td data-label="연차"><label className="checkbox no-wrap-checkbox" title={annualLeaveEligibilityNote(e)} style={{margin:0}}><input type="checkbox" checked={!!e.no_annual_leave} onChange={ev=>{if(ev.target.checked) setMessage(annualLeaveEligibilityNote(e)); updateEmployee(e.id,{no_annual_leave:ev.target.checked});}} /> 없음</label></td>
+                  <td data-label="계정"><div className="employee-account-actions"><button className="button ghost compact" onClick={()=>resetEmployeeNo(e)}>사번 변경</button><button className="button ghost compact" onClick={()=>resetPassword(e)}>비번 초기화</button></div></td>
+                  <td data-label="처리"><button className={`${e.employment_status==="active"?"button danger":"button secondary"} compact employee-status-action`} onClick={()=>toggleEmployee(e.id,e.employment_status)}>{e.employment_status==="active"?"비활성화":"활성화"}</button></td>
                 </tr>
               ))}
             </tbody>
@@ -2832,6 +2850,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   const [message,setMessage]=useState("");
   const [draggingId,setDraggingId]=useState<string|null>(null);
   const [draggingEmployeeId,setDraggingEmployeeId]=useState<string|null>(null);
+  const [movingBase,setMovingBase]=useState<{employeeId:string;employeeName:string;sourceDate:string}|null>(null);
   const [timeDrag,setTimeDrag]=useState<any|null>(null);
   const timeDragRef=useRef<any|null>(null);
   const timeDragClickGuard=useRef(0);
@@ -2966,6 +2985,24 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
     }).eq("id",event.id);
     if(error) setMessage(`이동 실패: ${error.message}`); else{setMessage(`${event.title} 일정을 이동했습니다.`);await onChanged();}
   }
+  async function moveBaseWorkday(targetEmployeeId:string,targetDate:string){
+    if(!movingBase) return;
+    if(targetEmployeeId!==movingBase.employeeId) return setMessage("기본 근무요일 이동은 같은 직원 칸 안에서만 가능합니다.");
+    const employee=activeEmployees.find(e=>e.id===movingBase.employeeId);
+    if(!employee) return setMovingBase(null);
+    const sourceDay=dayKeyFromDate(dateFromIso(movingBase.sourceDate));
+    const targetDay=dayKeyFromDate(dateFromIso(targetDate));
+    if(sourceDay===targetDay){setMovingBase(null);return setMessage("같은 날짜라 이동하지 않았습니다.");}
+    const currentDays=employee.work_days??["mon","tue","wed","thu","fri"];
+    if(currentDays.includes(targetDay)) return setMessage(`${movingBase.employeeName}은 이미 ${DAY_LABELS[targetDay]}요일 근무로 설정되어 있습니다.`);
+    const nextDays=ALL_DAYS.filter(day=>(currentDays.includes(day)&&day!==sourceDay)||day===targetDay);
+    const {error}=await supabase.from("employees").update({work_days:nextDays}).eq("id",movingBase.employeeId);
+    if(error) setMessage(`근무요일 이동 실패: ${error.message}`);
+    else { setMessage(`${movingBase.employeeName} ${DAY_LABELS[sourceDay]}요일 근무를 ${DAY_LABELS[targetDay]}요일로 이동했습니다.`); setMovingBase(null); await onChanged(); }
+  }
+  function handleScheduleCellClick(employeeId:string,date:string){
+    if(movingBase) moveBaseWorkday(employeeId,date);
+  }
   async function reorderEmployees(targetEmployeeId:string){
     if(!draggingEmployeeId||draggingEmployeeId===targetEmployeeId) return setDraggingEmployeeId(null);
     const reordered=[...activeEmployees];
@@ -3070,11 +3107,12 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
       <div className="schedule-board-toolbar">
         <div>
           <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-calendar-week" aria-hidden="true"></i>직원 근무 일정</h2>
-          <p className="subtle" style={{margin:0}}>월요일부터 금요일까지 실제 시간대로 확인합니다. 일정 막대를 다른 날짜로 드래그하면 기간을 유지한 채 이동합니다.</p>
+          <p className="subtle" style={{margin:0}}>월요일부터 금요일까지 실제 시간대로 확인합니다. 기본 근무칸을 누른 뒤 이동할 날짜 칸을 누르면 근무요일이 바뀝니다.</p>
         </div>
         <button className="button" onClick={()=>setEditing(emptyEvent(selectedEmployee?.id,dates[0]))}><i className="ti ti-plus" aria-hidden="true"></i>일정 추가</button>
       </div>
       {message&&<div className={`alert ${message.includes("실패")?"error":"success"}`} style={{marginTop:14}}>{message}</div>}
+      {movingBase&&<div className="alert" style={{marginTop:14}}>{movingBase.employeeName}의 {DAY_LABELS[dayKeyFromDate(dateFromIso(movingBase.sourceDate))]}요일 근무를 이동할 날짜 칸을 눌러주세요.</div>}
       <div className="schedule-employee-tabs">
         <span>직원 선택</span>
         <button className={isAll?"active":""} onClick={()=>setSelectedEmpId("all")}><i className="ti ti-users" aria-hidden="true"></i>전체</button>
@@ -3102,7 +3140,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
           {!isAll&&<div className="week-all-day">
             <div className="week-all-day-label">종일</div>
             <div className="week-all-day-track">
-              {dates.map(date=><div key={date} className="week-drop-column" onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
+              {dates.map(date=><div key={date} className={`week-drop-column ${movingBase?"moving-target":""}`} onClick={()=>selectedEmployee&&handleScheduleCellClick(selectedEmployee.id,date)} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
               {allDayEvents.map(event=>{
                 const visible=dates.map((date,index)=>({date,index})).filter(x=>x.date>=event.start_date&&x.date<=event.end_date);
                 if(!visible.length) return null;
@@ -3116,8 +3154,8 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
             <div className="week-time-axis" style={{height:calendarHeight}}>{hours.map(hour=><div key={hour}>{String(hour).padStart(2,"0")}:00</div>)}</div>
             <div className={`week-event-grid ${isAll?"team-event-grid":""}`} style={{height:calendarHeight,gridTemplateRows:`repeat(${calendarRows},${calendarRowHeight}px)`,backgroundSize:`100% ${calendarRowHeight}px,100% ${calendarRowHeight*2}px`,...(isAll?{gridTemplateColumns:`repeat(${teamColumnCount},59px)`}:{})}}>
               {isAll
-                ? dates.flatMap((date,dateIndex)=>activeEmployees.map((employee,employeeIndex)=><div key={`${date}-${employee.id}-drop`} className={`week-day-column team-employee-column ${employeeIndex===activeEmployees.length-1?"team-day-end":""} ${date===todayIso()?"today":""}`} style={{gridColumn:dateIndex*employeeCount+employeeIndex+1,gridRow:`1 / span ${calendarRows}`}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(employee.id,date)} onDoubleClick={()=>setEditing(emptyEvent(employee.id,date))} />))
-                : dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""}`} style={{gridColumn:index+1,gridRow:`1 / span ${calendarRows}`}} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
+                ? dates.flatMap((date,dateIndex)=>activeEmployees.map((employee,employeeIndex)=><div key={`${date}-${employee.id}-drop`} className={`week-day-column team-employee-column ${employeeIndex===activeEmployees.length-1?"team-day-end":""} ${date===todayIso()?"today":""} ${movingBase?"moving-target":""}`} style={{gridColumn:dateIndex*employeeCount+employeeIndex+1,gridRow:`1 / span ${calendarRows}`}} onClick={()=>handleScheduleCellClick(employee.id,date)} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(employee.id,date)} onDoubleClick={()=>setEditing(emptyEvent(employee.id,date))} />))
+                : dates.map((date,index)=><div key={date} className={`week-day-column ${date===todayIso()?"today":""} ${movingBase?"moving-target":""}`} style={{gridColumn:index+1,gridRow:`1 / span ${calendarRows}`}} onClick={()=>selectedEmployee&&handleScheduleCellClick(selectedEmployee.id,date)} onDragOver={e=>e.preventDefault()} onDrop={()=>moveEvent(selectedEmployee?.id??"",date)} onDoubleClick={()=>setEditing(emptyEvent(selectedEmployee?.id??activeEmployees[0]?.id,date))} />)}
               {dates.flatMap((date,index)=>{
                 const shownEmployees=isAll?activeEmployees:(selectedEmployee?[selectedEmployee]:[]);
                 return shownEmployees.flatMap((employee:any,employeeIndex:number)=>{
@@ -3137,6 +3175,11 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
                     const openEditor=()=>{
                       if(event.leave||event.readonly) return;
                       if(Date.now()<timeDragClickGuard.current) return;
+                      if(event.base){
+                        if(movingBase?.employeeId===employee.id&&movingBase.sourceDate===date) setMovingBase(null);
+                        else { setMovingBase({employeeId:employee.id,employeeName:employee.name,sourceDate:date}); setMessage(`${employee.name} ${DAY_LABELS[dayKeyFromDate(dateFromIso(date))]}요일 근무를 이동할 날짜 칸을 눌러주세요.`); }
+                        return;
+                      }
                       setEditing(event.base
                       ? {...event,id:undefined,base:undefined,fromBase:true,start_date:date,end_date:date,start_time:String(event.start_time??"09:00").slice(0,5),end_time:String(event.end_time??"18:00").slice(0,5),apply_all:false}
                       : {...event,original_title:event.title,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??"",apply_all:false});
@@ -3403,8 +3446,13 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
     setMsg(""); if(!ovEmpId) return setMsg("직원을 선택해주세요.");
     const monday=new Date(ovWeek); monday.setDate(monday.getDate()-((monday.getDay()+6)%7));
     const weekStart=monday.toISOString().slice(0,10);
-    const {error}=await supabase.from("weekly_schedule_overrides").upsert({employee_id:ovEmpId,week_start:weekStart,work_days:ovDays,work_start:ovStart,work_end:ovEnd,note:ovNote,created_by:currentEmployee.id},{onConflict:"employee_id,week_start"});
-    if(error) setMsg(`저장 실패: ${error.message}`); else { setMsg(`${empName(ovEmpId)} ${weekStart} 주 스케줄이 저장되었습니다.`); await onChanged(); }
+    const payload={employee_id:ovEmpId,week_start:weekStart,work_days:ovDays,work_start:ovStart,work_end:ovEnd,note:ovNote,created_by:currentEmployee.id,updated_at:new Date().toISOString()};
+    const {data:existing,error:findError}=await supabase.from("weekly_schedule_overrides").select("id").eq("employee_id",ovEmpId).eq("week_start",weekStart).maybeSingle();
+    if(findError) return setMsg(`저장 실패: ${findError.message}`);
+    const result=existing?.id
+      ? await supabase.from("weekly_schedule_overrides").update(payload).eq("id",existing.id)
+      : await supabase.from("weekly_schedule_overrides").insert(payload);
+    if(result.error) setMsg(`저장 실패: ${result.error.message}`); else { setMsg(`${empName(ovEmpId)} ${weekStart} 주 스케줄이 저장되었습니다.`); await onChanged(); }
   }
 
   // 미출근 기간
@@ -3446,7 +3494,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
           </div>
         )}
         <div className="form-row"><label className="label">출근 요일</label>
-          <div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${editDays.includes(d)?"active":""}`} onClick={()=>setEditDays(toggleDay(editDays,d))}>{DAY_LABELS[d]}</button>)}</div>
+          <div className="days-grid">{ALL_DAYS.map(d=><button key={d} type="button" className={`day-btn ${editDays.includes(d)?"active":""}`} onClick={()=>setEditDays(days=>toggleDay(days,d))}>{DAY_LABELS[d]}</button>)}</div>
         </div>
         <div className="grid two">
           <div className="form-row"><label className="label">출근 시간</label><input className="input" type="time" value={editStart} onChange={e=>setEditStart(e.target.value)} /></div>
@@ -3476,7 +3524,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
         <div className="form-row"><label className="label">직원</label><select className="select" value={ovEmpId} onChange={e=>{setOvEmpId(e.target.value);const emp=empMap[e.target.value];if(emp){setOvDays(emp.work_days??["mon","tue","wed","thu","fri"]);setOvStart(emp.work_start??"09:00");setOvEnd(emp.work_end??"18:00");}}}><option value="">직원 선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
         <div className="form-row"><label className="label">해당 주 날짜 (아무 날)</label><input className="input" type="date" value={ovWeek} onChange={e=>setOvWeek(e.target.value)} /><p className="subtle" style={{marginTop:6}}>{weekOfMonthLabel(ovWeek)} · 주 시작일 {weekStartIso(ovWeek)}</p></div>
       </div>
-      <div className="form-row"><label className="label">이 주 출근 요일</label><div className="days-grid">{ALL_DAYS.map(d=><button key={d} className={`day-btn ${ovDays.includes(d)?"active":""}`} onClick={()=>setOvDays(toggleDay(ovDays,d))}>{DAY_LABELS[d]}</button>)}</div></div>
+      <div className="form-row"><label className="label">이 주 출근 요일</label><div className="days-grid">{ALL_DAYS.map(d=><button key={d} type="button" className={`day-btn ${ovDays.includes(d)?"active":""}`} onClick={()=>setOvDays(days=>toggleDay(days,d))}>{DAY_LABELS[d]}</button>)}</div></div>
       <div className="grid two" style={{marginBottom:14}}>
         <div className="form-row"><label className="label">출근 시간</label><input className="input" type="time" value={ovStart} onChange={e=>setOvStart(e.target.value)} /></div>
         <div className="form-row"><label className="label">퇴근 시간</label><input className="input" type="time" value={ovEnd} onChange={e=>setOvEnd(e.target.value)} /></div>
