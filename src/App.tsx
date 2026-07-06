@@ -2324,7 +2324,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   }
 
   async function createEmployee() {
-    setMessage(""); const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:newEmployee});
+    setMessage("");
+    const duplicate=employees.find((employee:any)=>String(employee.employee_no??"").trim().toLowerCase()===newEmployee.employee_no.trim().toLowerCase());
+    if(duplicate) return setMessage(`이미 등록된 사번입니다. ${duplicate.name} 직원의 기존 근태·동의 기록과 섞이지 않도록 다른 사번을 입력해주세요.`);
+    const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:newEmployee});
     if(error) setMessage(error.message); else if(data?.error) setMessage(data.error);
     else{
       await supabase.from("employees").update({department:newEmployee.department,position:newEmployee.position,no_annual_leave:newEmployee.no_annual_leave}).eq("employee_no",newEmployee.employee_no);

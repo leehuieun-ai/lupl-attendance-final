@@ -138,6 +138,16 @@ Deno.serve(async (req) => {
 
     const email = internalEmail(employeeNo);
     const password = initialPassword(phone);
+    const { data: existingEmployee, error: existingEmployeeError } = await adminClient
+      .from("employees")
+      .select("id, name, employee_no")
+      .eq("employee_no", employeeNo)
+      .maybeSingle();
+    if (existingEmployeeError) return json({ error: existingEmployeeError.message }, 400);
+    if (existingEmployee) {
+      return json({ error: `이미 등록된 사번입니다. ${existingEmployee.name} 직원의 기존 근태·동의 기록과 섞이지 않도록 다른 사번을 입력해주세요.` }, 400);
+    }
+
     let authUser = await findAuthUserByEmail(adminClient, email);
 
     if (!authUser) {
@@ -158,7 +168,7 @@ Deno.serve(async (req) => {
       if (updateAuthError) return json({ error: updateAuthError.message }, 400);
     }
 
-    const { error: upsertError } = await adminClient.from("employees").upsert(
+    const { error: insertError } = await adminClient.from("employees").insert(
       {
         user_id: authUser.id,
         employee_no: employeeNo,
@@ -175,10 +185,9 @@ Deno.serve(async (req) => {
         work_start_date: workStartDate,
         employment_status: "active",
         is_active: true,
-      },
-      { onConflict: "employee_no" },
+      }
     );
-    if (upsertError) return json({ error: upsertError.message }, 400);
+    if (insertError) return json({ error: insertError.message }, 400);
 
     return json({ ok: true, employee_no: employeeNo, initial_password: password });
   } catch (error) {
