@@ -29,7 +29,7 @@ const EMPLOYEE_COLORS = ["#2563eb","#059669","#ea580c","#dc2626","#7c3aed","#089
 const WORK_TIME_CHANGE_CONSENT_VERSION = "2026-07-work-time-change-process";
 const WORK_TIME_LEGAL_NOTICE_VERSION = "2026-07";
 const WORK_TIME_CONSENT_TEXT = "앞으로 근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 서명해 주세요. 변경 내용은 직원 요청과 회사 승인 후 적용되며, 서명한 기록은 자동으로 저장됩니다.";
-const WORK_TIME_DETAIL_TEXT = "근무요일, 근무시간, 휴게시간은 근로조건에 해당할 수 있어 변경 내용을 명확히 남겨야 합니다. 관련 법령: 근로기준법 제17조, 제53조 / 기간제 및 단시간근로자 보호 등에 관한 법률 제17조. 이 서명은 위 변경 내용에만 적용되며, 연장근로·야간근로·휴일근로에 대한 포괄 동의가 아닙니다.";
+const WORK_TIME_DETAIL_TEXT = "근무요일, 근무시간, 휴게시간은 근로조건에 해당할 수 있어 변경 내용을 명확히 남겨야 합니다. 관계 법령(근로기준법 제17조, 제53조 / 기간제 및 단시간근로자 보호 등에 관한 법률 제17조).\n이 서명은 위 변경 내용에만 적용되며, 연장근로·야간근로·휴일근로에 대한 포괄 동의가 아닙니다.";
 const ANNUAL_LEAVE_LEGAL_NOTE = "파트타임이라는 이유만으로 연차가 항상 없는 것은 아닙니다. 4주 평균 1주 소정근로시간이 15시간 미만이면 연차 규정 적용 제외가 가능하고, 15시간 이상 단시간근로자는 연차가 발생할 수 있습니다.";
 const RNR_BASELINE_ROLES = [
   {department:"운영", position:"사무보조", keywords:["문서","서류","파일","일정","비품","입력"], duties:["문서 정리","데이터 입력","일정 확인","비품/소모품 확인","전화/방문 응대"]},
@@ -674,12 +674,35 @@ function InactivePage({ signOut }: { signOut: () => void }) {
 
 function SignaturePad({ canvasRef }: { canvasRef: React.RefObject<HTMLCanvasElement|null> }) {
   const [drawing,setDrawing] = useState(false);
+  const pointerIdRef=useRef<number|null>(null);
   function ctx() { const c=canvasRef.current; if(!c) return null; const x=c.getContext("2d"); if(!x) return null; x.lineWidth=2.4; x.lineCap="round"; x.strokeStyle="#161b26"; return x; }
-  function point(e:any) { const c=canvasRef.current!; const r=c.getBoundingClientRect(); const p=e.touches?.[0]??e; return {x:p.clientX-r.left,y:p.clientY-r.top}; }
-  function start(e:any) { setDrawing(true); const c=ctx(); const p=point(e); c?.beginPath(); c?.moveTo(p.x,p.y); }
-  function move(e:any) { if(!drawing) return; e.preventDefault(); const c=ctx(); const p=point(e); c?.lineTo(p.x,p.y); c?.stroke(); }
-  function end() { setDrawing(false); }
-  return <canvas ref={canvasRef} width={700} height={170} className="signature-pad" onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end} onTouchStart={start} onTouchMove={move} onTouchEnd={end} />;
+  function point(e:any) {
+    const c=canvasRef.current!;
+    const r=c.getBoundingClientRect();
+    const scaleX=c.width/Math.max(1,r.width);
+    const scaleY=c.height/Math.max(1,r.height);
+    return {x:(e.clientX-r.left)*scaleX,y:(e.clientY-r.top)*scaleY};
+  }
+  function start(e:any) {
+    e.preventDefault();
+    pointerIdRef.current=e.pointerId;
+    e.currentTarget?.setPointerCapture?.(e.pointerId);
+    setDrawing(true);
+    const c=ctx(); const p=point(e);
+    c?.beginPath(); c?.moveTo(p.x,p.y);
+  }
+  function move(e:any) {
+    if(!drawing||pointerIdRef.current!==e.pointerId) return;
+    e.preventDefault();
+    const c=ctx(); const p=point(e);
+    c?.lineTo(p.x,p.y); c?.stroke();
+  }
+  function end(e:any) {
+    if(pointerIdRef.current!==null) e.currentTarget?.releasePointerCapture?.(pointerIdRef.current);
+    pointerIdRef.current=null;
+    setDrawing(false);
+  }
+  return <canvas ref={canvasRef} width={700} height={170} className="signature-pad" onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onPointerLeave={end} />;
 }
 
 function clearSignature(canvasRef: React.RefObject<HTMLCanvasElement|null>) {
@@ -689,6 +712,17 @@ function clearSignature(canvasRef: React.RefObject<HTMLCanvasElement|null>) {
 
 function signatureData(canvasRef: React.RefObject<HTMLCanvasElement|null>) {
   return canvasRef.current?.toDataURL("image/png") ?? "";
+}
+
+function friendlySignatureDbError(error:any) {
+  const message=String(error?.message??error??"");
+  if(message.includes("work_time_change_consents")||error?.code==="PGRST205") {
+    return "근무시간 변경 동의 저장 테이블이 아직 Supabase API에 반영되지 않았습니다. 새 DB 패치를 실행한 뒤 1분 후 다시 시도해주세요.";
+  }
+  if(message.includes("work_time_change_requests")) {
+    return "근무시간 변경 요청 저장 테이블이 아직 Supabase API에 반영되지 않았습니다. 새 DB 패치를 실행한 뒤 1분 후 다시 시도해주세요.";
+  }
+  return message || "저장 중 오류가 발생했습니다.";
 }
 
 function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () => void; signOut: () => void }) {
@@ -705,7 +739,7 @@ function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () 
     const {error}=await supabase.from("privacy_consents").insert({employee_id:employee.id,consent_location:true,consent_device:true,consent_version:"2026-07",signature_data:signature,device_fingerprint_hash:fingerprintHash,device_info:deviceInfo,is_active:true});
     if(error) return setMsg(error.message);
     const {error:workTimeConsentError}=await supabase.from("work_time_change_consents").upsert({employee_id:employee.id,consent_version:WORK_TIME_CHANGE_CONSENT_VERSION,notice_text:WORK_TIME_CONSENT_TEXT,detail_text:WORK_TIME_DETAIL_TEXT,signature_data:signature,device_fingerprint_hash:fingerprintHash,device_info:deviceInfo},{onConflict:"employee_id,consent_version"});
-    if(workTimeConsentError) setMsg(workTimeConsentError.message); else onDone();
+    if(workTimeConsentError) setMsg(friendlySignatureDbError(workTimeConsentError)); else onDone();
   }
   return (
     <div className="container"><section className="card" style={{maxWidth:760,margin:"28px auto"}}>
@@ -748,7 +782,7 @@ function WorkTimeConsentModal({ employee, onDone }: { employee:any; onDone:()=>v
       device_info:deviceInfo,
     },{onConflict:"employee_id,consent_version"});
     setBusy(false);
-    if(error) setMsg(error.message); else onDone();
+    if(error) setMsg(friendlySignatureDbError(error)); else onDone();
   }
   return (
     <div className="modal-backdrop">
@@ -760,7 +794,7 @@ function WorkTimeConsentModal({ employee, onDone }: { employee:any; onDone:()=>v
           상세 설명 보기
           <i className={`ti ${showDetail?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
         </button>
-        {showDetail&&<div className="type-desc" style={{marginTop:10}}>{WORK_TIME_DETAIL_TEXT}</div>}
+        {showDetail&&<div className="type-desc work-time-detail" style={{marginTop:10}}>{WORK_TIME_DETAIL_TEXT}</div>}
         <div style={{marginTop:14}}>
           <label className="label">서명</label>
           <SignaturePad canvasRef={canvasRef} />
@@ -1442,7 +1476,7 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
           상세 설명 보기
           <i className={`ti ${showDetail?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
         </button>
-        {showDetail&&<div className="type-desc" style={{marginTop:10}}>{WORK_TIME_DETAIL_TEXT}</div>}
+        {showDetail&&<div className="type-desc work-time-detail" style={{marginTop:10}}>{WORK_TIME_DETAIL_TEXT}</div>}
 
         <div style={{marginTop:16}}>
           <label className="label">자필 서명</label>

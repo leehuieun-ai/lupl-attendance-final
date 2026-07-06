@@ -206,7 +206,7 @@ tr:last-child td { border-bottom: 0; }
 .auth-card { max-width: 430px; margin: 56px auto; }
 .login-example { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 14px 0 16px; padding: 12px 14px; border: 1px solid #dce5fb; background: #eef3fe; color: var(--blue-dark); border-radius: 14px; font-size: 14px; font-weight: 650; }
 .login-example b { font-size: 18px; color: var(--ink); letter-spacing: 0; font-variant-numeric: tabular-nums; }
-.signature-pad { width: 100%; height: 170px; border: 1px dashed #c4ccd9; border-radius: 14px; background: #fff; touch-action: none; }
+.signature-pad { display: block; width: 100%; height: 170px; border: 1px dashed #c4ccd9; border-radius: 14px; background: #fff; touch-action: none; user-select: none; }
 .checkbox { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.55; margin-bottom: 11px; color: #3c4555; }
 .checkbox input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--blue); flex-shrink: 0; }
 
@@ -420,6 +420,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .type-desc { background:#f6f8fb; border:1px solid var(--line); border-radius:12px; padding:11px 13px; margin-bottom:14px; font-size:13px; line-height:1.6; }
 .type-desc b { display:block; color:var(--ink); margin-bottom:2px; }
 .type-desc span { color:var(--muted); }
+.work-time-detail { white-space: pre-line; }
 
 /* 토글 섹션 버튼 */
 .collapsible-btn {
