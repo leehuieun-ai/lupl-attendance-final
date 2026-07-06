@@ -13,12 +13,16 @@ create table if not exists public.daily_tasks (
   content text not null,
   is_active boolean not null default true,
   created_by uuid references public.employees(id),
+  target_employee_id uuid references public.employees(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists daily_tasks_task_date_active_idx
 on public.daily_tasks(task_date, is_active, created_at desc);
+
+create index if not exists daily_tasks_target_employee_idx
+on public.daily_tasks(task_date, is_active, target_employee_id, created_at desc);
 
 create table if not exists public.rnr_entries (
   id uuid primary key default gen_random_uuid(),
@@ -47,7 +51,16 @@ alter table public.rnr_entries enable row level security;
 
 drop policy if exists daily_tasks_select_auth on public.daily_tasks;
 create policy daily_tasks_select_auth on public.daily_tasks
-for select to authenticated using (is_active = true or public.is_admin());
+for select to authenticated using (
+  public.is_admin()
+  or (
+    is_active = true
+    and (
+      target_employee_id is null
+      or target_employee_id = public.current_employee_id()
+    )
+  )
+);
 
 drop policy if exists daily_tasks_admin_insert on public.daily_tasks;
 create policy daily_tasks_admin_insert on public.daily_tasks

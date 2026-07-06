@@ -860,13 +860,18 @@ function HomePage({ employee }: { employee: any }) {
   const [compTimeRows,setCompTimeRows] = useState<any[]>([]);
   const [todayOverrides,setTodayOverrides] = useState<any[]>([]);
   const [workTimeChanges,setWorkTimeChanges] = useState<any[]>([]);
-  const [todayTask,setTodayTask] = useState<any|null>(null);
+  const [todayTasks,setTodayTasks] = useState<any[]>([]);
   const [todoDraft,setTodoDraft] = useState({title:"",content:""});
+  const [todoTargetEmployeeId,setTodoTargetEmployeeId] = useState("");
+  const [todoEmployees,setTodoEmployees] = useState<any[]>([]);
   const [showTodoModal,setShowTodoModal] = useState(false);
   const [roleGuideEntries,setRoleGuideEntries] = useState<any[]>([]);
   const [notificationPermission,setNotificationPermission] = useState<NotificationPermission|"unsupported">("unsupported");
   const [lastReminderMessage,setLastReminderMessage] = useState("");
   const sentReminderKeys = useRef<Set<string>>(new Set());
+  const todayTask = employee.role==="admin"
+    ? (todayTasks.find((task:any)=>String(task.target_employee_id??"")===todoTargetEmployeeId)??null)
+    : (todayTasks.find((task:any)=>!task.target_employee_id||task.target_employee_id===employee.id)??null);
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t); },[]);
   useEffect(()=>{
@@ -903,16 +908,20 @@ function HomePage({ employee }: { employee: any }) {
       supabase.from("comp_time_requests").select("*").eq("employee_id",employee.id).eq("work_date",today).in("status",["pending","approved"]).order("start_time"),
       supabase.from("weekly_schedule_overrides").select("*").eq("employee_id",employee.id).eq("week_start",weekStartIso(today)).limit(1),
       supabase.from("work_time_change_requests").select("*").eq("employee_id",employee.id).eq("status","approved").order("created_at",{ascending:false}).limit(100),
-      supabase.from("daily_tasks").select("*").eq("task_date",today).eq("is_active",true).order("created_at",{ascending:false}).limit(1),
+      supabase.from("daily_tasks").select("*").eq("task_date",today).eq("is_active",true).order("created_at",{ascending:false}).limit(100),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(80),
     ]);
     setWorkplaces(places??[]);
     setCompTimeRows(compRows??[]);
     setTodayOverrides(overrides??[]);
     setWorkTimeChanges(changes??[]);
-    const task=(taskRows??[])[0]??null;
-    setTodayTask(task);
-    setTodoDraft({title:task?.title??"",content:task?.content??""});
+    setTodayTasks(taskRows??[]);
+    if(employee.role==="admin"){
+      const {data:todoEmployeeRows}=await supabase.from("employees").select("id,name,employee_no").eq("employment_status","active").order("name");
+      setTodoEmployees(todoEmployeeRows??[]);
+    } else {
+      setTodoEmployees([]);
+    }
     const employeeDept=String(employee.department??"").trim();
     const employeePosition=String(employee.position??"").trim();
     setRoleGuideEntries((rnrRows??[]).filter((entry:any)=>
@@ -986,23 +995,29 @@ function HomePage({ employee }: { employee: any }) {
     setTodoDraft({title:todayTask?.title??"",content:todayTask?.content??""});
     setShowTodoModal(true);
   }
+  function selectTodoTarget(targetEmployeeId:string) {
+    setTodoTargetEmployeeId(targetEmployeeId);
+    const nextTask=todayTasks.find((task:any)=>String(task.target_employee_id??"")===targetEmployeeId)??null;
+    setTodoDraft({title:nextTask?.title??"",content:nextTask?.content??""});
+  }
   async function saveTodayTask() {
     if(employee.role!=="admin") return;
     const title=todoDraft.title.trim();
     const content=todoDraft.content.trim();
     if(!title||!content) return setMessage("오늘의 할일 제목과 내용을 입력해주세요.");
-    const payload={task_date:todayIso(),title,content,is_active:true,created_by:employee.id};
+    const target_employee_id=todoTargetEmployeeId||null;
+    const payload={task_date:todayIso(),title,content,is_active:true,created_by:employee.id,target_employee_id};
     const result=todayTask?.id
-      ? await supabase.from("daily_tasks").update({title,content,is_active:true,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
+      ? await supabase.from("daily_tasks").update({title,content,is_active:true,target_employee_id,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
       : await supabase.from("daily_tasks").insert(payload).select().single();
     if(result.error) setMessage(result.error.message);
-    else { setTodayTask(result.data); setShowTodoModal(false); setMessage("오늘의 할일이 저장되었습니다."); await load(); }
+    else { setShowTodoModal(false); setMessage("오늘의 할일이 저장되었습니다."); await load(); }
   }
   async function hideTodayTask() {
     if(employee.role!=="admin"||!todayTask?.id) return;
     const {error}=await supabase.from("daily_tasks").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",todayTask.id);
     if(error) setMessage(error.message);
-    else { setTodayTask(null); setTodoDraft({title:"",content:""}); setShowTodoModal(false); setMessage("오늘의 할일을 숨겼습니다."); }
+    else { setTodoDraft({title:"",content:""}); setShowTodoModal(false); setMessage("오늘의 할일을 숨겼습니다."); await load(); }
   }
   function detectPlace(lat:number,lng:number,ip:string|null) {
     const approved=workplaces.filter(w=>w.approval_status==="approved"&&w.lat!=null&&w.lng!=null);
@@ -1174,13 +1189,6 @@ function HomePage({ employee }: { employee: any }) {
           <div className="today-time-item"><span className="today-time-label">퇴근</span><span className="today-time-val">{checkedOut?timeOnly(todayLog.check_out_time):"--:--"}</span></div>
           {worked!=null&&<div className="today-time-item"><span className="today-time-label">실근무</span><span className="today-time-val" style={{fontSize:17}}>{fmtMin(worked)}</span></div>}
         </div>
-        {(employee.role==="admin"||todayTask)&&(
-          <button className={`today-task-button mobile-only ${todayTask?"has-task":""}`} onClick={openTodo}>
-            <i className="ti ti-clipboard-list" aria-hidden="true"></i>
-            <span>{employee.role==="admin" ? (todayTask?"오늘의 할일 수정":"오늘의 할일 적기") : "오늘의 할일 확인"}</span>
-            {todayTask&&<b>{todayTask.title}</b>}
-          </button>
-        )}
         {roleGuideEntries.length>0&&(
           <div className="role-guide-card">
             <div><b>내 업무 안내</b><span>{roleGuideEntries[0].position||roleGuideEntries[0].department||"역할"} 기준으로 정리된 업무가 있습니다.</span></div>
@@ -1285,6 +1293,7 @@ function HomePage({ employee }: { employee: any }) {
               </div>
               {employee.role==="admin" ? (
                 <div className="grid">
+                  <div className="form-row"><label className="label">대상 직원</label><select className="select" value={todoTargetEmployeeId} onChange={e=>selectTodoTarget(e.target.value)}><option value="">전체 직원</option>{todoEmployees.map(e=><option key={e.id} value={e.id}>{e.name}{e.employee_no?` · ${e.employee_no}`:""}</option>)}</select></div>
                   <div className="form-row"><label className="label">제목</label><input className="input" value={todoDraft.title} onChange={e=>setTodoDraft({...todoDraft,title:e.target.value})} placeholder="예: 오늘 오전 준비사항" /></div>
                   <div className="form-row"><label className="label">내용</label><textarea className="textarea" value={todoDraft.content} onChange={e=>setTodoDraft({...todoDraft,content:e.target.value})} placeholder="직원들이 출근 후 확인할 내용을 적어주세요." /></div>
                   <div className="modal-actions">
@@ -1307,8 +1316,17 @@ function HomePage({ employee }: { employee: any }) {
 
       <div className="home-side-stack">
       {(employee.role==="admin"||todayTask)&&(
-        <section className="card today-task-desktop desktop-only">
+        <section className="card today-task-desktop">
           <h2 className="card-title"><i className="ti ti-clipboard-list" aria-hidden="true"></i>오늘의 할일</h2>
+          {employee.role==="admin"&&(
+            <div className="form-row" style={{marginBottom:10}}>
+              <label className="label">대상 직원</label>
+              <select className="select" value={todoTargetEmployeeId} onChange={e=>selectTodoTarget(e.target.value)}>
+                <option value="">전체 직원</option>
+                {todoEmployees.map(e=><option key={e.id} value={e.id}>{e.name}{e.employee_no?` · ${e.employee_no}`:""}</option>)}
+              </select>
+            </div>
+          )}
           {todayTask ? (
             <button className="today-task-button has-task" onClick={openTodo}>
               <i className="ti ti-clipboard-list" aria-hidden="true"></i>
