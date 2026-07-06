@@ -33,6 +33,8 @@ const WORK_TIME_DETAIL_MAIN_TEXT = "근무요일, 근무시간, 휴게시간은 
 const WORK_TIME_DETAIL_LEGAL_TEXT = "(관계 법령 근로기준법 제17조, 제53조 / 기간제 및 단시간근로자 보호 등에 관한 법률 제17조)";
 const WORK_TIME_DETAIL_SIGN_TEXT = "이 서명은 위 변경 내용에만 적용되며, 연장근로·야간근로·휴일근로에 대한 포괄 동의가 아닙니다.";
 const WORK_TIME_DETAIL_TEXT = `${WORK_TIME_DETAIL_MAIN_TEXT}\n${WORK_TIME_DETAIL_LEGAL_TEXT}\n${WORK_TIME_DETAIL_SIGN_TEXT}`;
+const PRIVACY_CONSENT_VERSION = "2026-07";
+const WORK_TIME_CONSENT_CHECK_TEXT = "근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 전자서명할 수 있으며, 실제 변경은 건별 요청 및 회사 승인 후 적용된다는 설명을 확인했습니다.";
 const ANNUAL_LEAVE_LEGAL_NOTE = "파트타임이라는 이유만으로 연차가 항상 없는 것은 아닙니다. 4주 평균 1주 소정근로시간이 15시간 미만이면 연차 규정 적용 제외가 가능하고, 15시간 이상 단시간근로자는 연차가 발생할 수 있습니다.";
 const RNR_BASELINE_ROLES = [
   {department:"홍보마케팅부서", position:"선임", keywords:["홍보","마케팅","광고","SNS","콘텐츠","제휴"], duties:["홍보 콘텐츠 기획","SNS/광고 운영","제휴 제안 정리","성과 지표 확인","브랜드 메시지 관리"]},
@@ -574,8 +576,8 @@ export default function App() {
     const r = await fetchCurrentEmployee();
     setSession(r.session); setEmployee(r.employee);
     if (r.employee) {
-      const { data } = await supabase.from("privacy_consents").select("*").eq("employee_id", r.employee.id).eq("is_active", true).maybeSingle();
-      setConsent(data);
+      const { data } = await supabase.from("privacy_consents").select("*").eq("employee_id", r.employee.id).eq("is_active", true).order("created_at",{ascending:false}).limit(1);
+      setConsent(data?.[0]??null);
       const { data: workTimeConsentData } = await supabase.from("work_time_change_consents").select("*").eq("employee_id", r.employee.id).eq("consent_version", WORK_TIME_CHANGE_CONSENT_VERSION).maybeSingle();
       setWorkTimeConsent(workTimeConsentData);
       if (r.employee.role === "admin") {
@@ -616,7 +618,8 @@ export default function App() {
   if (!session) return <LoginPage />;
   if (!employee) return <div className="container"><section className="card auth-card"><h1 className="card-title">직원 정보가 없습니다</h1><p className="subtle">관리자 계정의 employees.user_id 연결을 확인해주세요.</p><button className="button full" onClick={signOut}>로그아웃</button></section></div>;
   if (!employee.is_active || employee.employment_status !== "active") return <InactivePage signOut={signOut} />;
-  if (!consent) return <ConsentGate employee={employee} onDone={load} signOut={signOut} />;
+  const shouldShowCombinedConsent = !consent || (consent?.consent_version === PRIVACY_CONSENT_VERSION && !workTimeConsent);
+  if (shouldShowCombinedConsent) return <ConsentGate employee={employee} existingConsent={consent} onDone={load} signOut={signOut} />;
   const isAdmin = employee.role === "admin";
   const pageTitles:Record<Tab,string>={
     attendance:"출퇴근",
@@ -781,7 +784,7 @@ function friendlySignatureDbError(error:any) {
   return message || "저장 중 오류가 발생했습니다.";
 }
 
-function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () => void; signOut: () => void }) {
+function ConsentGate({ employee, existingConsent, onDone, signOut }: { employee: any; existingConsent?: any; onDone: () => void; signOut: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement|null>(null);
   const [agree1,setAgree1] = useState(false); const [agree2,setAgree2] = useState(false); const [agree3,setAgree3] = useState(false); const [agree4,setAgree4] = useState(false);
   const [msg,setMsg] = useState("");
@@ -792,10 +795,13 @@ function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () 
     const signature=signatureData(canvasRef);
     if(!signature||signature.length<1200) return setMsg("서명을 입력해주세요.");
     const {fingerprintHash,deviceInfo}=await getDeviceFingerprint();
-    const {error}=await supabase.from("privacy_consents").insert({employee_id:employee.id,consent_location:true,consent_device:true,consent_version:"2026-07",signature_data:signature,device_fingerprint_hash:fingerprintHash,device_info:deviceInfo,is_active:true});
-    if(error) return setMsg(error.message);
     const {error:workTimeConsentError}=await supabase.from("work_time_change_consents").upsert({employee_id:employee.id,consent_version:WORK_TIME_CHANGE_CONSENT_VERSION,notice_text:WORK_TIME_CONSENT_TEXT,detail_text:WORK_TIME_DETAIL_TEXT,signature_data:signature,device_fingerprint_hash:fingerprintHash,device_info:deviceInfo},{onConflict:"employee_id,consent_version"});
-    if(workTimeConsentError) setMsg(friendlySignatureDbError(workTimeConsentError)); else onDone();
+    if(workTimeConsentError) return setMsg(friendlySignatureDbError(workTimeConsentError));
+    if(!existingConsent?.id){
+      const {error}=await supabase.from("privacy_consents").insert({employee_id:employee.id,consent_location:true,consent_device:true,consent_version:PRIVACY_CONSENT_VERSION,signature_data:signature,device_fingerprint_hash:fingerprintHash,device_info:deviceInfo,is_active:true});
+      if(error) return setMsg(error.message);
+    }
+    onDone();
   }
   return (
     <div className="container"><section className="card" style={{maxWidth:760,margin:"28px auto"}}>
@@ -806,7 +812,8 @@ function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () 
       <label className="checkbox"><input type="checkbox" checked={agree1} onChange={e=>setAgree1(e.target.checked)} /> 개인정보 및 위치정보 수집·이용에 동의합니다.</label>
       <label className="checkbox"><input type="checkbox" checked={agree2} onChange={e=>setAgree2(e.target.checked)} /> 위치·기기 정보는 근태 확인 목적 외로 사용하지 않는다는 설명을 확인했습니다.</label>
       <label className="checkbox"><input type="checkbox" checked={agree3} onChange={e=>setAgree3(e.target.checked)} /> 추가근무는 별도 수당이 아니라 대체휴가로 적립되며, 관리자 승인 후 사용 가능하다는 점에 동의합니다.</label>
-      <label className="checkbox"><input type="checkbox" checked={agree4} onChange={e=>setAgree4(e.target.checked)} /> 근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 전자서명할 수 있으며, 실제 변경은 건별 요청 및 회사 승인 후 적용된다는 설명을 확인했습니다.</label>
+      <label className="checkbox"><input type="checkbox" checked={agree4} onChange={e=>setAgree4(e.target.checked)} /> {WORK_TIME_CONSENT_CHECK_TEXT}</label>
+      <WorkTimeDetailBlock className="work-time-detail-space" />
       <div style={{marginTop:18}}><label className="label">서명</label><SignaturePad canvasRef={canvasRef} /></div>
       <div className="actions" style={{marginTop:16}}>
         <button className="button" onClick={submit}>동의하고 시작</button>
@@ -3544,6 +3551,7 @@ const CONSENT_TERMS = [
   "개인정보 및 위치정보 수집·이용에 동의합니다.",
   "위치·기기 정보는 근태 확인 목적 외로 사용하지 않는다는 설명을 확인했습니다.",
   "추가근무는 별도 수당이 아니라 대체휴가로 적립되며, 관리자 승인 후 사용 가능하다는 점에 동의합니다.",
+  WORK_TIME_CONSENT_CHECK_TEXT,
 ];
 
 function ConsentReportPage() {
@@ -3586,11 +3594,15 @@ function ConsentReportPage() {
     return "근로시간 변경 요청 및 합의서";
   }
   function signedBody(kind:"privacy"|"workTimeConsent"|"workTimeRequest",record:any){
-    if(kind==="privacy") return [
-      "주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.",
-      "위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.",
-      ...CONSENT_TERMS,
-    ];
+    if(kind==="privacy") {
+      const body=[
+        "주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.",
+        "위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.",
+        ...CONSENT_TERMS,
+      ];
+      if(record.consent_version===PRIVACY_CONSENT_VERSION) body.push(WORK_TIME_CONSENT_TEXT, WORK_TIME_DETAIL_TEXT);
+      return body;
+    }
     if(kind==="workTimeConsent") return [record.notice_text??WORK_TIME_CONSENT_TEXT, record.detail_text??WORK_TIME_DETAIL_TEXT];
     return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
   }
