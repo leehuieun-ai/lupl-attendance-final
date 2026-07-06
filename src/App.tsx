@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "admin-dashboard" | "approvals" | "employees" | "workplaces" | "schedule" | "payroll" | "reports" | "consents";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents";
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
 const ALL_DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
@@ -606,6 +606,7 @@ export default function App() {
     "admin-dashboard":"직원 현황",
     approvals:"승인 관리",
     employees:"직원 관리",
+    rnr:"업무 R&R",
     workplaces:"근무지 관리",
     schedule:"근무 일정",
     payroll:"급여 계산",
@@ -622,6 +623,7 @@ export default function App() {
     {id:"admin-dashboard",label:"직원 현황",icon:"ti-layout-dashboard"},
     {id:"approvals",label:"승인 관리",icon:"ti-shield-check",badge:pendingCount},
     {id:"employees",label:"직원 관리",icon:"ti-users"},
+    {id:"rnr",label:"업무 R&R",icon:"ti-sitemap"},
     {id:"workplaces",label:"근무지 관리",icon:"ti-map-pin"},
     {id:"schedule",label:"근무 일정",icon:"ti-calendar-time"},
     {id:"payroll",label:"급여 계산",icon:"ti-coin"},
@@ -667,6 +669,7 @@ export default function App() {
           {tab==="admin-dashboard" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" />}
           {tab==="approvals" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" />}
           {tab==="employees" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="employees" />}
+          {tab==="rnr" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="rnr" />}
           {tab==="workplaces" && isAdmin && <WorkplacePage employee={employee} />}
           {tab==="schedule" && isAdmin && <SettingsPage currentEmployee={employee} section="schedule" />}
           {tab==="payroll" && isAdmin && <SettingsPage currentEmployee={employee} section="payroll" />}
@@ -872,6 +875,9 @@ function HomePage({ employee }: { employee: any }) {
   const todayTask = employee.role==="admin"
     ? (todayTasks.find((task:any)=>String(task.target_employee_id??"")===todoTargetEmployeeId)??null)
     : (todayTasks.find((task:any)=>!task.target_employee_id||task.target_employee_id===employee.id)??null);
+  const todoTargetLabel = todoTargetEmployeeId
+    ? (todoEmployees.find((e:any)=>e.id===todoTargetEmployeeId)?.name??"선택 직원")
+    : "전체 직원";
 
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),1000); return()=>clearInterval(t); },[]);
   useEffect(()=>{
@@ -1331,7 +1337,7 @@ function HomePage({ employee }: { employee: any }) {
             <button className="today-task-button has-task" onClick={openTodo}>
               <i className="ti ti-clipboard-list" aria-hidden="true"></i>
               <span>{employee.role==="admin" ? "오늘의 할일 수정" : "오늘의 할일 확인"}</span>
-              <b>{todayTask.title}</b>
+              <b>{employee.role==="admin"?`${todoTargetLabel} · `:""}{todayTask.title}</b>
             </button>
           ) : (
             <button className="today-task-button" onClick={openTodo}>
@@ -2021,7 +2027,7 @@ function WorkplacePage({ employee }: { employee: any }) {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-map" aria-hidden="true"></i>근무지 목록</h2>
         <div className="actions" style={{justifyContent:"space-between",marginBottom:8}}>
-          <h3 style={{margin:0}}>승인된 근무지 {approved.length>0&&<span className="count-badge">{approved.length}</span>}</h3>
+          <h3 style={{margin:0}}>승인된 근무지</h3>
           <button className="button ghost" onClick={load}><i className="ti ti-refresh" aria-hidden="true"></i>새로고침</button>
         </div>
         {approved.length===0&&<p className="subtle">승인된 근무지가 없습니다.</p>}
@@ -2128,7 +2134,7 @@ function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmp
   );
 }
 
-function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEmployee: any; onChanged: () => void; view?:"dashboard"|"approvals"|"employees" }) {
+function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEmployee: any; onChanged: () => void; view?:"dashboard"|"approvals"|"employees"|"rnr" }) {
   const [employees,setEmployees]=useState<any[]>([]);
   const [empMap,setEmpMap]=useState<Record<string,any>>({});
   const [employeeFilter,setEmployeeFilter]=useState("active");
@@ -2145,6 +2151,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   const [rnrInput,setRnrInput]=useState("");
   const [rnrSuggestion,setRnrSuggestion]=useState<any|null>(null);
   const [rnrAssigneeId,setRnrAssigneeId]=useState("");
+  const [selectedRnr,setSelectedRnr]=useState<any|null>(null);
   const [rnrBusy,setRnrBusy]=useState(false);
   const [rnrMsg,setRnrMsg]=useState("");
   const [message,setMessage]=useState("");
@@ -2175,6 +2182,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
+  const rnrAssigneeName=(entry:any)=>entry?.assigned_person_name||(
+    entry?.assigned_employee_id&&empMap[entry.assigned_employee_id]?.name
+      ? empMap[entry.assigned_employee_id].name
+      : "직책 기준"
+  );
 
   function leaveForEmployee(empId:string) {
     const emp=empMap[empId]; if(!emp) return null;
@@ -2340,9 +2352,16 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     .forEach((l:any)=>{ if(!todayLogByEmployee[l.employee_id]) todayLogByEmployee[l.employee_id]=l; });
   const dailyRows=activeEmployees.map((e:any)=>({employee:e,log:todayLogByEmployee[e.id]}));
   const pW=workplaces.filter(w=>w.approval_status==="pending");
+  function actualCompSettled(r:any){
+    return settledCompIds.has(r.id)
+      || !!r.attendance_log_id
+      || r.actual_overtime_hours !== null && r.actual_overtime_hours !== undefined
+      || String(r.review_note??"").includes("실제 퇴근시간 기준");
+  }
   const pC=compRequests.filter(r=>{
-    if(settledCompIds.has(r.id)||r.attendance_log_id||r.actual_overtime_hours!=null) return false;
-    return r.status==="pending"||(r.status==="approved"&&!!compAttendance(r));
+    if(actualCompSettled(r)) return false;
+    if(r.status==="pending") return true;
+    return r.status==="approved"&&r.work_date>="2026-06-24"&&!!compAttendance(r);
   });
   const pT=workTimeRequests.filter(r=>r.status==="pending");
   const pR=requests.filter(r=>r.status==="pending");
@@ -2355,6 +2374,16 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     return !l.check_out_time || reviewStatuses.includes(l.status);
   });
   const pendingTotal=pW.length+pC.length+pT.length+pR.length+pD.length+pL.length;
+  const unassignedRnrEntries=rnrEntries.filter((entry:any)=>!entry.assigned_employee_id);
+  const rnrBoardColumns=[
+    ...activeEmployees.map((employee:any)=>({
+      key:employee.id,
+      title:employee.name,
+      subtitle:[employee.department,employee.position].filter(Boolean).join(" · ")||employee.employee_no,
+      entries:rnrEntries.filter((entry:any)=>entry.assigned_employee_id===employee.id),
+    })).filter(column=>column.entries.length>0),
+    ...(unassignedRnrEntries.length>0?[{key:"role",title:"직책 기준",subtitle:"담당자 미지정",entries:unassignedRnrEntries}]:[]),
+  ];
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
 
   return (
@@ -2504,7 +2533,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
       </section>}
 
-      {view==="employees"&&<section className="card rnr-card">
+      {view==="rnr"&&<section className="card rnr-card">
         <h2 className="card-title"><i className="ti ti-sitemap" aria-hidden="true"></i>업무 R&R 정리</h2>
         <p className="subtle" style={{marginBottom:12}}>업무를 편하게 적으면 부서/직책/업무명으로 정리해서 누적합니다. 다음 직원이 같은 역할을 맡을 때 기준 업무로 볼 수 있습니다.</p>
         {rnrMsg&&<div className={`alert ${rnrMsg.includes("저장")?"success":""}`}>{rnrMsg}</div>}
@@ -2537,14 +2566,47 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
         <div className="rnr-board">
           {rnrEntries.length===0 ? <p className="subtle">아직 저장된 R&R이 없습니다.</p> : rnrEntries.slice(0,12).map(entry=>(
-            <div className="rnr-entry" key={entry.id}>
+            <button className="rnr-entry rnr-entry-button" key={entry.id} onClick={()=>setSelectedRnr(entry)}>
               <span>{entry.department||"공통"} · {entry.position||entry.category||"업무"}</span>
               <b>{entry.title}</b>
+              <small>담당 {rnrAssigneeName(entry)}</small>
               <p>{entry.summary}</p>
+            </button>
+          ))}
+        </div>
+        <div className="rnr-person-board">
+          {rnrBoardColumns.length===0 ? <p className="subtle">담당자별로 표시할 R&R이 없습니다.</p> : rnrBoardColumns.map(column=>(
+            <div className="rnr-person-column" key={column.key}>
+              <div className="rnr-person-head"><b>{column.title}</b><span>{column.subtitle}</span></div>
+              {column.entries.map((entry:any)=>(
+                <button className="rnr-person-task" key={entry.id} onClick={()=>setSelectedRnr(entry)}>
+                  <b>{entry.title}</b>
+                  <span>{entry.department||"공통"} · {entry.position||entry.category||"업무"}</span>
+                </button>
+              ))}
             </div>
           ))}
         </div>
       </section>}
+
+      {selectedRnr&&<div className="modal-backdrop" onClick={()=>setSelectedRnr(null)}>
+        <div className="modal-box" style={{maxWidth:560}} onClick={e=>e.stopPropagation()}>
+          <div className="modal-header">
+            <h2 className="card-title" style={{margin:0}}><i className="ti ti-sitemap" aria-hidden="true"></i>{selectedRnr.title}</h2>
+            <button className="modal-close" title="닫기" onClick={()=>setSelectedRnr(null)}><i className="ti ti-x" aria-hidden="true"></i></button>
+          </div>
+          <div className="consent-preview">
+            <dl>
+              <div><dt>담당</dt><dd>{rnrAssigneeName(selectedRnr)}</dd></div>
+              <div><dt>부서</dt><dd>{selectedRnr.department||"공통"}</dd></div>
+              <div><dt>직책</dt><dd>{selectedRnr.position||selectedRnr.category||"-"}</dd></div>
+            </dl>
+            <div className="type-desc"><b>업무 설명</b><p style={{margin:"6px 0 0",whiteSpace:"pre-wrap"}}>{selectedRnr.summary}</p></div>
+            {Array.isArray(selectedRnr.checklist)&&selectedRnr.checklist.length>0&&<ul className="rnr-checklist">{selectedRnr.checklist.map((item:string,index:number)=><li key={index}>{item}</li>)}</ul>}
+          </div>
+          <div className="actions" style={{justifyContent:"flex-end",marginTop:16}}><button className="button" onClick={()=>setSelectedRnr(null)}>확인</button></div>
+        </div>
+      </div>}
 
       {view==="employees"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-user-plus" aria-hidden="true"></i>직원 계정 생성</h2>
@@ -2631,12 +2693,12 @@ function SettingsPage({ currentEmployee, section="schedule" }: { currentEmployee
   useEffect(()=>{load();},[]);
   function empName(id?:string|null){return id&&empMap[id]?empMap[id].name:"-";}
   return <div className="grid">
-    {section==="schedule"&&<><TeamScheduleBoard employees={employees} events={scheduleEvents} overrides={overrides} leaveRequests={leaveRequests} compTimeRequests={compTimeRequests} currentEmployee={currentEmployee} onChanged={load} /><ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setMsg} msg={msg} /></>}
+    {section==="schedule"&&<><TeamScheduleBoard employees={employees} events={scheduleEvents} overrides={overrides} workTimeChanges={workTimeChanges} leaveRequests={leaveRequests} compTimeRequests={compTimeRequests} currentEmployee={currentEmployee} onChanged={load} /><ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setMsg} msg={msg} /></>}
     {section==="payroll"&&<PayrollCard employees={employees} absences={absences} overrides={overrides} workTimeChanges={workTimeChanges} />}
   </div>;
 }
 
-function TeamScheduleBoard({employees,events,overrides,leaveRequests,compTimeRequests,currentEmployee,onChanged}:{employees:any[];events:any[];overrides:any[];leaveRequests:any[];compTimeRequests:any[];currentEmployee:any;onChanged:()=>void}) {
+function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequests,compTimeRequests,currentEmployee,onChanged}:{employees:any[];events:any[];overrides:any[];workTimeChanges:any[];leaveRequests:any[];compTimeRequests:any[];currentEmployee:any;onChanged:()=>void}) {
   const [employeeOrder,setEmployeeOrder]=useState<string[]>(()=>{
     try{return JSON.parse(localStorage.getItem("lupl_schedule_employee_order")??"[]");}catch{return [];}
   });
@@ -2669,14 +2731,15 @@ function TeamScheduleBoard({employees,events,overrides,leaveRequests,compTimeReq
   const visibleEmployees=isAll?activeEmployees:(selectedEmployee?[selectedEmployee]:[]);
   const visibleLeaveEvents=dates.flatMap(date=>visibleEmployees.flatMap(employee=>leaveEventsFor(employee,date)));
   const visibleOvertimeEvents=dates.flatMap(date=>visibleEmployees.flatMap(employee=>overtimeEventsFor(employee,date)));
+  const visibleScheduleRanges=dates.flatMap(date=>visibleEmployees.map(employee=>getScheduleForDate(employee,date,overrides,workTimeChanges)));
   const visibleStartMinutes=[
-    ...visibleEmployees.map(e=>timeToMinutes(e.work_start)).filter((v):v is number=>v!=null),
+    ...visibleScheduleRanges.map(schedule=>timeToMinutes(schedule.work_start)).filter((v):v is number=>v!=null),
     ...timedEvents.map(e=>timeToMinutes(e.start_time)).filter((v):v is number=>v!=null),
     ...visibleLeaveEvents.map(e=>timeToMinutes(e.start_time)).filter((v):v is number=>v!=null),
     ...visibleOvertimeEvents.map(e=>timeToMinutes(e.start_time)).filter((v):v is number=>v!=null),
   ];
   const visibleEndMinutes=[
-    ...visibleEmployees.map(e=>timeToMinutes(e.work_end)).filter((v):v is number=>v!=null),
+    ...visibleScheduleRanges.map(schedule=>timeToMinutes(schedule.work_end)).filter((v):v is number=>v!=null),
     ...timedEvents.map(e=>timeToMinutes(e.end_time)).filter((v):v is number=>v!=null),
     ...visibleLeaveEvents.map(e=>timeToMinutes(e.end_time)).filter((v):v is number=>v!=null),
     ...visibleOvertimeEvents.map(e=>timeToMinutes(e.end_time)).filter((v):v is number=>v!=null),
@@ -2804,7 +2867,7 @@ function TeamScheduleBoard({employees,events,overrides,leaveRequests,compTimeReq
     return leaveRequests
       .filter(request=>request.employee_id===employee.id&&date>=request.start_date&&date<=request.end_date)
       .map(request=>{
-        const schedule=getScheduleForDate(employee,date,overrides);
+        const schedule=getScheduleForDate(employee,date,overrides,workTimeChanges);
         let start=String(schedule.work_start??"09:00").slice(0,5);
         let end=String(schedule.work_end??"18:00").slice(0,5);
         if(request.request_type==="half_am"){start=String(request.start_time??start).slice(0,5);end=String(request.end_time??"14:00").slice(0,5);}
@@ -2946,7 +3009,7 @@ function TeamScheduleBoard({employees,events,overrides,leaveRequests,compTimeReq
                   const overtimeEvents=overtimeEventsFor(employee,date);
                   const shown=[...dayEvents.filter(event=>event.event_type!=="hidden"),...leaveEvents,...overtimeEvents];
                   const suppressBase=leaveEvents.length>0||dayEvents.some(event=>["hidden","work","unavailable","am_only","pm_only"].includes(event.event_type));
-                  const schedule=getScheduleForDate(employee,date,overrides);
+                  const schedule=getScheduleForDate(employee,date,overrides,workTimeChanges);
                   const isBaseWorkday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
                   const baseWork=!suppressBase&&isBaseWorkday?{id:`base-${employee.id}-${date}`,employee_id:employee.id,title:employee.schedule_title??"기본 근무",event_type:"work",start_time:schedule.work_start,end_time:schedule.work_end,note:employee.schedule_note??"",base:true}:null;
                   const color=employeeColorFromList(activeEmployees,employee.id);

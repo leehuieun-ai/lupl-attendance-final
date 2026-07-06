@@ -610,9 +610,19 @@ body { overflow-x: hidden; }
 .rnr-checklist { margin: 0 0 14px; padding-left: 18px; line-height: 1.55; color: #364154; }
 .rnr-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 16px; }
 .rnr-entry { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; }
+.rnr-entry-button { width: 100%; text-align: left; cursor: pointer; }
 .rnr-entry span { display: block; color: var(--muted); font-size: 12px; font-weight: 800; margin-bottom: 5px; }
 .rnr-entry b { display: block; color: #182235; margin-bottom: 6px; }
+.rnr-entry small { display: block; color: var(--blue-dark); font-size: 12px; font-weight: 800; margin-bottom: 6px; }
 .rnr-entry p { margin: 0; color: #596579; font-size: 13px; line-height: 1.5; }
+.rnr-person-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+.rnr-person-column { border: 1px solid var(--line); border-radius: 14px; background: #f8fafc; padding: 12px; min-height: 120px; }
+.rnr-person-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.rnr-person-head b { color: #182235; }
+.rnr-person-head span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.rnr-person-task { width: 100%; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; padding: 10px; text-align: left; margin-top: 8px; }
+.rnr-person-task b { display: block; color: #182235; font-size: 14px; margin-bottom: 4px; }
+.rnr-person-task span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; }
 
 /* 2026-06-15 휴가 신청/신청내역 모바일 가독성 보정 */
 @media (max-width: 640px) {
