@@ -3300,43 +3300,74 @@ const CONSENT_TERMS = [
 function ConsentReportPage() {
   const [employees,setEmployees]=useState<any[]>([]);
   const [consents,setConsents]=useState<any[]>([]);
-  const [selected,setSelected]=useState<{employee:any;consent:any}|null>(null);
+  const [workTimeConsents,setWorkTimeConsents]=useState<any[]>([]);
+  const [workTimeRequests,setWorkTimeRequests]=useState<any[]>([]);
+  const [selected,setSelected]=useState<{employee:any;record:any;kind:"privacy"|"workTimeConsent"|"workTimeRequest"}|null>(null);
   const [message,setMessage]=useState("");
 
   async function load(){
-    const [employeeResult,consentResult]=await Promise.all([
+    const [employeeResult,consentResult,workConsentResult,workRequestResult]=await Promise.all([
       supabase.from("employees").select("id,name,employee_no,employment_status,is_active").order("employee_no",{ascending:true}),
       supabase.from("privacy_consents").select("*").order("created_at",{ascending:false}),
+      supabase.from("work_time_change_consents").select("*").order("created_at",{ascending:false}),
+      supabase.from("work_time_change_requests").select("*").order("created_at",{ascending:false}),
     ]);
-    if(employeeResult.error||consentResult.error) setMessage(employeeResult.error?.message??consentResult.error?.message??"동의서를 불러오지 못했습니다.");
+    if(employeeResult.error||consentResult.error||workConsentResult.error||workRequestResult.error) {
+      setMessage(employeeResult.error?.message??consentResult.error?.message??workConsentResult.error?.message??workRequestResult.error?.message??"동의서를 불러오지 못했습니다.");
+    }
     setEmployees(employeeResult.data??[]);
     setConsents(consentResult.data??[]);
+    setWorkTimeConsents(workConsentResult.data??[]);
+    setWorkTimeRequests(workRequestResult.data??[]);
   }
   useEffect(()=>{load();},[]);
 
   const latestByEmployee:Record<string,any>={};
   consents.forEach(consent=>{if(!latestByEmployee[consent.employee_id]) latestByEmployee[consent.employee_id]=consent;});
+  const latestWorkConsentByEmployee:Record<string,any>={};
+  workTimeConsents.forEach(consent=>{if(!latestWorkConsentByEmployee[consent.employee_id]) latestWorkConsentByEmployee[consent.employee_id]=consent;});
+  const employeeMap:Record<string,any>={};
+  employees.forEach(employee=>{employeeMap[employee.id]=employee;});
+  const signedWorkTimeRequests=workTimeRequests.filter(request=>request.signature_data);
+  const totalSigned=consents.length+workTimeConsents.length+signedWorkTimeRequests.length;
 
-  function printConsent(employee:any,consent:any){
+  function signedTitle(kind:"privacy"|"workTimeConsent"|"workTimeRequest"){
+    if(kind==="privacy") return "개인정보 수집·이용 및 위치정보 동의서";
+    if(kind==="workTimeConsent") return "근무시간 변경 안내 확인서";
+    return "근로시간 변경 요청 및 합의서";
+  }
+  function signedBody(kind:"privacy"|"workTimeConsent"|"workTimeRequest",record:any){
+    if(kind==="privacy") return [
+      "주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.",
+      "위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.",
+      ...CONSENT_TERMS,
+    ];
+    if(kind==="workTimeConsent") return [record.notice_text??WORK_TIME_CONSENT_TEXT, record.detail_text??WORK_TIME_DETAIL_TEXT];
+    return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
+  }
+  function printSignedRecord(employee:any,record:any,kind:"privacy"|"workTimeConsent"|"workTimeRequest"){
     const popup=window.open("","_blank","width=860,height=1000");
     if(!popup) return setMessage("인쇄 창이 차단되었습니다. 브라우저의 팝업 차단을 해제해주세요.");
     popup.opener=null;
-    const signature=String(consent.signature_data??"").startsWith("data:image/")?consent.signature_data:"";
-    popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(employee.name)} 동의서</title><style>
+    const signature=String(record.signature_data??"").startsWith("data:image/")?record.signature_data:"";
+    const title=signedTitle(kind);
+    const body=signedBody(kind,record);
+    const version=record.consent_version??record.legal_notice_version??"-";
+    const status=record.status==="pending"?"승인 대기":record.status==="approved"?"승인":record.status==="rejected"?"반려":"-";
+    popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(employee.name)} ${escapeHtml(title)}</title><style>
       @page{size:A4;margin:18mm}body{font-family:Arial,"Malgun Gothic",sans-serif;color:#111827;line-height:1.65;margin:0}
       h1{font-size:24px;margin:0 0 8px}h2{font-size:15px;margin:28px 0 8px;border-bottom:1px solid #d1d5db;padding-bottom:7px}
       .meta{width:100%;border-collapse:collapse;margin-top:24px}.meta th,.meta td{border:1px solid #d1d5db;padding:9px;text-align:left;font-size:13px}.meta th{width:100px;background:#f3f4f6}
-      ol{padding-left:22px}.notice{padding:12px 14px;background:#f3f6fb;border:1px solid #dbe3ef;border-radius:6px}
+      ol{padding-left:22px}.notice{white-space:pre-wrap;padding:12px 14px;background:#f3f6fb;border:1px solid #dbe3ef;border-radius:6px}
       .signature{height:150px;border:1px solid #d1d5db;display:flex;align-items:center;justify-content:center}.signature img{max-width:95%;max-height:135px}
       .footer{margin-top:28px;text-align:right;font-size:13px}@media print{button{display:none}}
     </style></head><body>
-      <h1>개인정보 수집·이용 및 위치정보 동의서</h1>
-      <p>주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.</p>
-      <div class="notice">위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.</div>
+      <h1>${escapeHtml(title)}</h1>
       <table class="meta"><tr><th>직원명</th><td>${escapeHtml(employee.name)}</td><th>사번</th><td>${escapeHtml(employee.employee_no)}</td></tr>
-      <tr><th>동의 일시</th><td colspan="3">${escapeHtml(formatDateTime(consent.created_at))}</td></tr>
-      <tr><th>동의 버전</th><td>${escapeHtml(consent.consent_version)}</td><th>기기</th><td>${escapeHtml(consent.device_info?.platform??"-")}</td></tr></table>
-      <h2>동의 내용</h2><ol>${CONSENT_TERMS.map(term=>`<li>${escapeHtml(term)}</li>`).join("")}</ol>
+      <tr><th>서명 일시</th><td colspan="3">${escapeHtml(formatDateTime(record.created_at))}</td></tr>
+      <tr><th>버전</th><td>${escapeHtml(version)}</td><th>상태</th><td>${escapeHtml(status)}</td></tr>
+      <tr><th>기기</th><td colspan="3">${escapeHtml(record.device_info?.platform??"-")}</td></tr></table>
+      <h2>서명 내용</h2><div class="notice">${body.map(line=>escapeHtml(line)).join("\n")}</div>
       <h2>전자 서명</h2><div class="signature">${signature?`<img src="${escapeHtml(signature)}" alt="전자 서명">`:"서명 이미지 없음"}</div>
       <p class="footer">${escapeHtml(employee.name)} (전자 동의)</p>
       <script>window.addEventListener("load",()=>setTimeout(()=>window.print(),250));<\/script>
@@ -3348,36 +3379,59 @@ function ConsentReportPage() {
     {message&&<div className="alert error">{message}</div>}
     <section className="card">
       <div className="schedule-board-toolbar">
-        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원 동의서</h2><p className="subtle" style={{margin:0}}>직원별 최신 전자 동의서를 화면에서 확인하고 PDF로 저장할 수 있습니다.</p></div>
-        <span className="badge good">동의 {employees.filter(e=>latestByEmployee[e.id]).length}명</span>
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원 서명 리포트</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근무시간 변경 안내, 근무시간 변경 요청 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
+        <span className="badge good">서명 {totalSigned}건</span>
       </div>
       <div className="table-wrap" style={{marginTop:18}}>
         <table>
-          <thead><tr><th>직원</th><th>상태</th><th>동의 일시</th><th>버전</th><th>관리</th></tr></thead>
+          <caption className="table-summary">직원별 최신 필수 동의서</caption>
+          <thead><tr><th>직원</th><th>개인정보 동의</th><th>근무시간 변경 안내</th><th>관리</th></tr></thead>
           <tbody>{employees.map(employee=>{
             const consent=latestByEmployee[employee.id];
+            const workConsent=latestWorkConsentByEmployee[employee.id];
             return <tr key={employee.id}>
               <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
-              <td><span className={`badge ${consent?"good":"warn"}`}>{consent?"동의 완료":"미동의"}</span></td>
-              <td>{consent?formatDateTime(consent.created_at):"-"}</td>
-              <td>{consent?.consent_version??"-"}</td>
-              <td><div className="actions"><button className="button secondary compact" disabled={!consent} onClick={()=>consent&&setSelected({employee,consent})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!consent} onClick={()=>consent&&printConsent(employee,consent)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button></div></td>
+              <td><span className={`badge ${consent?"good":"warn"}`}>{consent?"완료":"미동의"}</span><br/><span className="subtle">{consent?formatDateTime(consent.created_at):"-"}</span></td>
+              <td><span className={`badge ${workConsent?"good":"warn"}`}>{workConsent?"완료":"미서명"}</span><br/><span className="subtle">{workConsent?formatDateTime(workConsent.created_at):"-"}</span></td>
+              <td><div className="actions">
+                <button className="button secondary compact" disabled={!consent} onClick={()=>consent&&setSelected({employee,record:consent,kind:"privacy"})}><i className="ti ti-eye" aria-hidden="true"></i>개인정보</button>
+                <button className="button secondary compact" disabled={!workConsent} onClick={()=>workConsent&&setSelected({employee,record:workConsent,kind:"workTimeConsent"})}><i className="ti ti-clock-edit" aria-hidden="true"></i>근무시간</button>
+              </div></td>
             </tr>;
           })}</tbody>
         </table>
       </div>
     </section>
+    <section className="card">
+      <h2 className="card-title"><i className="ti ti-calendar-time" aria-hidden="true"></i>근무시간 변경 요청 서명</h2>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>직원</th><th>적용기간</th><th>변경 내용</th><th>상태</th><th>서명 일시</th><th>관리</th></tr></thead>
+          <tbody>{workTimeRequests.map(request=>{
+            const employee=employeeMap[request.employee_id]??{name:"알 수 없음",employee_no:"-"};
+            const periods=(request.periods??[]).map((p:any)=>`${p.start_date}~${p.end_date}`).join(" / ")||"-";
+            return <tr key={request.id}>
+              <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
+              <td>{periods}</td>
+              <td>{daysLabel(request.new_work_days??[])}<br/><span className="subtle">{timeRangeLabel(request.new_work_start,request.new_work_end)} · 휴게 {timeRangeLabel(request.new_break_start,request.new_break_end)}</span></td>
+              <td><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
+              <td>{formatDateTime(request.created_at)}</td>
+              <td><div className="actions"><button className="button secondary compact" disabled={!request.signature_data} onClick={()=>setSelected({employee,record:request,kind:"workTimeRequest"})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!request.signature_data} onClick={()=>printSignedRecord(employee,request,"workTimeRequest")}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button></div></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+      {workTimeRequests.length===0&&<p className="subtle" style={{marginTop:12}}>아직 근무시간 변경 요청 서명이 없습니다.</p>}
+    </section>
     {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}>
       <div className="modal-box consent-modal" onClick={e=>e.stopPropagation()}>
-        <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-file-certificate" aria-hidden="true"></i>{selected.employee.name} 동의서</h2><button className="modal-close" title="닫기" onClick={()=>setSelected(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
+        <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-file-certificate" aria-hidden="true"></i>{selected.employee.name} {signedTitle(selected.kind)}</h2><button className="modal-close" title="닫기" onClick={()=>setSelected(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
         <div className="consent-preview">
-          <p>주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.</p>
-          <div className="alert">위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.</div>
-          <dl><div><dt>사번</dt><dd>{selected.employee.employee_no}</dd></div><div><dt>동의 일시</dt><dd>{formatDateTime(selected.consent.created_at)}</dd></div><div><dt>버전</dt><dd>{selected.consent.consent_version}</dd></div></dl>
-          <ol>{CONSENT_TERMS.map(term=><li key={term}>{term}</li>)}</ol>
-          <div className="consent-signature"><span>전자 서명</span>{selected.consent.signature_data?<img src={selected.consent.signature_data} alt={`${selected.employee.name} 전자 서명`} />:<p>서명 이미지가 없습니다.</p>}</div>
+          <dl><div><dt>사번</dt><dd>{selected.employee.employee_no}</dd></div><div><dt>서명 일시</dt><dd>{formatDateTime(selected.record.created_at)}</dd></div><div><dt>버전</dt><dd>{selected.record.consent_version??selected.record.legal_notice_version??"-"}</dd></div></dl>
+          <div className="type-desc">{signedBody(selected.kind,selected.record).map((line,index)=><p key={index} style={{margin:index===0?0:"8px 0 0",whiteSpace:"pre-wrap"}}>{line}</p>)}</div>
+          <div className="consent-signature"><span>전자 서명</span>{selected.record.signature_data?<img src={selected.record.signature_data} alt={`${selected.employee.name} 전자 서명`} />:<p>서명 이미지가 없습니다.</p>}</div>
         </div>
-        <div className="actions" style={{justifyContent:"flex-end",marginTop:16}}><button className="button ghost" onClick={()=>setSelected(null)}>닫기</button><button className="button" onClick={()=>printConsent(selected.employee,selected.consent)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF 저장·인쇄</button></div>
+        <div className="actions" style={{justifyContent:"flex-end",marginTop:16}}><button className="button ghost" onClick={()=>setSelected(null)}>닫기</button><button className="button" onClick={()=>printSignedRecord(selected.employee,selected.record,selected.kind)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF 저장·인쇄</button></div>
       </div>
     </div>}
   </div>;
