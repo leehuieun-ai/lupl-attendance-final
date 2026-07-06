@@ -1426,6 +1426,20 @@ function sameDays(a:string[] = [], b:string[] = []) {
 }
 function parseKoreanDateRanges(text:string) {
   const year=new Date().getFullYear();
+  const rangeMatch=text.match(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일?\s*(?:부터|에서|~|-)\s*(?:(?:(\d{4})년\s*)?(\d{1,2})월\s*)?(\d{1,2})일?\s*(?:까지)?/);
+  if(rangeMatch){
+    const y1=Number(rangeMatch[1]??year);
+    const m1=Number(rangeMatch[2]);
+    const d1=Number(rangeMatch[3]);
+    const y2=Number(rangeMatch[4]??y1);
+    const m2=Number(rangeMatch[5]??m1);
+    const d2=Number(rangeMatch[6]);
+    return [{
+      id:`p${Date.now()}`,
+      start_date:`${y1}-${String(m1).padStart(2,"0")}-${String(d1).padStart(2,"0")}`,
+      end_date:`${y2}-${String(m2).padStart(2,"0")}-${String(d2).padStart(2,"0")}`,
+    }];
+  }
   const matches=Array.from(text.matchAll(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일/g));
   const dates=matches.map(match=>{
     const y=Number(match[1]??year);
@@ -1436,6 +1450,56 @@ function parseKoreanDateRanges(text:string) {
   if(dates.length>=2) return [{id:`p${Date.now()}`,start_date:dates[0],end_date:dates[1]}];
   if(dates.length===1) return [{id:`p${Date.now()}`,start_date:dates[0],end_date:dates[0]}];
   return null;
+}
+function koreanNumberToInt(value:string) {
+  const raw=value.trim().replace(/\s/g,"");
+  if(!raw) return null;
+  if(/^\d+$/.test(raw)) return Number(raw);
+  const simple:Record<string,number>={
+    영:0,공:0,
+    한:1,하나:1,일:1,
+    두:2,둘:2,이:2,
+    세:3,셋:3,삼:3,
+    네:4,넷:4,사:4,
+    다섯:5,오:5,
+    여섯:6,육:6,
+    일곱:7,칠:7,
+    여덟:8,팔:8,
+    아홉:9,구:9,
+    열:10,
+    스무:20,스물:20,
+  };
+  if(simple[raw]!=null) return simple[raw];
+  if(raw.startsWith("스물")) return 20+(simple[raw.slice(2)]??0);
+  if(raw.startsWith("스무")) return 20+(simple[raw.slice(2)]??0);
+  if(raw.startsWith("열")) return 10+(simple[raw.slice(1)]??0);
+  const sino=raw.match(/^(?:(일|이|삼)?십)?(일|이|삼|사|오|육|칠|팔|구)?$/);
+  if(sino&&sino[0]){
+    const tens=sino[1]?simple[sino[1]]*10:(raw.includes("십")?10:0);
+    const ones=sino[2]?simple[sino[2]]:0;
+    return tens+ones;
+  }
+  return null;
+}
+function parsePromptTime(meridiem:string|undefined,hourText:string,minuteText?:string) {
+  let hour=koreanNumberToInt(hourText);
+  const minute=minuteText?koreanNumberToInt(minuteText):0;
+  if(hour==null||minute==null||hour<0||hour>24||minute<0||minute>59) return null;
+  const marker=(meridiem??"").trim();
+  if(["오후","저녁","밤","낮"].includes(marker)&&hour<12) hour+=12;
+  if(["오전","아침"].includes(marker)&&hour===12) hour=0;
+  if(hour===24) hour=0;
+  return `${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}`;
+}
+function parsePromptTimeRange(text:string) {
+  const timeWord="(?:\\d{1,2}|한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉)?|스무|스물(?:한|두|세|네)?|일|이|삼|사|오|육|칠|팔|구|십|이십(?:일|이|삼|사)?)";
+  const timePoint=`(?:(오전|오후|아침|낮|저녁|밤)\\s*)?(${timeWord})\\s*(?:시\\s*(?:(\\d{1,2}|[가-힣]{1,4})\\s*분)?|:\\s*(\\d{1,2}))`;
+  const re=new RegExp(`${timePoint}\\s*(?:부터|에서|~|-)\\s*${timePoint}`);
+  const match=text.match(re);
+  if(!match) return null;
+  const start=parsePromptTime(match[1],match[2],match[3]??match[4]);
+  const end=parsePromptTime(match[5],match[6],match[7]??match[8]);
+  return start&&end?{start,end}:null;
 }
 function parseWorkTimeChangePrompt(text:string, oldDays:string[]) {
   const normalized=text.trim();
@@ -1451,10 +1515,10 @@ function parseWorkTimeChangePrompt(text:string, oldDays:string[]) {
     if(from&&to) parsed.newDays=ALL_DAYS.filter(day=>(oldDays.includes(day)&&day!==from)||day===to);
     parsed.mode="date_change";
   }
-  const timeMatch=normalized.match(/(\d{1,2})(?::|시\s*)?(\d{0,2})\s*(?:부터|~|-|에서)\s*(\d{1,2})(?::|시\s*)?(\d{0,2})/);
-  if(timeMatch){
-    parsed.start=`${String(Number(timeMatch[1])).padStart(2,"0")}:${String(Number(timeMatch[2]||0)).padStart(2,"0")}`;
-    parsed.end=`${String(Number(timeMatch[3])).padStart(2,"0")}:${String(Number(timeMatch[4]||0)).padStart(2,"0")}`;
+  const timeRange=parsePromptTimeRange(normalized);
+  if(timeRange){
+    parsed.start=timeRange.start;
+    parsed.end=timeRange.end;
     parsed.mode=parsed.mode??"work_time";
   }
   return parsed;
@@ -1659,7 +1723,7 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
               </div>
             </div>
           </div>
-          <p className="subtle" style={{margin:0}}>예: "수요일 근무 목요일로 변경", "7월 10일부터 7월 12일까지 일 안함", "8월 1일 10시부터 17시로 변경"</p>
+          <p className="subtle" style={{margin:0}}>예: "7월 7일부터 8일까지 근무시간 오전 열시부터 오후 여덟시로 변경", "수요일 근무 목요일로 변경", "7월 10일부터 12일까지 일 안함"</p>
         </div>
 
         <div className="period-stack">
