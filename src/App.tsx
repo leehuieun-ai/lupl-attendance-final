@@ -1865,8 +1865,6 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
           <h3>변경 후 근무조건</h3>
         </div>
         <div className="type-desc work-change-guide">
-          <b>띄엄띄엄 적용되는 변경은 적용기간을 나누어 추가해 주세요.</b>
-          <span>예: 7/10~7/12, 7/20~7/22처럼 각각 등록</span>
           <span className="work-change-guide-line">아래 입력칸에 “7월 7일부터 8일까지 오전 열시부터 오후 여덟시까지 근무”처럼 적고 초안을 누르면 적용기간과 시간이 자동으로 채워집니다.</span>
           <span className="work-change-guide-line">여러 기간은 쉼표로 이어 적을 수 있습니다. 예: “8월 7일부터 8월 10일까지 오전 열한시부터 오후 여덟시까지 근무, 7월 7일 오전 열한시부터 오후 여덟시까지 근무”</span>
         </div>
