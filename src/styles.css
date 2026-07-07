@@ -429,6 +429,9 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .work-time-detail { white-space: normal; }
 .work-time-detail-space { margin-top: 10px; }
 .work-time-legal { font-size: calc(1em - 2px); color: var(--muted); }
+.consent-detail-stack { display: grid; gap: 8px; margin-top: 14px; }
+.consent-detail-toggle .collapsible-btn { margin: 0; }
+.consent-detail-toggle .type-desc { margin-bottom: 0; }
 
 /* 토글 섹션 버튼 */
 .collapsible-btn {

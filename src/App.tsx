@@ -28,6 +28,11 @@ const EDITABLE_SCHEDULE_TYPES = ["info","work","am_only","pm_only","unavailable"
 const EMPLOYEE_COLORS = ["#2563eb","#059669","#ea580c","#dc2626","#7c3aed","#0891b2","#b45309","#4f46e5","#65a30d","#be185d"];
 const WORK_TIME_CHANGE_CONSENT_VERSION = "2026-07-work-time-change-process";
 const WORK_TIME_LEGAL_NOTICE_VERSION = "2026-07";
+const OVERTIME_COMP_CONSENT_CHECK_TEXT = "추가근무는 사전 신청 또는 회사 확인 후 건별 승인된 경우에만 인정되며, 승인된 시간은 앱에서 대체휴가 적립·사용 내역으로 관리될 수 있다는 설명을 확인했습니다.";
+const OVERTIME_COMP_DETAIL_MAIN_TEXT = "추가근무는 근무자 신청 또는 회사 확인 후 건별로 승인된 시간만 인정됩니다. 이 항목은 앱의 대체휴가 적립·사용 관리 방식에 대한 안내입니다.";
+const OVERTIME_COMP_DETAIL_LEGAL_TEXT = "(관계 법령 근로기준법 제53조, 제56조, 제57조)";
+const OVERTIME_COMP_DETAIL_SIGN_TEXT = "이 서명은 향후 모든 연장근로·야간근로·휴일근로에 대한 사전 포괄 동의가 아니며, 실제 추가근무는 건별 신청·승인 기록에 따라 처리됩니다.";
+const OVERTIME_COMP_DETAIL_TEXT = `${OVERTIME_COMP_DETAIL_MAIN_TEXT}\n${OVERTIME_COMP_DETAIL_LEGAL_TEXT}\n${OVERTIME_COMP_DETAIL_SIGN_TEXT}`;
 const WORK_TIME_CONSENT_TEXT = "앞으로 근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 서명해 주세요. 변경 내용은 직원 요청과 회사 승인 후 적용되며, 서명한 기록은 자동으로 저장됩니다.";
 const WORK_TIME_DETAIL_MAIN_TEXT = "근무요일, 근무시간, 휴게시간은 근로조건에 해당할 수 있어 변경 내용을 명확히 남겨야 합니다.";
 const WORK_TIME_DETAIL_LEGAL_TEXT = "(관계 법령 근로기준법 제17조, 제53조 / 기간제 및 단시간근로자 보호 등에 관한 법률 제17조)";
@@ -574,6 +579,17 @@ function WorkTimeDetailBlock({ className = "" }: { className?: string }) {
     </div>
   );
 }
+function ConsentDetailToggle({ title, open, onToggle, children }: { title:string; open:boolean; onToggle:()=>void; children:any }) {
+  return (
+    <div className="consent-detail-toggle">
+      <button className="collapsible-btn" type="button" onClick={onToggle}>
+        {title}
+        <i className={`ti ${open?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
+      </button>
+      {open&&children}
+    </div>
+  );
+}
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -833,6 +849,9 @@ function friendlySignatureDbError(error:any) {
 function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () => void; signOut: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement|null>(null);
   const [agree1,setAgree1] = useState(false); const [agree2,setAgree2] = useState(false); const [agree3,setAgree3] = useState(false); const [agree4,setAgree4] = useState(false);
+  const [showPrivacyDetail,setShowPrivacyDetail]=useState(false);
+  const [showOvertimeDetail,setShowOvertimeDetail]=useState(false);
+  const [showWorkTimeDetail,setShowWorkTimeDetail]=useState(false);
   const [msg,setMsg] = useState("");
   function clear() { clearSignature(canvasRef); }
   async function submit() {
@@ -855,9 +874,29 @@ function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () 
       {msg&&<div className="alert error">{msg}</div>}
       <label className="checkbox"><input type="checkbox" checked={agree1} onChange={e=>setAgree1(e.target.checked)} /> 개인정보 및 위치정보 수집·이용에 동의합니다.</label>
       <label className="checkbox"><input type="checkbox" checked={agree2} onChange={e=>setAgree2(e.target.checked)} /> 위치·기기 정보는 근태 확인 목적 외로 사용하지 않는다는 설명을 확인했습니다.</label>
-      <label className="checkbox"><input type="checkbox" checked={agree3} onChange={e=>setAgree3(e.target.checked)} /> 추가근무는 별도 수당이 아니라 대체휴가로 적립되며, 관리자 승인 후 사용 가능하다는 점에 동의합니다.</label>
+      <label className="checkbox"><input type="checkbox" checked={agree3} onChange={e=>setAgree3(e.target.checked)} /> {OVERTIME_COMP_CONSENT_CHECK_TEXT}</label>
       <label className="checkbox"><input type="checkbox" checked={agree4} onChange={e=>setAgree4(e.target.checked)} /> {WORK_TIME_CONSENT_CHECK_TEXT}</label>
-      <WorkTimeDetailBlock className="work-time-detail-space" />
+      <div className="consent-detail-stack">
+        <ConsentDetailToggle title="개인정보·위치정보 상세 설명" open={showPrivacyDetail} onToggle={()=>setShowPrivacyDetail(v=>!v)}>
+          <div className="type-desc work-time-detail work-time-detail-space">
+            출퇴근 처리와 근태 확인을 위해 직원 정보, 기기 정보, 출근·퇴근 시점의 위치정보를 수집·이용합니다.
+            <br />
+            위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 수집되며, 실시간 위치 추적에는 사용하지 않습니다.
+          </div>
+        </ConsentDetailToggle>
+        <ConsentDetailToggle title="추가근무·대체휴가 상세 설명" open={showOvertimeDetail} onToggle={()=>setShowOvertimeDetail(v=>!v)}>
+          <div className="type-desc work-time-detail work-time-detail-space">
+            {OVERTIME_COMP_DETAIL_MAIN_TEXT}
+            <br />
+            <span className="work-time-legal">{OVERTIME_COMP_DETAIL_LEGAL_TEXT}</span>
+            <br />
+            {OVERTIME_COMP_DETAIL_SIGN_TEXT}
+          </div>
+        </ConsentDetailToggle>
+        <ConsentDetailToggle title="근무조건 변경 상세 설명" open={showWorkTimeDetail} onToggle={()=>setShowWorkTimeDetail(v=>!v)}>
+          <WorkTimeDetailBlock className="work-time-detail-space" />
+        </ConsentDetailToggle>
+      </div>
       <div style={{marginTop:18}}><label className="label">서명</label><SignaturePad canvasRef={canvasRef} /></div>
       <div className="actions" style={{marginTop:16}}>
         <button className="button" onClick={submit}>동의하고 시작</button>
@@ -2055,7 +2094,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
             <div className="metric"><div className="metric-value">{compRemainHours}시간</div><div className="metric-label">사용 가능</div></div>
             <div className="metric"><div className="metric-value">{compRequests.filter(r=>r.status==="pending").length}건</div><div className="metric-label">승인 대기</div></div>
           </div>
-          <p className="body-text" style={{marginBottom:14}}>추가근무는 별도 수당이 아니라 대체휴가로 적립됩니다. 관리자 승인 후 휴가 잔여에 추가됩니다 (8시간 = 1일).</p>
+          <p className="body-text" style={{marginBottom:14}}>추가근무는 신청 또는 회사 확인 후 건별 승인된 시간만 인정됩니다. 승인된 시간은 앱에서 대체휴가 적립·사용 내역으로 관리됩니다 (8시간 = 1일).</p>
           <div className="alert">※ 추가근무는 시작 시간 전에만 신청할 수 있습니다.<br/>※ 한 번 신청하면 수정이 불가능합니다. 수정이 필요하면 승인 전 취소 후 다시 신청해주세요.</div>
           {compBaseline&&<div className="alert overtime-baseline-alert">
             <b>추가근무 인정 시작: {compBaseline.expectedEndHHMM} 이후</b>
@@ -3663,7 +3702,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
 const CONSENT_TERMS = [
   "개인정보 및 위치정보 수집·이용에 동의합니다.",
   "위치·기기 정보는 근태 확인 목적 외로 사용하지 않는다는 설명을 확인했습니다.",
-  "추가근무는 별도 수당이 아니라 대체휴가로 적립되며, 관리자 승인 후 사용 가능하다는 점에 동의합니다.",
+  OVERTIME_COMP_CONSENT_CHECK_TEXT,
   WORK_TIME_CONSENT_CHECK_TEXT,
 ];
 
@@ -3713,7 +3752,7 @@ function ConsentReportPage() {
         "위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.",
         ...CONSENT_TERMS,
       ];
-      if(record.consent_version===PRIVACY_CONSENT_VERSION) body.push(WORK_TIME_CONSENT_TEXT, WORK_TIME_DETAIL_TEXT);
+      if(record.consent_version===PRIVACY_CONSENT_VERSION) body.push(OVERTIME_COMP_DETAIL_TEXT, WORK_TIME_CONSENT_TEXT, WORK_TIME_DETAIL_TEXT);
       return body;
     }
     if(kind==="workTimeConsent") return [record.notice_text??WORK_TIME_CONSENT_TEXT, record.detail_text??WORK_TIME_DETAIL_TEXT];
