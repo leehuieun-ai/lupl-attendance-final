@@ -297,6 +297,17 @@ function timeLabel(time?: string | null) { return time ? String(time).slice(0,5)
 function timeRangeLabel(start?: string | null, end?: string | null) { return `${timeLabel(start)} ~ ${timeLabel(end)}`; }
 function employeeContractStart(employee:any) { return employee?.work_start_date ?? employee?.contract_start ?? employee?.joined_at ?? todayIso(); }
 function employeeContractEnd(employee:any) { return employee?.contract_end ?? null; }
+function isOnOrAfterIsoDate(value?: string | null, baseline?: string | null) {
+  if(!value || !baseline) return true;
+  return localDateStr(value) >= String(baseline).slice(0,10);
+}
+function consentAppliesToCurrentEmployment(consent:any, employee:any) {
+  if(!consent) return false;
+  return isOnOrAfterIsoDate(consent.created_at, employeeContractStart(employee));
+}
+function logAppliesToCurrentEmployment(log:any, employee:any) {
+  return isOnOrAfterIsoDate(log?.check_in_time, employeeContractStart(employee));
+}
 function daysFromPeriods(periods:any[] = []) {
   const result:string[] = [];
   periods.forEach((p:any)=>{
@@ -634,7 +645,9 @@ export default function App() {
   if (!session) return <LoginPage />;
   if (!employee) return <div className="container"><section className="card auth-card"><h1 className="card-title">직원 정보가 없습니다</h1><p className="subtle">관리자 계정의 employees.user_id 연결을 확인해주세요.</p><button className="button full" onClick={signOut}>로그아웃</button></section></div>;
   if (!employee.is_active || employee.employment_status !== "active") return <InactivePage signOut={signOut} />;
-  const shouldShowCombinedConsent = !consent || (consent?.consent_version === PRIVACY_CONSENT_VERSION && !workTimeConsent);
+  const validPrivacyConsent=consentAppliesToCurrentEmployment(consent,employee) ? consent : null;
+  const validWorkTimeConsent=consentAppliesToCurrentEmployment(workTimeConsent,employee) ? workTimeConsent : null;
+  const shouldShowCombinedConsent = !validPrivacyConsent || (validPrivacyConsent?.consent_version === PRIVACY_CONSENT_VERSION && !validWorkTimeConsent);
   if (shouldShowCombinedConsent) return <ConsentGate employee={employee} onDone={load} signOut={signOut} />;
   const isAdmin = employee.role === "admin";
   const pageTitles:Record<Tab,string>={
@@ -691,7 +704,7 @@ export default function App() {
           {isAdmin&&<><p className="side-nav-label">관리자</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{reportMenus.map(menuButton)}<p className="side-nav-label">기타</p>{extraMenus.map(menuButton)}</>}
         </nav>
         <div className="sidebar-account">
-          <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{isAdmin?"관리자":"직원"}</small></div></div>
+          <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{employee.employee_no} · {isAdmin?"관리자":"직원"}</small></div></div>
           <button title="비밀번호 변경" onClick={()=>setShowPwModal(true)}><i className="ti ti-lock" aria-hidden="true"></i></button>
           <button title="로그아웃" onClick={signOut}><i className="ti ti-logout" aria-hidden="true"></i></button>
         </div>
@@ -702,7 +715,7 @@ export default function App() {
           <div className="topbar-inner">
             <button className="mobile-menu-button" title="메뉴 열기" onClick={()=>setMobileNavOpen(true)}><i className="ti ti-menu-2" aria-hidden="true"></i></button>
             <div className="page-heading"><span>{["reports","consents"].includes(tab)?"리포트":["payroll","rnr"].includes(tab)?"기타":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리자":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
-            <div className="topbar-user"><span>{employee.name}</span><b>{isAdmin?"관리자":"직원"}</b></div>
+            <div className="topbar-user"><span>{employee.name}</span><b>{employee.employee_no} · {isAdmin?"관리자":"직원"}</b></div>
           </div>
         </header>
         <main className="container">
@@ -722,7 +735,7 @@ export default function App() {
         </main>
       </div>
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
-      {consent && !workTimeConsent && consent.consent_version !== PRIVACY_CONSENT_VERSION && <WorkTimeConsentModal employee={employee} onDone={load} />}
+      {validPrivacyConsent && !validWorkTimeConsent && validPrivacyConsent.consent_version !== PRIVACY_CONSENT_VERSION && <WorkTimeConsentModal employee={employee} onDone={load} />}
     </div>
   );
 }
@@ -988,8 +1001,10 @@ function HomePage({ employee }: { employee: any }) {
       (!!employeeDept&&String(entry.department??"").trim()===employeeDept) ||
       (!!employeePosition&&String(entry.position??"").trim()===employeePosition)
     ).slice(0,5));
-    const merged=uniqueLogs([...(openLogs??[]), ...(logs??[])]).sort(byCheckInDesc);
-    setOpenLogRows(openLogs??[]);
+    const currentOpenLogs=(openLogs??[]).filter((log:any)=>logAppliesToCurrentEmployment(log,employee));
+    const currentLogs=(logs??[]).filter((log:any)=>logAppliesToCurrentEmployment(log,employee));
+    const merged=uniqueLogs([...currentOpenLogs, ...currentLogs]).sort(byCheckInDesc);
+    setOpenLogRows(currentOpenLogs);
     setTodayLog(merged.find((l:any)=>isToday(l.check_in_time))??null);
     setRecentLogs(merged.filter((l:any)=>!isToday(l.check_in_time)).slice(0,5));
     await loadDevices();
