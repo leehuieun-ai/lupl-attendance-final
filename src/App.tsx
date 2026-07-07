@@ -341,6 +341,13 @@ function netDailyHours(start?: string | null, end?: string | null, breakStart?: 
 function weeklyScheduledHours(emp:any) {
   return Math.round(netDailyHours(emp?.work_start??"09:00",emp?.work_end??"18:00","12:00","13:00")*(emp?.work_days??["mon","tue","wed","thu","fri"]).length*10)/10;
 }
+function isUnderAnnualLeaveThreshold(emp:any) {
+  return weeklyScheduledHours(emp) < 15;
+}
+function annualLeaveThresholdNotice(emp:any) {
+  const hours=weeklyScheduledHours(emp);
+  return `현재 등록된 주 소정근로시간은 약 ${hours.toFixed(1)}시간입니다. 4주 평균 1주 소정근로시간이 15시간 미만인 경우 근로기준법 제18조에 따라 제60조 연차유급휴가 규정 적용 제외가 가능합니다.`;
+}
 function annualLeaveEligibilityNote(emp:any) {
   const hours=weeklyScheduledHours(emp);
   return hours>=15
@@ -1495,7 +1502,10 @@ function sameDays(a:string[] = [], b:string[] = []) {
   const right=ALL_DAYS.filter(d=>b.includes(d)).join("|");
   return left===right;
 }
-function parseKoreanDateRanges(text:string) {
+function splitWorkTimePromptSegments(text:string) {
+  return text.split(/\s*(?:[,，、;；]|\r?\n+|\s+그리고\s+|\s+또는\s+)\s*/).map(part=>part.trim()).filter(Boolean);
+}
+function parseKoreanDateRange(text:string, index=0) {
   const year=new Date().getFullYear();
   const rangeMatch=text.match(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일?\s*(?:부터|에서|~|-)\s*(?:(?:(\d{4})년\s*)?(\d{1,2})월\s*)?(\d{1,2})일?\s*(?:까지)?/);
   if(rangeMatch){
@@ -1505,11 +1515,11 @@ function parseKoreanDateRanges(text:string) {
     const y2=Number(rangeMatch[4]??y1);
     const m2=Number(rangeMatch[5]??m1);
     const d2=Number(rangeMatch[6]);
-    return [{
-      id:`p${Date.now()}`,
+    return {
+      id:`p${Date.now()}-${index}`,
       start_date:`${y1}-${String(m1).padStart(2,"0")}-${String(d1).padStart(2,"0")}`,
       end_date:`${y2}-${String(m2).padStart(2,"0")}-${String(d2).padStart(2,"0")}`,
-    }];
+    };
   }
   const matches=Array.from(text.matchAll(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일/g));
   const dates=matches.map(match=>{
@@ -1518,8 +1528,14 @@ function parseKoreanDateRanges(text:string) {
     const d=String(Number(match[3])).padStart(2,"0");
     return `${y}-${m}-${d}`;
   });
-  if(dates.length>=2) return [{id:`p${Date.now()}`,start_date:dates[0],end_date:dates[1]}];
-  if(dates.length===1) return [{id:`p${Date.now()}`,start_date:dates[0],end_date:dates[0]}];
+  if(dates.length>=2) return {id:`p${Date.now()}-${index}`,start_date:dates[0],end_date:dates[1]};
+  if(dates.length===1) return {id:`p${Date.now()}-${index}`,start_date:dates[0],end_date:dates[0]};
+  return null;
+}
+function parseKoreanDateRanges(text:string) {
+  const segments=splitWorkTimePromptSegments(text);
+  const ranges=segments.map((segment,index)=>parseKoreanDateRange(segment,index)).filter(Boolean);
+  if(ranges.length>0) return ranges;
   return null;
 }
 function koreanNumberToInt(value:string) {
@@ -1569,12 +1585,23 @@ function parsePromptTimeRange(text:string) {
   const match=text.match(re);
   if(!match) return null;
   const start=parsePromptTime(match[1],match[2],match[3]??match[4]);
-  const end=parsePromptTime(match[5],match[6],match[7]??match[8]);
+  let end=parsePromptTime(match[5],match[6],match[7]??match[8]);
+  if(start&&end&&!match[5]){
+    const startMinutes=timeToMinutes(start);
+    const endMinutes=timeToMinutes(end);
+    if(startMinutes!=null&&endMinutes!=null&&endMinutes<=startMinutes) end=minutesToTime(endMinutes+12*60);
+  }
   return start&&end?{start,end}:null;
+}
+function parsePromptTimeRanges(text:string) {
+  const ranges=splitWorkTimePromptSegments(text).map(parsePromptTimeRange).filter(Boolean);
+  if(ranges.length>0) return ranges;
+  const fallback=parsePromptTimeRange(text);
+  return fallback?[fallback]:[];
 }
 function parseWorkTimeChangePrompt(text:string, oldDays:string[]) {
   const normalized=text.trim();
-  const parsed:any={reason:normalized};
+  const parsed:any={};
   const ranges=parseKoreanDateRanges(normalized);
   if(ranges) parsed.periods=ranges;
   if(/근무\s*안|일\s*안|안\s*함|휴무|쉬는|쉼/.test(normalized)) parsed.mode="no_work";
@@ -1586,11 +1613,14 @@ function parseWorkTimeChangePrompt(text:string, oldDays:string[]) {
     if(from&&to) parsed.newDays=ALL_DAYS.filter(day=>(oldDays.includes(day)&&day!==from)||day===to);
     parsed.mode="date_change";
   }
-  const timeRange=parsePromptTimeRange(normalized);
+  const timeRanges=parsePromptTimeRanges(normalized);
+  const timeRange=timeRanges[0];
   if(timeRange){
     parsed.start=timeRange.start;
     parsed.end=timeRange.end;
     parsed.mode=parsed.mode??"work_time";
+    const hasDifferentTimes=timeRanges.some(range=>range?.start!==timeRange.start||range?.end!==timeRange.end);
+    if(hasDifferentTimes) parsed.warning="적용기간은 나누어 반영했지만, 요청 1건에는 하나의 근무시간만 저장됩니다. 기간별 시간이 다르면 요청을 따로 작성해주세요.";
   }
   return parsed;
 }
@@ -1682,19 +1712,44 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
     clearSignature(canvasRef);
   },[selectedEmployee.id]);
   function updatePeriod(id:string,patch:Record<string,string>){setManualDays(null);setPeriods(list=>list.map(p=>p.id===id?{...p,...patch}:p));}
-  function addPeriod(){setPeriods(list=>[...list,{id:`p${Date.now()}`,start_date:todayIso(),end_date:todayIso()}]);}
-  function removePeriod(id:string){setPeriods(list=>list.length===1?list:list.filter(p=>p.id!==id));}
-  function applyNaturalDraft() {
-    const parsed=parseWorkTimeChangePrompt(naturalText,oldDays);
-    if(!naturalText.trim()) return setMsg("변경 내용을 한 문장으로 적어주세요.");
-    setMsg("");
+  function mergePeriodLists(current:any[], next:any[]) {
+    const base=current.length===1&&current[0].id==="p1"&&current[0].start_date===todayIso()&&current[0].end_date===todayIso()?[]:current;
+    const merged=[...base];
+    next.forEach((period:any)=>{
+      const exists=merged.some((item:any)=>item.start_date===period.start_date&&item.end_date===period.end_date);
+      if(!exists) merged.push({...period,id:`p${Date.now()}-${merged.length}`});
+    });
+    return merged.length>0?merged:current;
+  }
+  function applyParsedNaturalDraft(parsed:any, appendPeriods=false) {
     if(parsed.mode) setChangeMode(parsed.mode);
-    if(parsed.periods) setPeriods(parsed.periods);
+    if(parsed.periods) setPeriods(list=>appendPeriods?mergePeriodLists(list,parsed.periods):parsed.periods);
     if(parsed.newDays) setManualDays(parsed.newDays);
     if(parsed.mode==="no_work") setManualDays([]);
     if(parsed.start) setNewStart(parsed.start);
     if(parsed.end) setNewEnd(parsed.end);
-    setReason(parsed.reason);
+    if(parsed.warning) setMsg(parsed.warning);
+  }
+  function addPeriod(){
+    if(naturalText.trim()){
+      const parsed=parseWorkTimeChangePrompt(naturalText,oldDays);
+      if(parsed.periods?.length){
+        setMsg("");
+        applyParsedNaturalDraft(parsed,true);
+        return;
+      }
+    }
+    setManualDays(null);
+    setPeriods(list=>[...list,{id:`p${Date.now()}`,start_date:todayIso(),end_date:todayIso()}]);
+  }
+  function removePeriod(id:string){setPeriods(list=>list.length===1?list:list.filter(p=>p.id!==id));}
+  function applyNaturalDraft() {
+    const parsed=parseWorkTimeChangePrompt(naturalText,oldDays);
+    if(!naturalText.trim()) return setMsg("변경 내용을 한 문장으로 적어주세요.");
+    const hasDraft=parsed.mode||parsed.periods||parsed.newDays||parsed.start||parsed.end;
+    if(!hasDraft) return setMsg("날짜, 시간, 근무 안함, 요일 변경 중 하나를 포함해 적어주세요.");
+    setMsg("");
+    applyParsedNaturalDraft(parsed,false);
   }
   async function submit() {
     setMsg("");
@@ -1752,12 +1807,19 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
           <span className="badge">작성중</span>
         </div>
 
-        <div className="form-row">
-          <label className="label">직원 이름</label>
-          <select className="select" value={selectedEmployeeId} onChange={e=>setSelectedEmployeeId(e.target.value)}>
-            {selectableEmployees.map(e=><option key={e.id} value={e.id}>{e.name}{e.employee_no?` · ${e.employee_no}`:""}</option>)}
-          </select>
-        </div>
+        {isAdmin ? (
+          <div className="form-row">
+            <label className="label">직원 이름</label>
+            <select className="select" value={selectedEmployeeId} onChange={e=>setSelectedEmployeeId(e.target.value)}>
+              {selectableEmployees.map(e=><option key={e.id} value={e.id}>{e.name}{e.employee_no?` · ${e.employee_no}`:""}</option>)}
+            </select>
+          </div>
+        ) : (
+          <div className="type-desc work-change-guide">
+            <b>{selectedEmployee.name} 본인 요청</b>
+            <span>로그인한 직원 계정으로 자동 접수됩니다.</span>
+          </div>
+        )}
 
         <div className="work-section-head">
           <h3>기존 근무조건</h3>
@@ -1778,6 +1840,8 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
         <div className="type-desc work-change-guide">
           <b>띄엄띄엄 적용되는 변경은 적용기간을 나누어 추가해 주세요.</b>
           <span>예: 7/10~7/12, 7/20~7/22처럼 각각 등록</span>
+          <span className="work-change-guide-line">아래 입력칸에 “7월 7일부터 8일까지 오전 열시부터 오후 여덟시까지 근무”처럼 적고 초안을 누르면 적용기간과 시간이 자동으로 채워집니다.</span>
+          <span className="work-change-guide-line">여러 기간은 쉼표로 이어 적을 수 있습니다. 예: “8월 7일부터 8월 10일까지 오전 열한시부터 오후 여덟시까지 근무, 7월 7일 오전 열한시부터 오후 여덟시까지 근무”</span>
         </div>
 
         <div className="natural-change-box">
@@ -1789,12 +1853,12 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
             </div>
             <div className="form-row"><label className="label">한 문장으로 입력</label>
               <div className="input-action-row">
-                <input className="input" value={naturalText} onChange={e=>setNaturalText(e.target.value)} placeholder="예: 7월 10일부터 7월 12일까지 근무 안함" />
+                <input className="input" value={naturalText} onChange={e=>setNaturalText(e.target.value)} placeholder="예: 7월 10일부터 12일까지 근무 안함 / 8월 7일부터 10일까지 오전 열한시부터 오후 여덟시까지 근무" />
                 <button className="button secondary compact" onClick={applyNaturalDraft}><i className="ti ti-sparkles" aria-hidden="true"></i>초안</button>
               </div>
             </div>
           </div>
-          <p className="subtle" style={{margin:0}}>예: "7월 7일부터 8일까지 근무시간 오전 열시부터 오후 여덟시로 변경", "수요일 근무 목요일로 변경", "7월 10일부터 12일까지 일 안함"</p>
+          <p className="subtle" style={{margin:0}}>쉼표로 여러 기간을 적으면 적용기간이 각각 생성됩니다. 변경 사유는 아래 사유 칸에 별도로 적어주세요.</p>
         </div>
 
         <div className="period-stack">
@@ -1939,6 +2003,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   const isHourly=form.request_type==="hourly";
   const showLeave=mode==="leave";
   const showOvertime=mode==="overtime";
+  const underAnnualLeaveThreshold=isUnderAnnualLeaveThreshold(employee);
 
   function setType(t:string){
     const m=LEAVE_TYPE_META[t];
@@ -2019,6 +2084,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   return (
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
+      {showLeave&&underAnnualLeaveThreshold&&<div className="alert annual-threshold-alert">{annualLeaveThresholdNotice(employee)}</div>}
       {showLeave&&<section className="card leave-summary-card">
         <div className="leave-summary-header">
           <h2 className="card-title"><i className="ti ti-calendar-stats" aria-hidden="true"></i>연차 현황</h2>

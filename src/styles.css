@@ -464,6 +464,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .readonly-field span { color: var(--muted); font-size: 12px; font-weight: 700; }
 .readonly-field b { color: #5a6475; font-size: 14px; line-height: 1.45; font-weight: 500; }
 .work-change-guide { margin-bottom: 14px; }
+.work-change-guide-line { display: block; margin-top: 6px; }
 .natural-change-box { border: 1px solid #d7e6ff; background: #f7fbff; border-radius: 15px; padding: 12px; margin-bottom: 14px; }
 .input-action-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; }
 .period-stack { display: grid; gap: 10px; margin-bottom: 14px; }
