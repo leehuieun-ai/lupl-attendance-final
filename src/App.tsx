@@ -49,6 +49,19 @@ const RNR_BASELINE_ROLES = [
   {department:"개발부서", position:"매니저", keywords:["개발","버그","배포","시스템","앱","기능"], duties:["서비스 기능 개발","버그 확인 및 수정","배포 상태 점검","운영 기능 개선"]},
   {department:"디자인부서", position:"매니저", keywords:["디자인","브랜드","UI","이미지","콘텐츠","시안"], duties:["브랜드/콘텐츠 디자인","UI 화면 정리","홍보 이미지 제작","시안 관리"]},
 ];
+const RNR_CATEGORY_RULES = [
+  {label:"회계", keywords:["회계","정산","입금","출금","매출","비용","영수증","청구","결제"]},
+  {label:"세무", keywords:["세무","세금","부가세","원천세","신고","세무사","증빙"]},
+  {label:"서류", keywords:["서류","문서","계약서","제출","양식","파일","자료","공문"]},
+  {label:"인사", keywords:["인사","채용","직원","근로계약","급여","근태","휴가"]},
+  {label:"운영", keywords:["운영","일정","비품","재고","교육장","학교","준비","체크"]},
+  {label:"홍보", keywords:["홍보","마케팅","광고","SNS","콘텐츠","블로그","인스타"]},
+  {label:"고객응대", keywords:["문의","전화","응대","상담","고객","학부모","안내"]},
+  {label:"개발", keywords:["개발","버그","앱","시스템","배포","기능"]},
+  {label:"디자인", keywords:["디자인","시안","이미지","카드뉴스","브랜드"]},
+  {label:"AI", keywords:["AI","자동화","프롬프트","데이터","모델"]},
+];
+const RNR_CATEGORY_OPTIONS = ["", ...RNR_CATEGORY_RULES.map(rule=>rule.label), "기타"];
 const DEPARTMENT_OPTIONS = ["", ...Array.from(new Set(RNR_BASELINE_ROLES.map(role=>role.department)))];
 const POSITION_OPTIONS = ["","대표","본부장","선임","매니저"];
 const WORK_TIME_CHANGE_MODE_LABELS:Record<string,string> = {
@@ -409,6 +422,27 @@ function countScheduledWorkdays(emp:any, startIso:string, endIso:string, overrid
   let count=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
   while(d<=end){ const iso=isoDate(d); const sched=getScheduleForDate(emp, iso, overrides, workTimeChanges); if((sched.work_days??[]).includes(dayKeyFromDate(d))) count++; d=addLocalDays(d,1); }
   return count;
+}
+function formatHourValue(value:any) {
+  const num=Number(value||0);
+  return Number.isInteger(num) ? String(num) : num.toFixed(1);
+}
+function scheduledWorkStats(emp:any, startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
+  let days=0; let hours=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
+  while(d<=end){
+    const iso=isoDate(d);
+    const sched=getScheduleForDate(emp, iso, overrides, workTimeChanges);
+    if((sched.work_days??[]).includes(dayKeyFromDate(d))){
+      days++;
+      hours+=netDailyHours(sched.work_start,sched.work_end,sched.break_start??"12:00",sched.break_end??"13:00");
+    }
+    d=addLocalDays(d,1);
+  }
+  return {days,hours:Math.round(hours*10)/10};
+}
+function weeklyStatsForDate(emp:any, dateIso=todayIso(), overrides:any[]=[], workTimeChanges:any[]=[]) {
+  const start=weekStartIso(dateIso);
+  return scheduledWorkStats(emp,start,addIsoDays(start,6),overrides,workTimeChanges);
 }
 function countUnpaidAbsenceWorkdays(emp:any, absences:any[], startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
   let count=0;
@@ -1529,6 +1563,55 @@ function sameDays(a:string[] = [], b:string[] = []) {
   const right=ALL_DAYS.filter(d=>b.includes(d)).join("|");
   return left===right;
 }
+function workChangePeriodLabel(request:any) {
+  return (request?.periods??[]).map((p:any)=>`${p.start_date}~${p.end_date}`).join(" / ") || "-";
+}
+function isNoWorkChange(request:any) {
+  return (request?.new_work_days??[]).length===0 || (Number(request?.total_work_days||0)===0 && Number(request?.weekly_work_hours||0)===0);
+}
+function workChangeKind(request:any) {
+  if(isNoWorkChange(request)) return "근무 안 함";
+  const dayChanged=!sameDays(request?.old_work_days??[], request?.new_work_days??[]);
+  const timeChanged=timeLabel(request?.old_work_start)!==timeLabel(request?.new_work_start) || timeLabel(request?.old_work_end)!==timeLabel(request?.new_work_end);
+  if(dayChanged&&timeChanged) return "근무요일·시간 변경";
+  if(dayChanged) return "근무요일 변경";
+  if(timeChanged) return "근무시간 변경";
+  return "근무조건 변경";
+}
+function workChangeConditionLabel(request:any) {
+  if(isNoWorkChange(request)) return "변경 후: 해당 기간 근무 없음";
+  return `변경 후: ${daysLabel(request?.new_work_days??[])} · ${timeRangeLabel(request?.new_work_start,request?.new_work_end)} · 휴게 ${timeRangeLabel(request?.new_break_start,request?.new_break_end)}`;
+}
+function workChangePreviousLabel(request:any) {
+  return `기존: ${daysLabel(request?.old_work_days??[])} · ${timeRangeLabel(request?.old_work_start,request?.old_work_end)} · 휴게 ${timeRangeLabel(request?.old_break_start,request?.old_break_end)}`;
+}
+function workChangeWorkloadLabel(request:any) {
+  const daily=isNoWorkChange(request)?0:netDailyHours(request?.new_work_start,request?.new_work_end,request?.new_break_start,request?.new_break_end);
+  const totalHours=Math.round(daily*Number(request?.total_work_days||0)*10)/10;
+  return `근무 ${request?.total_work_days??0}일 · 실근무 ${formatHourValue(totalHours)}시간 · 주 ${formatHourValue(request?.weekly_work_hours||0)}시간`;
+}
+function classifyRnrCategory(text:string) {
+  const normalized=String(text||"").toLowerCase();
+  return RNR_CATEGORY_RULES.find(rule=>rule.keywords.some(keyword=>normalized.includes(keyword.toLowerCase())))?.label ?? "기타";
+}
+function professionalRnrTitle(text:string, category="기타") {
+  const templates:Record<string,string>={
+    회계:"회계 자료 정리 및 정산 관리",
+    세무:"세무 신고 자료 준비",
+    서류:"문서 관리 및 제출 자료 정리",
+    인사:"인사·근태 운영 지원",
+    운영:"운영 일정 및 현장 준비 관리",
+    홍보:"홍보 콘텐츠 운영 관리",
+    고객응대:"고객 문의 응대 및 안내 관리",
+    개발:"서비스 기능 개선 및 이슈 관리",
+    디자인:"디자인 제작 및 브랜드 자료 관리",
+    AI:"AI 자동화 업무 운영",
+    기타:"업무 실행 및 진행 관리",
+  };
+  const clean=String(text||"").trim();
+  if(clean && clean.length<=30 && !/(해줘|시켜|내가|누구|주절|테스트|test|해야|좀)/i.test(clean)) return clean;
+  return templates[category]??templates.기타;
+}
 function splitWorkTimePromptSegments(text:string) {
   return text.split(/\s*(?:[,，、;；]|\r?\n+|\s+그리고\s+|\s+또는\s+)\s*/).map(part=>part.trim()).filter(Boolean);
 }
@@ -2496,6 +2579,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   const [rnrSuggestion,setRnrSuggestion]=useState<any|null>(null);
   const [rnrAssigneeId,setRnrAssigneeId]=useState("");
   const [selectedRnr,setSelectedRnr]=useState<any|null>(null);
+  const [editingRnr,setEditingRnr]=useState<any|null>(null);
   const [rnrBusy,setRnrBusy]=useState(false);
   const [rnrMsg,setRnrMsg]=useState("");
   const [message,setMessage]=useState("");
@@ -2567,13 +2651,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   function localRnrSuggestion(text:string) {
     const normalized=text.toLowerCase();
     const picked=RNR_BASELINE_ROLES.find(role=>role.keywords.some(keyword=>normalized.includes(keyword.toLowerCase())))??RNR_BASELINE_ROLES[0];
-    const firstLine=text.split(/\r?\n/).map(x=>x.trim()).find(Boolean)??"업무 정리";
+    const category=classifyRnrCategory(text);
     return {
-      title:firstLine.length>34?`${firstLine.slice(0,34)}...`:firstLine,
+      title:professionalRnrTitle(text,category),
       summary:text.trim(),
       department:picked.department,
       position:picked.position,
-      category:picked.position,
+      category,
       priority:"normal",
       checklist:picked.duties,
       assigned_person_name:"",
@@ -2594,6 +2678,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
           input:raw,
           employees:employees.map((e:any)=>({id:e.id,name:e.name,department:e.department,position:e.position,role:e.role})),
           existing:rnrEntries.slice(0,80).map((e:any)=>({title:e.title,department:e.department,position:e.position,category:e.category})),
+          categories:RNR_CATEGORY_OPTIONS.filter(Boolean),
           baseline:RNR_BASELINE_ROLES,
         }),
       });
@@ -2613,13 +2698,14 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   async function saveRnrEntry() {
     if(!rnrSuggestion) return setRnrMsg("먼저 업무를 정리해주세요.");
     const assignee=employees.find((e:any)=>e.id===rnrAssigneeId);
+    const category=rnrSuggestion.category||classifyRnrCategory(`${rnrInput} ${rnrSuggestion.summary??""}`);
     const payload={
       raw_input:rnrInput.trim(),
-      title:rnrSuggestion.title||"업무 정리",
+      title:professionalRnrTitle(rnrSuggestion.title||rnrInput.trim(),category),
       summary:rnrSuggestion.summary||rnrInput.trim(),
       department:rnrSuggestion.department||assignee?.department||"",
       position:rnrSuggestion.position||assignee?.position||"",
-      category:rnrSuggestion.category||rnrSuggestion.position||"",
+      category,
       priority:rnrSuggestion.priority||"normal",
       checklist:Array.isArray(rnrSuggestion.checklist)?rnrSuggestion.checklist:[],
       assigned_employee_id:rnrAssigneeId||null,
@@ -2631,6 +2717,51 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     const {error}=await supabase.from("rnr_entries").insert(payload);
     if(error) setRnrMsg(error.message);
     else { setRnrMsg("업무 R&R이 저장되었습니다."); setRnrInput(""); setRnrSuggestion(null); setRnrAssigneeId(""); await load(); }
+  }
+  function openRnr(entry:any){
+    setSelectedRnr(entry);
+    setEditingRnr(null);
+  }
+  function beginEditRnr(entry:any){
+    setEditingRnr({
+      ...entry,
+      assigned_employee_id:entry.assigned_employee_id??"",
+      checklistText:Array.isArray(entry.checklist)?entry.checklist.join("\n"):"",
+    });
+  }
+  async function saveEditedRnr(){
+    if(!editingRnr?.id) return;
+    const assignee=employees.find((e:any)=>e.id===editingRnr.assigned_employee_id);
+    const checklist=String(editingRnr.checklistText??"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+    const category=editingRnr.category||classifyRnrCategory(`${editingRnr.title} ${editingRnr.summary}`);
+    const payload={
+      title:professionalRnrTitle(editingRnr.title,category),
+      summary:String(editingRnr.summary??"").trim()||professionalRnrTitle(editingRnr.title,category),
+      department:editingRnr.department||assignee?.department||"",
+      position:editingRnr.position||assignee?.position||"",
+      category,
+      checklist,
+      assigned_employee_id:editingRnr.assigned_employee_id||null,
+      assigned_person_name:assignee?.name||editingRnr.assigned_person_name||"",
+      updated_at:new Date().toISOString(),
+    };
+    const {data,error}=await supabase.from("rnr_entries").update(payload).eq("id",editingRnr.id).select().single();
+    if(error) setRnrMsg(error.message);
+    else { setRnrMsg("업무 R&R을 수정했습니다."); setSelectedRnr(data); setEditingRnr(null); await load(); }
+  }
+  async function sendRnrToTodayTask(entry:any){
+    const checklist=Array.isArray(entry.checklist)&&entry.checklist.length>0 ? `\n\n확인 항목\n${entry.checklist.map((item:string)=>`- ${item}`).join("\n")}` : "";
+    const targetEmployeeId=entry.assigned_employee_id||null;
+    const {error}=await supabase.from("daily_tasks").insert({
+      task_date:todayIso(),
+      title:entry.title||"오늘의 할일",
+      content:`${entry.summary||entry.title}${checklist}`,
+      is_active:true,
+      created_by:currentEmployee.id,
+      target_employee_id:targetEmployeeId,
+    });
+    if(error) setRnrMsg(error.message);
+    else setRnrMsg(targetEmployeeId?`${rnrAssigneeName(entry)}에게 오늘의 할일로 보냈습니다.`:"전체 직원 오늘의 할일로 보냈습니다.");
   }
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
@@ -2699,6 +2830,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     .forEach((l:any)=>{ if(!todayLogByEmployee[l.employee_id]) todayLogByEmployee[l.employee_id]=l; });
   const dailyRows=activeEmployees.map((e:any)=>({employee:e,log:todayLogByEmployee[e.id]}));
   const pW=workplaces.filter(w=>w.approval_status==="pending");
+  const approvedWorkTimeChanges=workTimeRequests.filter(r=>r.status==="approved");
+  const payrollMonth=currentMonthRange();
+  const employeeWorkSummaries=activeEmployees.map((employee:any)=>({
+    employee,
+    month:scheduledWorkStats(employee,payrollMonth.start,payrollMonth.end,overrides,approvedWorkTimeChanges),
+    week:weeklyStatsForDate(employee,todayIso(),overrides,approvedWorkTimeChanges),
+  }));
   function actualCompSettled(r:any){
     return settledCompIds.has(r.id)
       || !!r.attendance_log_id
@@ -2731,6 +2869,15 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     })).filter(column=>column.entries.length>0),
     ...(unassignedRnrEntries.length>0?[{key:"role",title:"직책 기준",subtitle:"담당자 미지정",entries:unassignedRnrEntries}]:[]),
   ];
+  const rnrStackGroups=Array.from(rnrEntries.reduce((map:Map<string,any>,entry:any)=>{
+    const department=entry.department||"공통";
+    const position=entry.position||"직책 공통";
+    const category=entry.category||"업무";
+    const key=`${department}|${position}|${category}`;
+    if(!map.has(key)) map.set(key,{key,department,position,category,entries:[]});
+    map.get(key).entries.push(entry);
+    return map;
+  },new Map<string,any>()).values()).sort((a:any,b:any)=>`${a.department}${a.position}${a.category}`.localeCompare(`${b.department}${b.position}${b.category}`));
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
   const showsApprovals=view==="dashboard"||view==="approvals";
 
@@ -2809,6 +2956,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
                 <div>
                   <b>{empName(r.employee_id)}</b>
                   <div className="subtle">{r.work_date} · 신청 {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)} · {r.hours}시간</div>
+                  <div className="type-desc" style={{marginTop:6}}>신청 사유: {r.reason||"사유 미입력"}</div>
                   {usesActualCheckout&&<div className="type-desc" style={{marginTop:6}}>예정 퇴근 {String(compSchedule(r).work_end??"18:00").slice(0,5)} · 실제 퇴근 {log?.check_out_time?timeOnly(log.check_out_time):"아직 퇴근 전"} · 인정 예상 {actual==null?"-":`${actual}시간`}</div>}
                 </div>
                 <div className="actions">
@@ -2853,15 +3001,37 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
 
       {showsApprovals&&<section className="card">
         <h2 className="card-title"><i className="ti ti-file-description" aria-hidden="true"></i>근무시간 변경 기록</h2>
-        <DataTable rows={workTimeRequests.slice(0,50).map(r=>({
-          직원: empName(r.employee_id),
-          적용기간: (r.periods??[]).map((p:any)=>`${p.start_date}~${p.end_date}`).join(" / ") || "-",
-          변경후: `${daysLabel(r.new_work_days??[])} · ${timeRangeLabel(r.new_work_start,r.new_work_end)}`,
-          휴게: timeRangeLabel(r.new_break_start,r.new_break_end),
-          근무일: `${r.total_work_days??0}일`,
-          상태: r.status==="pending"?"승인 대기":r.status==="approved"?"승인":"반려",
-          사유: r.reason??"-",
-        }))} />
+        <p className="subtle" style={{marginBottom:12}}>세무·급여 확인용으로 이번 달 직원별 근무 예정일과 실근무시간을 함께 표시합니다.</p>
+        <div className="workload-summary-board">
+          {employeeWorkSummaries.map(({employee,month,week}:any)=>(
+            <div className="workload-summary-card" key={employee.id}>
+              <b>{employee.name}</b>
+              <span>{daysLabel(employee.work_days??[])} · {timeRangeLabel(employee.work_start,employee.work_end)}</span>
+              <strong>이번 달 {month.days}일 · {formatHourValue(month.hours)}시간</strong>
+              <small>이번 주 {week.days}일 · {formatHourValue(week.hours)}시간</small>
+            </div>
+          ))}
+        </div>
+        <div className="table-wrap work-time-record-table">
+          <table>
+            <thead><tr><th>직원</th><th>적용기간</th><th>변경 내용</th><th>근무 산정</th><th>상태</th><th>사유</th></tr></thead>
+            <tbody>{workTimeRequests.slice(0,50).map((r:any)=>{
+              const employee=empMap[r.employee_id]??{};
+              return <tr key={r.id}>
+                <td data-label="직원" className="nowrap-cell"><b>{employee.name??empName(r.employee_id)}</b><span>{employee.employee_no??""}</span></td>
+                <td data-label="적용기간">{workChangePeriodLabel(r)}</td>
+                <td data-label="변경 내용">
+                  <span className="work-change-kind">{workChangeKind(r)}</span>
+                  <div className="work-change-detail">{workChangeConditionLabel(r)}</div>
+                  <small>{workChangePreviousLabel(r)}</small>
+                </td>
+                <td data-label="근무 산정">{workChangeWorkloadLabel(r)}</td>
+                <td data-label="상태"><span className={`badge ${badgeClass(r.status)}`}>{r.status==="pending"?"승인 대기":r.status==="approved"?"승인":"반려"}</span></td>
+                <td data-label="사유">{r.reason??"-"}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+        </div>
       </section>}
 
       {view==="employees"&&<ApprovedCompCard compRequests={compRequests} empMap={empMap} onChanged={load} />}
@@ -2893,7 +3063,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
           <div className="rnr-suggestion-box">
             {rnrSuggestion ? (
               <>
-                <div className="rnr-result-head"><b>{rnrSuggestion.title}</b><span>{rnrSuggestion.department||"부서 미정"} · {rnrSuggestion.position||"직책 미정"}</span></div>
+                <div className="rnr-result-head"><b>{rnrSuggestion.title}</b><span>{rnrSuggestion.department||"부서 미정"} · {rnrSuggestion.position||"직책 미정"} · {rnrSuggestion.category||"업무분류 미정"}</span></div>
                 <p>{rnrSuggestion.summary}</p>
                 <div className="form-row"><label className="label">담당 직원</label>
                   <select className="select" value={rnrAssigneeId} onChange={e=>setRnrAssigneeId(e.target.value)}>
@@ -2921,7 +3091,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
         <div className="rnr-board">
           {rnrEntries.length===0 ? <p className="subtle">아직 저장된 R&R이 없습니다.</p> : rnrEntries.slice(0,12).map(entry=>(
-            <button className="rnr-entry rnr-entry-button" key={entry.id} onClick={()=>setSelectedRnr(entry)}>
+            <button className="rnr-entry rnr-entry-button" key={entry.id} onClick={()=>openRnr(entry)}>
               <span>{entry.department||"공통"} · {entry.position||entry.category||"업무"}</span>
               <b>{entry.title}</b>
               <small>담당 {rnrAssigneeName(entry)}</small>
@@ -2929,12 +3099,26 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
             </button>
           ))}
         </div>
+        <div className="rnr-section-title"><b>부서·직책·업무별 R&R 스택</b><span>같은 유형의 업무가 쌓여 다음 담당자가 기준 업무를 빠르게 볼 수 있습니다.</span></div>
+        <div className="rnr-stack-board">
+          {rnrStackGroups.length===0 ? <p className="subtle">분류할 R&R이 없습니다.</p> : rnrStackGroups.map((group:any)=>(
+            <div className="rnr-stack-column" key={group.key}>
+              <div className="rnr-person-head"><b>{group.department}</b><span>{group.position} · {group.category}</span></div>
+              {group.entries.map((entry:any)=>(
+                <button className="rnr-person-task" key={entry.id} onClick={()=>openRnr(entry)}>
+                  <b>{entry.title}</b>
+                  <span>담당 {rnrAssigneeName(entry)}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
         <div className="rnr-person-board">
           {rnrBoardColumns.length===0 ? <p className="subtle">담당자별로 표시할 R&R이 없습니다.</p> : rnrBoardColumns.map(column=>(
             <div className="rnr-person-column" key={column.key}>
               <div className="rnr-person-head"><b>{column.title}</b><span>{column.subtitle}</span></div>
               {column.entries.map((entry:any)=>(
-                <button className="rnr-person-task" key={entry.id} onClick={()=>setSelectedRnr(entry)}>
+                <button className="rnr-person-task" key={entry.id} onClick={()=>openRnr(entry)}>
                   <b>{entry.title}</b>
                   <span>{entry.department||"공통"} · {entry.position||entry.category||"업무"}</span>
                 </button>
@@ -2950,16 +3134,33 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
             <h2 className="card-title" style={{margin:0}}><i className="ti ti-sitemap" aria-hidden="true"></i>{selectedRnr.title}</h2>
             <button className="modal-close" title="닫기" onClick={()=>setSelectedRnr(null)}><i className="ti ti-x" aria-hidden="true"></i></button>
           </div>
-          <div className="consent-preview">
-            <dl>
-              <div><dt>담당</dt><dd>{rnrAssigneeName(selectedRnr)}</dd></div>
-              <div><dt>부서</dt><dd>{selectedRnr.department||"공통"}</dd></div>
-              <div><dt>직책</dt><dd>{selectedRnr.position||selectedRnr.category||"-"}</dd></div>
-            </dl>
-            <div className="type-desc"><b>업무 설명</b><p style={{margin:"6px 0 0",whiteSpace:"pre-wrap"}}>{selectedRnr.summary}</p></div>
-            {Array.isArray(selectedRnr.checklist)&&selectedRnr.checklist.length>0&&<ul className="rnr-checklist">{selectedRnr.checklist.map((item:string,index:number)=><li key={index}>{item}</li>)}</ul>}
+          {editingRnr ? (
+            <div className="rnr-edit-form">
+              <div className="form-row"><label className="label">공식 업무명</label><input className="input" value={editingRnr.title??""} onChange={e=>setEditingRnr({...editingRnr,title:e.target.value})} /></div>
+              <div className="grid three">
+                <div className="form-row"><label className="label">부서</label><select className="select" value={editingRnr.department??""} onChange={e=>setEditingRnr({...editingRnr,department:e.target.value})}>{DEPARTMENT_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"공통"}</option>)}</select></div>
+                <div className="form-row"><label className="label">직책</label><select className="select" value={editingRnr.position??""} onChange={e=>setEditingRnr({...editingRnr,position:e.target.value})}>{POSITION_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"공통"}</option>)}</select></div>
+                <div className="form-row"><label className="label">업무 분류</label><select className="select" value={editingRnr.category??""} onChange={e=>setEditingRnr({...editingRnr,category:e.target.value})}>{RNR_CATEGORY_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"미분류"}</option>)}</select></div>
+              </div>
+              <div className="form-row"><label className="label">담당 직원</label><select className="select" value={editingRnr.assigned_employee_id??""} onChange={e=>setEditingRnr({...editingRnr,assigned_employee_id:e.target.value})}><option value="">직책 기준</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+              <div className="form-row"><label className="label">업무 설명</label><textarea className="textarea" value={editingRnr.summary??""} onChange={e=>setEditingRnr({...editingRnr,summary:e.target.value})} /></div>
+              <div className="form-row"><label className="label">체크리스트</label><textarea className="textarea compact-textarea" value={editingRnr.checklistText??""} onChange={e=>setEditingRnr({...editingRnr,checklistText:e.target.value})} placeholder={"한 줄에 하나씩 입력"} /></div>
+            </div>
+          ) : (
+            <div className="consent-preview">
+              <dl>
+                <div><dt>담당</dt><dd>{rnrAssigneeName(selectedRnr)}</dd></div>
+                <div><dt>부서</dt><dd>{selectedRnr.department||"공통"}</dd></div>
+                <div><dt>직책</dt><dd>{selectedRnr.position||"-"}</dd></div>
+                <div><dt>업무 분류</dt><dd>{selectedRnr.category||"기타"}</dd></div>
+              </dl>
+              <div className="type-desc"><b>업무 설명</b><p style={{margin:"6px 0 0",whiteSpace:"pre-wrap"}}>{selectedRnr.summary}</p></div>
+              {Array.isArray(selectedRnr.checklist)&&selectedRnr.checklist.length>0&&<ul className="rnr-checklist">{selectedRnr.checklist.map((item:string,index:number)=><li key={index}>{item}</li>)}</ul>}
+            </div>
+          )}
+          <div className="actions rnr-modal-actions" style={{justifyContent:"flex-end",marginTop:16}}>
+            {editingRnr ? <><button className="button ghost" onClick={()=>setEditingRnr(null)}>취소</button><button className="button" onClick={saveEditedRnr}>수정 저장</button></> : <><button className="button secondary" onClick={()=>sendRnrToTodayTask(selectedRnr)}><i className="ti ti-clipboard-plus" aria-hidden="true"></i>오늘의 할일</button><button className="button ghost" onClick={()=>beginEditRnr(selectedRnr)}><i className="ti ti-edit" aria-hidden="true"></i>수정</button><button className="button" onClick={()=>setSelectedRnr(null)}>확인</button></>}
           </div>
-          <div className="actions" style={{justifyContent:"flex-end",marginTop:16}}><button className="button" onClick={()=>setSelectedRnr(null)}>확인</button></div>
         </div>
       </div>}
 
@@ -3042,6 +3243,7 @@ function SettingsPage({ currentEmployee, section="schedule" }: { currentEmployee
   const [scheduleEvents,setScheduleEvents]=useState<any[]>([]);
   const [leaveRequests,setLeaveRequests]=useState<any[]>([]);
   const [compTimeRequests,setCompTimeRequests]=useState<any[]>([]);
+  const [showCompletedWorkChanges,setShowCompletedWorkChanges]=useState(false);
   const [msg,setMsg]=useState("");
   async function load(){
     const [e,ov,wt,ab,se,lr,cr]=await Promise.all([
@@ -3058,21 +3260,39 @@ function SettingsPage({ currentEmployee, section="schedule" }: { currentEmployee
   }
   useEffect(()=>{load();},[]);
   function empName(id?:string|null){return id&&empMap[id]?empMap[id].name:"-";}
+  const pendingWorkTimeChanges=workTimeChanges.filter((request:any)=>request.status==="pending");
+  const completedWorkTimeChanges=workTimeChanges.filter((request:any)=>request.status!=="pending");
   return <div className="grid">
     {section==="schedule"&&<>
       <section className="card">
         <h2 className="card-title"><i className="ti ti-calendar-time" aria-hidden="true"></i>근무시간 변경 요청</h2>
-        {workTimeChanges.length===0 ? <p className="subtle">아직 근무시간 변경 요청이 없습니다.</p> : (
+        {pendingWorkTimeChanges.length===0 ? <p className="subtle">승인 대기 중인 근무시간 변경 요청이 없습니다.</p> : (
           <div className="grid">
-            {workTimeChanges.slice(0,8).map((r:any)=>(
+            {pendingWorkTimeChanges.slice(0,8).map((r:any)=>(
               <div className="list-row" key={r.id}>
                 <div>
                   <b>{empName(r.employee_id)}</b>
-                  <div className="subtle">{(r.periods??[]).map((p:any)=>`${p.start_date}~${p.end_date}`).join(" / ") || "-"} · {daysLabel(r.new_work_days??[])} · {timeRangeLabel(r.new_work_start,r.new_work_end)}</div>
+                  <div className="subtle">{workChangePeriodLabel(r)} · {workChangeKind(r)} · {workChangeWorkloadLabel(r)}</div>
                 </div>
                 <span className={`badge ${badgeClass(r.status)}`}>{r.status==="pending"?"승인 대기":r.status==="approved"?"승인":"반려"}</span>
               </div>
             ))}
+          </div>
+        )}
+        {completedWorkTimeChanges.length>0&&(
+          <div style={{marginTop:12}}>
+            <button className="button ghost compact" onClick={()=>setShowCompletedWorkChanges(v=>!v)}>{showCompletedWorkChanges?"처리 완료 숨기기":"승인·반려 기록 보기"} ({completedWorkTimeChanges.length})</button>
+            {showCompletedWorkChanges&&<div className="grid" style={{marginTop:10}}>
+              {completedWorkTimeChanges.slice(0,12).map((r:any)=>(
+                <div className="list-row" key={r.id}>
+                  <div>
+                    <b>{empName(r.employee_id)}</b>
+                    <div className="subtle">{workChangePeriodLabel(r)} · {workChangeKind(r)} · {workChangeWorkloadLabel(r)}</div>
+                  </div>
+                  <span className={`badge ${badgeClass(r.status)}`}>{r.status==="approved"?"승인":"반려"}</span>
+                </div>
+              ))}
+            </div>}
           </div>
         )}
       </section>
@@ -3374,6 +3594,36 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         <button className="icon-button" title="다음 주" onClick={()=>changeWeek(1)}><i className="ti ti-chevron-right" aria-hidden="true"></i></button>
         <button className="button ghost compact schedule-today-button" onClick={()=>setWeekAnchor(todayIso())}>오늘</button>
       </div>
+      {isAll&&activeEmployees.length>0&&(
+        <div className="team-week-overview">
+          <div className="team-week-title">
+            <div><b>직원별 주간 캘린더 요약</b><span>근무일과 실근무시간을 직원별로 빠르게 확인합니다.</span></div>
+            <span>{weekStart} ~ {weekEnd}</span>
+          </div>
+          <div className="team-week-grid">
+            <div className="team-week-head">직원</div>
+            {dates.map(date=>{
+              const d=dateFromIso(date);
+              return <div className="team-week-head" key={`head-${date}`}><b>{["일","월","화","수","목","금","토"][d.getDay()]}</b><small>{d.getMonth()+1}/{d.getDate()}</small></div>;
+            })}
+            {activeEmployees.flatMap(employee=>{
+              const color=employeeColorFromList(activeEmployees,employee.id);
+              return [
+                <div className="team-week-employee" key={`${employee.id}-name`}><i style={{background:color}}></i><div><b>{employee.name}</b><small>{[employee.department,employee.position].filter(Boolean).join(" · ")||employee.employee_no}</small></div></div>,
+                ...dates.map(date=>{
+                  const sched=getScheduleForDate(employee,date,overrides,workTimeChanges);
+                  const workday=(sched.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
+                  const hours=workday?netDailyHours(sched.work_start,sched.work_end,sched.break_start??"12:00",sched.break_end??"13:00"):0;
+                  return <div className={`team-week-cell ${workday?"":"off"}`} key={`${employee.id}-${date}`} style={{"--employee-color":color} as React.CSSProperties}>
+                    <b>{workday?`${timeLabel(sched.work_start)}~${timeLabel(sched.work_end)}`:"휴무"}</b>
+                    <small>{workday?`실근무 ${formatHourValue(hours)}시간`:"근무 없음"}</small>
+                  </div>;
+                }),
+              ];
+            })}
+          </div>
+        </div>
+      )}
       <div className="week-calendar-scroll">
         <div className={`week-calendar ${isAll?"team-view":""}`} style={isAll?{minWidth:78+teamColumnCount*59}:undefined}>
           <div className={`week-calendar-header ${isAll?"team-calendar-header":""}`} style={isAll?{gridTemplateColumns:`78px repeat(${teamColumnCount},59px)`}:undefined}>
@@ -3610,6 +3860,15 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
+  const payrollSummaryRows=employees.filter(e=>e.employment_status==="active").map((employee:any)=>{
+    const week=weeklyStatsForDate(employee,todayIso(),overrides,workTimeChanges);
+    const monthStats=scheduledWorkStats(employee,month.start,month.end,overrides,workTimeChanges);
+    const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
+    const monthlyStandardHours=savedMonthlyHours||monthStats.hours;
+    const monthlySalary=Number(employee.monthly_salary||0);
+    const hourlyWage=Number(employee.hourly_wage||(monthlySalary&&monthlyStandardHours?Math.round(monthlySalary/monthlyStandardHours):0));
+    return {employee,week,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage};
+  });
   return (
     <section className="card">
       <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산</h2>
@@ -3633,6 +3892,19 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
         <div className="form-row"><label className="label">일 근무시간</label><input className="input" value={pay.dailyHours} onChange={e=>setPayField("dailyHours",e.target.value)} placeholder="예: 8" /></div>
       </div>
       <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
+      <div className="payroll-summary-list">
+        <div className="payroll-summary-head">직원별 급여·근무 기준</div>
+        {payrollSummaryRows.map(({employee,week,month,monthlyStandardHours,monthlySalary,hourlyWage}:any)=>(
+          <div className="payroll-summary-row" key={employee.id}>
+            <b>{employee.name}</b>
+            <span>시급 {hourlyWage?won(hourlyWage):"-"}</span>
+            <span>월급 {monthlySalary?won(monthlySalary):"-"}</span>
+            <span>주 {formatHourValue(week.hours)}시간</span>
+            <span>월 {formatHourValue(monthlyStandardHours||month.hours)}시간</span>
+            <small>이번 달 예정 {month.days}일 · 실제 기준 {formatHourValue(month.hours)}시간</small>
+          </div>
+        ))}
+      </div>
       {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 소정근로시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)}</div>}
       {empId&&monthly>0&&(
         <div className="table-wrap" style={{marginTop:8}}>

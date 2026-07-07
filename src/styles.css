@@ -202,6 +202,19 @@ button { cursor: pointer; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table-summary { caption-side: top; text-align: left; padding: 11px 12px; background: #f7f9fc; color: var(--ink); font-size: 13px; font-weight: 700; border-bottom: 1px solid var(--line); }
+.nowrap-cell b, .nowrap-cell span { display: block; white-space: nowrap; }
+.nowrap-cell span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.workload-summary-board { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 10px; margin: 12px 0 14px; }
+.workload-summary-card { border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; padding: 12px; }
+.workload-summary-card b, .workload-summary-card span, .workload-summary-card strong, .workload-summary-card small { display: block; }
+.workload-summary-card b { color: var(--ink); font-size: 14px; }
+.workload-summary-card span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.workload-summary-card strong { margin-top: 7px; color: var(--blue-dark); font-size: 15px; }
+.workload-summary-card small { margin-top: 3px; color: #596579; font-size: 12px; }
+.work-time-record-table td { vertical-align: top; }
+.work-change-kind { display: inline-flex; align-items: center; min-height: 24px; border-radius: 999px; padding: 3px 9px; background: #eef3fe; color: var(--blue-dark); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.work-change-detail { margin-top: 6px; color: var(--ink); font-weight: 700; line-height: 1.45; }
+.work-change-detail + small { display: block; margin-top: 4px; color: var(--muted); line-height: 1.45; }
 th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { background: #f7f9fc; color: #5a6475; font-size: 12px; font-weight: 600; white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
@@ -657,6 +670,20 @@ body { overflow-x: hidden; }
 .rnr-person-task { width: 100%; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; padding: 10px; text-align: left; margin-top: 8px; }
 .rnr-person-task b { display: block; color: #182235; font-size: 14px; margin-bottom: 4px; }
 .rnr-person-task span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; }
+.rnr-section-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 22px 0 10px; }
+.rnr-section-title b { color: #182235; font-size: 15px; }
+.rnr-section-title span { color: var(--muted); font-size: 12px; font-weight: 650; }
+.rnr-stack-board { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 12px; }
+.rnr-stack-column { border: 1px solid #dbe5f5; border-radius: 8px; background: #fbfdff; padding: 12px; min-height: 130px; }
+.rnr-edit-form .textarea { min-height: 96px; }
+.rnr-modal-actions .button { justify-content: center; }
+.payroll-summary-list { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 12px 0 14px; background: #fff; }
+.payroll-summary-head { padding: 10px 12px; background: #f8fafc; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 13px; font-weight: 800; }
+.payroll-summary-row { display: grid; grid-template-columns: minmax(82px,1fr) repeat(4,minmax(96px,auto)) minmax(180px,1.4fr); gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.payroll-summary-row:last-child { border-bottom: 0; }
+.payroll-summary-row b { color: var(--ink); white-space: nowrap; }
+.payroll-summary-row span { color: #364154; white-space: nowrap; }
+.payroll-summary-row small { color: var(--muted); font-size: 12px; }
 .nowrap-select { white-space: nowrap; min-width: 92px; }
 .no-wrap-checkbox { white-space: nowrap; word-break: keep-all; align-items: center; }
 
@@ -706,6 +733,26 @@ body { overflow-x: hidden; }
 
   .employee-account-actions {
     flex-wrap: wrap;
+  }
+
+  .payroll-summary-row {
+    grid-template-columns: minmax(0,1fr) minmax(0,1fr);
+    gap: 6px 10px;
+  }
+
+  .payroll-summary-row b,
+  .payroll-summary-row small {
+    grid-column: 1 / -1;
+  }
+
+  .rnr-section-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workload-summary-board,
+  .rnr-stack-board {
+    grid-template-columns: minmax(0,1fr);
   }
 
   .table-wrap thead {
