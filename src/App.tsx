@@ -981,12 +981,14 @@ function HomePage({ employee }: { employee: any }) {
   const [weekendAsk,setWeekendAsk] = useState<any|null>(null);
   const [expandedLogId,setExpandedLogId] = useState<string|null>(null);
   const [recheckAsk,setRecheckAsk] = useState<any|null>(null);
+  const [earlyCheckoutAsk,setEarlyCheckoutAsk] = useState<any|null>(null);
   const [recheckMode,setRecheckMode] = useState(false);
   const [compTimeRows,setCompTimeRows] = useState<any[]>([]);
   const [todayOverrides,setTodayOverrides] = useState<any[]>([]);
   const [workTimeChanges,setWorkTimeChanges] = useState<any[]>([]);
   const [todayTasks,setTodayTasks] = useState<any[]>([]);
   const [todoDraft,setTodoDraft] = useState({title:"",content:""});
+  const [todoMessage,setTodoMessage] = useState("");
   const [todoTargetEmployeeId,setTodoTargetEmployeeId] = useState("");
   const [todoEmployees,setTodoEmployees] = useState<any[]>([]);
   const [roleGuideEntries,setRoleGuideEntries] = useState<any[]>([]);
@@ -1130,27 +1132,31 @@ function HomePage({ employee }: { employee: any }) {
   }
   function selectTodoTarget(targetEmployeeId:string) {
     setTodoTargetEmployeeId(targetEmployeeId);
+    setTodoMessage("");
     const nextTask=todayTasks.find((task:any)=>String(task.target_employee_id??"")===targetEmployeeId)??null;
     setTodoDraft({title:nextTask?.title??"",content:nextTask?.content??""});
   }
   async function saveTodayTask() {
     if(employee.role!=="admin") return;
+    setTodoMessage("");
     const title=todoDraft.title.trim();
     const content=todoDraft.content.trim();
-    if(!title||!content) return setMessage("오늘의 할일 제목과 내용을 입력해주세요.");
+    if(!title&&!content) return setTodoMessage("오늘의 할일 제목과 내용을 입력해주세요.");
+    const saveTitle=title||"오늘의 할일";
+    const saveContent=content;
     const target_employee_id=todoTargetEmployeeId||null;
-    const payload={task_date:todayIso(),title,content,is_active:true,created_by:employee.id,target_employee_id};
+    const payload={task_date:todayIso(),title:saveTitle,content:saveContent,is_active:true,created_by:employee.id,target_employee_id};
     const result=todayTask?.id
-      ? await supabase.from("daily_tasks").update({title,content,is_active:true,target_employee_id,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
+      ? await supabase.from("daily_tasks").update({title:saveTitle,content:saveContent,is_active:true,target_employee_id,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
       : await supabase.from("daily_tasks").insert(payload).select().single();
-    if(result.error) setMessage(result.error.message);
-    else { setMessage("오늘의 할일이 저장되었습니다."); await load(); }
+    if(result.error) setTodoMessage(result.error.message);
+    else { setTodoMessage("오늘의 할일이 저장되었습니다."); await load(); }
   }
   async function hideTodayTask() {
     if(employee.role!=="admin"||!todayTask?.id) return;
     const {error}=await supabase.from("daily_tasks").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",todayTask.id);
-    if(error) setMessage(error.message);
-    else { setTodoDraft({title:"",content:""}); setMessage("오늘의 할일을 숨겼습니다."); await load(); }
+    if(error) setTodoMessage(error.message);
+    else { setTodoDraft({title:"",content:""}); setTodoMessage("오늘의 할일을 숨겼습니다."); await load(); }
   }
   function detectPlace(lat:number,lng:number,ip:string|null) {
     const approved=workplaces.filter(w=>w.approval_status==="approved"&&w.lat!=null&&w.lng!=null);
@@ -1267,6 +1273,22 @@ function HomePage({ employee }: { employee: any }) {
   const activeCompRows=compTimeRows.filter((request:any)=>request.status==="approved");
   const reminderOffsets=[-5,5,15,30];
 
+  function handleCheckoutClick() {
+    if(!checkedIn) {
+      if(openLogs[0]) closeSpecificLog(openLogs[0]);
+      return;
+    }
+    if(reminderTargetTime&&Date.now()<reminderTargetTime) {
+      setEarlyCheckoutAsk({targetTime:new Date(reminderTargetTime).toISOString()});
+      return;
+    }
+    checkOut();
+  }
+  async function confirmEarlyCheckout() {
+    setEarlyCheckoutAsk(null);
+    await checkOut();
+  }
+
   useEffect(()=>{
     if(!todayLog?.id||!todayLog?.check_in_time||todayLog?.check_out_time||!reminderTargetTime) return;
     let checking=false;
@@ -1330,7 +1352,7 @@ function HomePage({ employee }: { employee: any }) {
         )}
         <div className="punch-grid">
           <button className="button punch" disabled={busy||hasBlockingOpenLog} onClick={handleCheckInClick}>출근하기</button>
-          <button className="button secondary punch" disabled={busy||openLogs.length===0} onClick={()=>checkedIn?checkOut():closeSpecificLog(openLogs[0])}>퇴근하기</button>
+          <button className="button secondary punch" disabled={busy||openLogs.length===0} onClick={handleCheckoutClick}>퇴근하기</button>
         </div>
         {checkedIn&&!checkedOut&&reminderTarget&&(
           <div className="alert reminder-card" style={{marginTop:12}}>
@@ -1417,12 +1439,17 @@ function HomePage({ employee }: { employee: any }) {
           <p style={{margin:"0 0 8px"}}>오늘 <b>{timeOnly(recheckAsk.check_in_time)}</b>에 이미 출근 처리되었습니다.</p>
           <p style={{margin:0}}>재출근하면 현재 시각으로 출근 시간이 갱신되며, 지각 등 근태 상태가 다시 판정될 수 있습니다.</p>
         </ConfirmModal>)}
+        {earlyCheckoutAsk&&(<ConfirmModal title="아직 퇴근 시간이 아닙니다" confirmText="퇴근 처리" cancelText="취소" busy={busy} onCancel={()=>setEarlyCheckoutAsk(null)} onConfirm={confirmEarlyCheckout}>
+          <p style={{margin:"0 0 8px"}}>오늘 퇴근 기준 시각은 <b>{timeOnly(earlyCheckoutAsk.targetTime)}</b>입니다.</p>
+          <p style={{margin:0}}>지금 퇴근하면 현재 시각으로 퇴근 기록이 저장됩니다.</p>
+        </ConfirmModal>)}
       </section>
 
       <div className="home-side-stack">
       {(employee.role==="admin"||todayTask)&&(
         <section className="card today-task-desktop">
           <h2 className="card-title"><i className="ti ti-clipboard-list" aria-hidden="true"></i>오늘의 할일</h2>
+          {employee.role==="admin"&&todoMessage&&<div className="alert" style={{marginTop:10}}>{todoMessage}</div>}
           {employee.role==="admin" ? (
             <div className="today-task-editor">
               <div className="form-row">

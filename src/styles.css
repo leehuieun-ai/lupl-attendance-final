@@ -482,6 +482,7 @@ body { overflow-x: hidden; }
 .app-shell, .container, .card, .topbar-inner { min-width: 0; }
 .body-text, .subtle, .alert, .type-desc, .list-row, .device-row, td { overflow-wrap: anywhere; }
 .modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.modal-actions .button { justify-content: center; text-align: center; }
 
 @media (max-width: 640px) {
   :root { --radius: 10px; }
