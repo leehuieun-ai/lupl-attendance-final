@@ -1197,7 +1197,7 @@ function HomePage({ employee }: { employee: any }) {
     } catch(e:any){setMessage(e.message);setRecheckMode(false);} finally{setBusy(false);}
   }
   function handleCheckInClick() {
-    if(todayLog?.check_in_time) { setRecheckAsk(todayLog); return; }
+    if(todayLog?.check_in_time&&!todayLog?.check_out_time) { setRecheckAsk(todayLog); return; }
     startCheckIn(false);
   }
   async function confirmRecheck() {
