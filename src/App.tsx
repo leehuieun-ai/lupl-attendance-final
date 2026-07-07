@@ -5,7 +5,7 @@ import { getDeviceFingerprint } from "./lib/device";
 import { getCurrentPositionFast, getPublicIp, distanceMeters } from "./lib/geo";
 import {
   calculateAdjustmentDays, calculateLeaveEntitlement, calculateUsedDays,
-  LEAVE_TYPE_META, calcInsurance, calcAbsenceDeduction,
+  LEAVE_TYPE_META, requestToDays, calcInsurance, calcAbsenceDeduction,
 } from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
 
@@ -123,9 +123,13 @@ function formatDateTime(v?: string | null) {
   if (!v) return "-";
   return new Intl.DateTimeFormat("ko-KR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date(v));
 }
-function timeOnly(v?: string | null) {
+function timeOnly(v?: string | Date | null) {
   if (!v) return "-";
   return new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Seoul" }).format(new Date(v));
+}
+function kstHHMM(v: Date | string) {
+  const d = kstDate(v);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
 }
 function clockText(d: Date) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -348,8 +352,20 @@ function breakMinutes(start?: string | null, end?: string | null) {
   return e-s;
 }
 function netDailyHours(start?: string | null, end?: string | null, breakStart?: string | null, breakEnd?: string | null) {
-  const span=scheduleHours(start,end);
-  return Math.max(0, Math.round((span - breakMinutes(breakStart,breakEnd)/60)*10)/10);
+  const workStart=timeToMinutes(start), workEndRaw=timeToMinutes(end);
+  const breakStartMin=timeToMinutes(breakStart), breakEndRaw=timeToMinutes(breakEnd);
+  if(workStart==null||workEndRaw==null) return 0;
+  const workEnd=workEndRaw<=workStart?workEndRaw+24*60:workEndRaw;
+  const span=workEnd-workStart;
+  let overlap=0;
+  if(breakStartMin!=null&&breakEndRaw!=null&&breakEndRaw>breakStartMin){
+    const candidates=[
+      [breakStartMin,breakEndRaw],
+      [breakStartMin+24*60,breakEndRaw+24*60],
+    ];
+    overlap=candidates.reduce((max,[bs,be])=>Math.max(max,Math.max(0,Math.min(workEnd,be)-Math.max(workStart,bs))),0);
+  }
+  return Math.max(0, Math.round(((span-overlap)/60)*10)/10);
 }
 function weeklyScheduledHours(emp:any) {
   return Math.round(netDailyHours(emp?.work_start??"09:00",emp?.work_end??"18:00","12:00","13:00")*(emp?.work_days??["mon","tue","wed","thu","fri"]).length*10)/10;
@@ -386,9 +402,10 @@ function approvedWorkTimeChangeForDate(changes:any[] = [], emp:any, dateIso:stri
 }
 function getScheduleForDate(emp:any, dateIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
   if(!emp) return {work_days:["mon","tue","wed","thu","fri"], work_start:"09:00", work_end:"18:00"};
+  const baseDays=emp.work_days ?? ["mon","tue","wed","thu","fri"];
   const change=approvedWorkTimeChangeForDate(workTimeChanges,emp,dateIso);
   if(change) return {
-    work_days: change.new_work_days ?? emp.work_days ?? ["mon","tue","wed","thu","fri"],
+    work_days: change.new_work_days ?? baseDays,
     work_start: change.new_work_start ?? emp.work_start ?? "09:00",
     work_end: change.new_work_end ?? emp.work_end ?? "18:00",
     break_start: change.new_break_start ?? "12:00",
@@ -396,8 +413,9 @@ function getScheduleForDate(emp:any, dateIso:string, overrides:any[]=[], workTim
   };
   const weekStart=weekStartIso(dateIso);
   const ov=overrides.find((o:any)=>o.employee_id===emp.id && o.week_start===weekStart);
+  const ovDays=Array.isArray(ov?.work_days) ? ov.work_days.filter((day:string)=>baseDays.includes(day)) : undefined;
   return {
-    work_days: ov?.work_days ?? emp.work_days ?? ["mon","tue","wed","thu","fri"],
+    work_days: ovDays ?? baseDays,
     work_start: ov?.work_start ?? emp.work_start ?? "09:00",
     work_end: ov?.work_end ?? emp.work_end ?? "18:00",
   };
@@ -1627,28 +1645,71 @@ function workChangeWorkloadLabel(request:any) {
   const totalHours=Math.round(daily*Number(request?.total_work_days||0)*10)/10;
   return `근무 ${request?.total_work_days??0}일 · 실근무 ${formatHourValue(totalHours)}시간 · 주 ${formatHourValue(request?.weekly_work_hours||0)}시간`;
 }
+function leaveRequestTimeLabel(request:any) {
+  const period=`${request.start_date}${request.end_date&&request.end_date!==request.start_date?`~${request.end_date}`:""}`;
+  const time=request.start_time?` ${String(request.start_time).slice(0,5)}~${String(request.end_time??"").slice(0,5)}`:"";
+  return `${period}${time}`;
+}
+function leaveDeductionLabel(request:any) {
+  if(request.request_type==="comp_leave_use") {
+    const hours=Number((request.amount_hours??(Number(request.amount_days||0)*8))||0);
+    return `추가근무 적립분 ${formatHourValue(hours)}시간 사용`;
+  }
+  if(["sick","official","remote","field"].includes(request.request_type)) return "연차 미차감";
+  const days=requestToDays(request);
+  return days>0 ? `연차 ${formatHourValue(days)}일 차감` : "연차 차감 없음";
+}
 function classifyRnrCategory(text:string) {
   const normalized=String(text||"").toLowerCase();
   return RNR_CATEGORY_RULES.find(rule=>rule.keywords.some(keyword=>normalized.includes(keyword.toLowerCase())))?.label ?? "기타";
 }
 function professionalRnrTitle(text:string, category="기타") {
-  const templates:Record<string,string>={
-    회계:"회계 자료 정리 및 정산 관리",
-    세무:"세무 신고 자료 준비",
-    서류:"문서 관리 및 제출 자료 정리",
-    인사:"인사·근태 운영 지원",
-    운영:"운영 일정 및 현장 준비 관리",
-    홍보:"홍보 콘텐츠 운영 관리",
-    고객응대:"고객 문의 응대 및 안내 관리",
-    개발:"서비스 기능 개선 및 이슈 관리",
-    디자인:"디자인 제작 및 브랜드 자료 관리",
-    AI:"AI 자동화 업무 운영",
-    기타:"업무 실행 및 진행 관리",
+  const clean=String(text||"").trim();
+  const normalized=clean
+    .replace(/https?:\/\/\S+/g,"")
+    .replace(/[“”"']/g,"")
+    .replace(/\b(test|테스트)\b/gi,"")
+    .replace(/(해줘|해주세요|해라|시켜|시키려고|누구한테|내가|좀|주절주절|해야\s*해?|해놔|해두기|부탁|진행해|정리해)/g," ")
+    .replace(/\s+/g," ")
+    .trim();
+  const categoryPrefix:Record<string,string>={
+    회계:"회계",
+    세무:"세무",
+    서류:"문서",
+    인사:"인사",
+    운영:"운영",
+    홍보:"홍보",
+    고객응대:"고객 응대",
+    개발:"개발",
+    디자인:"디자인",
+    AI:"AI 자동화",
+    기타:"업무",
   };
-  return templates[category]??templates.기타;
+  const keywordMap=[
+    {re:/영수증|증빙|정산|입금|출금|비용|매출|청구|결제/, title:"증빙 및 정산 자료 관리"},
+    {re:/부가세|원천세|세금|세무사|신고/, title:"세무 신고 자료 관리"},
+    {re:/계약서|공문|제출|양식|파일|서류|문서|자료/, title:"문서 및 제출 자료 관리"},
+    {re:/근태|휴가|연차|채용|근로계약|급여/, title:"인사·근태 자료 관리"},
+    {re:/비품|소모품|재고|교육장|학교|일정|준비|체크|운영/, title:"운영 준비 및 일정 관리"},
+    {re:/블로그|인스타|SNS|콘텐츠|홍보|마케팅|광고|제휴/, title:"홍보 콘텐츠 운영 관리"},
+    {re:/전화|문의|상담|학부모|고객|안내|응대/, title:"고객 문의 응대 관리"},
+    {re:/버그|배포|앱|시스템|기능|개발|오류/, title:"서비스 기능 및 이슈 관리"},
+    {re:/디자인|시안|이미지|카드뉴스|브랜드/, title:"디자인 제작 자료 관리"},
+    {re:/AI|자동화|프롬프트|데이터|모델/, title:"AI 자동화 업무 관리"},
+  ];
+  const matched=keywordMap.find(item=>item.re.test(normalized));
+  if(matched) return matched.title;
+  const nouns=normalized
+    .split(/[\s,，、/·]+/)
+    .map(word=>word.replace(/[^가-힣a-zA-Z0-9]/g,""))
+    .filter(word=>word.length>=2)
+    .filter(word=>!["업무","관리","확인","진행","정리","담당","사람","내용","관련"].includes(word))
+    .slice(0,3);
+  if(nouns.length>0) return `${nouns.join(" ")} 관리 업무`;
+  return `${categoryPrefix[category]??"업무"} 관리 업무`;
 }
 function rnrDisplayTitle(entry:any) {
-  return professionalRnrTitle(`${entry?.title??""} ${entry?.summary??""}`, entry?.category||classifyRnrCategory(`${entry?.title??""} ${entry?.summary??""}`));
+  return professionalRnrTitle(`${entry?.raw_input??""} ${entry?.summary??""} ${entry?.title??""}`, entry?.category||classifyRnrCategory(`${entry?.raw_input??""} ${entry?.summary??""} ${entry?.title??""}`));
 }
 function rnrDutyLine(text:any) {
   const cleaned=String(text||"").trim().replace(/[.!?。]+$/,"");
@@ -2642,6 +2703,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   const [scheduleEmpId,setScheduleEmpId]=useState("");
   const [scheduleMsg,setScheduleMsg]=useState("");
   const [leaveModalEmp,setLeaveModalEmp]=useState<any|null>(null);
+  const [leaveUsageEmpId,setLeaveUsageEmpId]=useState("all");
 
   async function load() {
     const {data:emps}=await supabase.from("employees").select("*").order("created_at",{ascending:false});
@@ -2684,7 +2746,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     const compH=Math.round(compEarned*8*10)/10;
     const compUsedH=reqs.filter(r=>r.request_type==="comp_leave_use"&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
     const pendingComp=comps.filter(c=>c.status==="pending").reduce((s,c)=>s+Number(c.converted_days||0),0);
-    return {total,used,remain,compEarned,compRemainH:Math.max(0,compH-compUsedH),pendingComp};
+    return {total,used,remain,compEarned,compUsedH,compRemainH:Math.max(0,compH-compUsedH),pendingComp};
   }
 
   async function createEmployee() {
@@ -2842,18 +2904,28 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   function compSchedule(request:any){
     return getScheduleForDate(empMap[request.employee_id],request.work_date,overrides,workTimeRequests.filter(r=>r.status==="approved"));
   }
+  function expectedCompCheckout(request:any, log=compAttendance(request)){
+    const schedule=compSchedule(request);
+    if(log?.check_in_time){
+      const startMin=timeToMinutes(schedule.work_start)??9*60;
+      const endMin=timeToMinutes(schedule.work_end)??18*60;
+      const shiftSpan=endMin>startMin ? endMin-startMin : (24*60-startMin)+endMin;
+      return addMinutes(new Date(log.check_in_time),shiftSpan);
+    }
+    return kstDateTime(request.work_date,schedule.work_end);
+  }
   function estimatedOvertime(request:any){
     const log=compAttendance(request);
     if(!log?.check_out_time) return null;
-    const scheduledEnd=kstDateTime(request.work_date,compSchedule(request).work_end);
+    const scheduledEnd=expectedCompCheckout(request,log);
     return Math.max(0,Math.round(((new Date(log.check_out_time).getTime()-scheduledEnd.getTime())/3600000)*100)/100);
   }
   async function reviewCompRequest(request:any,status:string){
     const usesActualCheckout=request.work_date>="2026-06-24";
     const completedLog=compAttendance(request);
-    const schedule=compSchedule(request);
+    const scheduledEnd=expectedCompCheckout(request,completedLog);
     const result=usesActualCheckout&&completedLog
-      ? await supabase.rpc("review_comp_time_attendance",{p_request_id:request.id,p_status:status,p_scheduled_end:String(schedule.work_end??"18:00").slice(0,5),p_review_note:status==="approved"?"실제 퇴근시간 기준 승인":"초과근무 미인정 및 예정 퇴근시간 적용"})
+      ? await supabase.rpc("review_comp_time_attendance",{p_request_id:request.id,p_status:status,p_scheduled_end:kstHHMM(scheduledEnd),p_review_note:status==="approved"?"실제 퇴근시간 기준 승인":"초과근무 미인정 및 예정 퇴근시간 적용"})
       : await supabase.from("comp_time_requests").update({
           status,
           reviewed_by:currentEmployee.id,
@@ -2877,6 +2949,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
 
   const filtered=employees.filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?e.employment_status!=="active":e.employment_status==="active");
   const activeEmployees=employees.filter(e=>e.employment_status==="active");
+  const leaveUsageRows=requests
+    .filter((request:any)=>requestTypeLabels[request.request_type])
+    .filter((request:any)=>leaveUsageEmpId==="all"||request.employee_id===leaveUsageEmpId);
   const todayLogByEmployee:Record<string,any>={};
   allLogs
     .filter((l:any)=>isToday(l.check_in_time))
@@ -2949,7 +3024,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>직원</th><th>출근 위치</th><th>출근 시각</th><th>퇴근 시각</th><th>상태</th></tr></thead>
+            <thead><tr><th>직원</th><th>출근 위치</th><th>출근 시각</th><th>퇴근 시각</th><th>상태</th><th>처리</th></tr></thead>
             <tbody>
               {dailyRows.map(({employee:e,log}:any)=>{
                 const display=attendanceDisplay(e,log,overrides,workTimeRequests.filter(r=>r.status==="approved"));
@@ -2960,6 +3035,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
                   <td>{log ? formatDateTime(log.check_in_time) : "-"}</td>
                   <td>{log?.check_out_time ? formatDateTime(log.check_out_time) : "-"}</td>
                   <td><div className="status-badges"><span className={`badge ${display.primaryClass}`}>{display.primary}</span>{display.workType&&<span className="badge work-type">{display.workType}</span>}</div>{display.primary==="지각"&&<span className="late-detail">{display.lateMinutes}분 지각 · 기준 {String(display.scheduleStart).slice(0,5)}</span>}</td>
+                  <td>{log&&!log.check_out_time ? <button className="button danger compact" onClick={()=>forceClockOut(log.id)}>강제 퇴근</button> : <span className="subtle">-</span>}</td>
                 </tr>
                 );
               })}
@@ -3011,7 +3087,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
                   <b>{empName(r.employee_id)}</b>
                   <div className="subtle">{r.work_date} · 신청 {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)} · {r.hours}시간</div>
                   <div className="type-desc" style={{marginTop:6}}>신청 사유: {r.reason||"사유 미입력"}</div>
-                  {usesActualCheckout&&<div className="type-desc" style={{marginTop:6}}>예정 퇴근 {String(compSchedule(r).work_end??"18:00").slice(0,5)} · 실제 퇴근 {log?.check_out_time?timeOnly(log.check_out_time):"아직 퇴근 전"} · 인정 예상 {actual==null?"-":`${actual}시간`}</div>}
+                  {usesActualCheckout&&<div className="type-desc" style={{marginTop:6}}>예정 퇴근 {log?timeOnly(expectedCompCheckout(r,log)):String(compSchedule(r).work_end??"18:00").slice(0,5)} · 실제 퇴근 {log?.check_out_time?timeOnly(log.check_out_time):"아직 퇴근 전"} · 인정 예상 {actual==null?"-":`${actual}시간`}</div>}
                 </div>
                 <div className="actions">
                   <button className="button secondary" onClick={()=>reviewCompRequest(r,"approved")}>{log?.check_out_time?"실제시간 정산":"초과근무 승인"}</button>
@@ -3108,6 +3184,42 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
           </table>
         </div>
       </CollapsibleSection>}
+
+      {view==="employees"&&<section className="card">
+        <h2 className="card-title"><i className="ti ti-calendar-check" aria-hidden="true"></i>직원 연차 소진내용</h2>
+        <p className="subtle" style={{marginBottom:12}}>반차·연차는 연차 차감으로, 대체휴가 시간 사용은 추가근무 적립분 차감으로 구분해서 표시합니다.</p>
+        <div className="comp-employee-filter leave-usage-filter">
+          <button className={leaveUsageEmpId==="all"?"active":""} onClick={()=>setLeaveUsageEmpId("all")}>
+            <b>전체</b>
+            <span>직원별 소진 내역 전체 보기</span>
+          </button>
+          {activeEmployees.map((employee:any)=>{
+            const lv=leaveForEmployee(employee.id);
+            return <button key={employee.id} className={leaveUsageEmpId===employee.id?"active":""} onClick={()=>setLeaveUsageEmpId(employee.id)}>
+              <b>{employee.name}</b>
+              <span>연차 사용 {lv?.used.toFixed(1)??"0.0"}일 · 대체휴가 사용 {formatHourValue(lv?.compUsedH||0)}시간</span>
+            </button>;
+          })}
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>직원</th><th>구분</th><th>기간/시간</th><th>차감 기준</th><th>상태</th><th>사유</th></tr></thead>
+            <tbody>
+              {leaveUsageRows.slice(0,80).map((request:any)=>(
+                <tr key={request.id}>
+                  <td data-label="직원"><b>{empName(request.employee_id)}</b></td>
+                  <td data-label="구분">{requestTypeLabels[request.request_type]??request.request_type}</td>
+                  <td data-label="기간/시간">{leaveRequestTimeLabel(request)}</td>
+                  <td data-label="차감 기준"><span className={request.request_type==="comp_leave_use"?"leave-source comp":"leave-source annual"}>{leaveDeductionLabel(request)}</span></td>
+                  <td data-label="상태"><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
+                  <td data-label="사유">{request.reason??"-"}</td>
+                </tr>
+              ))}
+              {leaveUsageRows.length===0&&<tr><td colSpan={6} className="subtle">휴가 사용 기록이 없습니다.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>}
 
       {view==="employees"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-chart-pie" aria-hidden="true"></i>직원 연차 현황</h2>
@@ -3988,15 +4100,47 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
     if(!scheduleEmpId) return setMsg("직원을 선택해주세요.");
     if(contractType==="fixed_term" && (!contractStart || !contractEnd)) return setMsg("기간제는 계약 시작일과 종료일을 입력해주세요.");
     if(contractType==="fixed_term" && contractEnd < contractStart) return setMsg("계약 종료일은 시작일보다 뒤여야 합니다.");
+    const oldDays=scheduleEmp?.work_days??["mon","tue","wed","thu","fri"];
+    const oldStart=scheduleEmp?.work_start??"09:00";
+    const oldEnd=scheduleEmp?.work_end??"18:00";
+    const dailyHours=netDailyHours(editStart,editEnd,"12:00","13:00");
+    const weeklyWorkDays=editDays.length;
+    const monthlyStandardHours=Math.round(weeklyWorkDays*dailyHours*4.345*10)/10;
     const {error}=await supabase.from("employees").update({
       work_days:editDays,
       work_start:editStart,
       work_end:editEnd,
+      weekly_work_days:weeklyWorkDays,
+      daily_work_hours:dailyHours,
+      monthly_standard_hours:monthlyStandardHours,
       contract_type:contractType,
       contract_start:contractType==="fixed_term"?contractStart:null,
       contract_end:contractType==="fixed_term"?contractEnd:null,
     }).eq("id",scheduleEmpId);
-    if(error) setMsg(`저장 실패: ${error.message}`); else { setMsg("스케줄이 저장되었습니다."); await onChanged(); }
+    if(error) setMsg(`저장 실패: ${error.message}`);
+    else {
+      const currentWeekStart=weekStartIso(todayIso());
+      const staleOverrides=overrides.filter((override:any)=>override.employee_id===scheduleEmpId&&override.week_start>=currentWeekStart);
+      const cleanupResults=await Promise.all(staleOverrides.map(async (override:any)=>{
+        const overrideDays=override.work_days??oldDays;
+        const hasRemovedDay=overrideDays.some((day:string)=>!editDays.includes(day));
+        const timeMatchesOld=timeLabel(override.work_start)===timeLabel(oldStart)&&timeLabel(override.work_end)===timeLabel(oldEnd);
+        const followsOldBase=sameDays(overrideDays,oldDays)&&timeMatchesOld;
+        if(!hasRemovedDay&&!followsOldBase&&!timeMatchesOld) return null;
+        const nextDays=followsOldBase ? editDays : overrideDays.filter((day:string)=>editDays.includes(day));
+        const result=await supabase.from("weekly_schedule_overrides").update({
+          work_days:nextDays,
+          work_start:timeMatchesOld?editStart:override.work_start,
+          work_end:timeMatchesOld?editEnd:override.work_end,
+          updated_at:new Date().toISOString(),
+        }).eq("id",override.id);
+        return result.error?.message ?? "ok";
+      }));
+      const cleanupErrors=cleanupResults.filter((result):result is string=>!!result&&result!=="ok");
+      if(cleanupErrors.length>0) setMsg(`스케줄은 저장됐지만 주간 변경 정리 실패: ${cleanupErrors[0]}`);
+      else setMsg(`스케줄이 저장되었습니다. 주 ${formatHourValue(dailyHours*weeklyWorkDays)}시간 · 월 ${formatHourValue(monthlyStandardHours)}시간 기준으로 반영됩니다.`);
+      await onChanged();
+    }
   }
 
   // 주간 오버라이드

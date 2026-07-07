@@ -628,6 +628,9 @@ body { overflow-x: hidden; }
 .employee-status-badge, .employee-status-action { white-space: nowrap; }
 .employee-account-actions { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; }
 .employee-account-actions .button.compact { font-size: 12px; padding: 7px 9px; min-height: 32px; }
+.leave-source { display: inline-flex; align-items: center; width: fit-content; padding: 5px 8px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.leave-source.annual { color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; }
+.leave-source.comp { color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; }
 .role-guide-card {
   margin: 0 0 14px;
   padding: 13px 14px;
