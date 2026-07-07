@@ -525,19 +525,18 @@ function ApprovedCompCard({ compRequests, empMap, onChanged }: { compRequests:an
     const {error}=await supabase.from("comp_time_requests").delete().eq("id",id);
     if(error) setMsg(error.message); else onChanged();
   }
-  if(approved.length===0) return null;
   const activeEmps=Array.from(new Set(approved.map(r=>r.employee_id))).map(id=>empMap[id]).filter(Boolean);
   return (
     <section className="card">
       <h2 className="card-title"><i className="ti ti-clock-check" aria-hidden="true"></i>추가근무 적립 내역</h2>
-      <div className="form-row" style={{marginBottom:12}}>
-        <select className="select" value={filterEmpId} onChange={e=>setFilterEmpId(e.target.value)}>
-          <option value="">전체 직원</option>
-          {activeEmps.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
-        </select>
-      </div>
+      {approved.length===0 ? <p className="subtle">아직 승인되어 적립된 추가근무 내역이 없습니다.</p> : <div className="form-row" style={{marginBottom:12}}>
+          <select className="select" value={filterEmpId} onChange={e=>setFilterEmpId(e.target.value)}>
+            <option value="">전체 직원</option>
+            {activeEmps.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+        </div>}
       {msg&&<div className="alert error">{msg}</div>}
-      <div className="table-wrap">
+      {approved.length>0&&<div className="table-wrap">
         <table>
           <caption className="table-summary">합계 {shownHours.toFixed(1)}시간 · {shownDays.toFixed(2)}일</caption>
           <thead><tr><th>직원</th><th>날짜</th><th>시간</th><th>적립일수</th><th>사유</th><th></th></tr></thead>
@@ -554,7 +553,7 @@ function ApprovedCompCard({ compRequests, empMap, onChanged }: { compRequests:an
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}
     </section>
   );
 }
@@ -2997,10 +2996,31 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
         </div>
       </CollapsibleSection>}
 
-      {showsApprovals&&<WeekendCompCard employees={employees} empMap={empMap} allLogs={allLogs} compRequests={compRequests} currentEmployee={currentEmployee} onChanged={load} />}
+      {view==="employees"&&<ApprovedCompCard compRequests={compRequests} empMap={empMap} onChanged={load} />}
 
-      {showsApprovals&&<section className="card">
-        <h2 className="card-title"><i className="ti ti-file-description" aria-hidden="true"></i>근무시간 변경 기록</h2>
+      {view==="employees"&&<section className="card">
+        <h2 className="card-title"><i className="ti ti-clock-edit" aria-hidden="true"></i>근무시간 변경 요청</h2>
+        {pT.length===0 ? <p className="subtle">승인 대기 중인 근무시간 변경 요청이 없습니다.</p> : (
+          <div className="grid two">
+            {pT.map((r:any)=>(
+              <div className="list-row" key={r.id} style={{flexDirection:"column",alignItems:"stretch"}}>
+                <div>
+                  <b>{empName(r.employee_id)}</b>
+                  <div className="subtle">{workChangePeriodLabel(r)} · {workChangeKind(r)}</div>
+                </div>
+                <div className="type-desc" style={{marginTop:8,marginBottom:0}}>
+                  {workChangeConditionLabel(r)}<br/>
+                  {workChangeWorkloadLabel(r)}<br/>
+                  사유 {r.reason||"-"}
+                </div>
+                <div className="actions"><button className="button secondary" onClick={()=>reviewWorkTimeRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewWorkTimeRequest(r.id,"rejected")}>반려</button></div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>}
+
+      {view==="employees"&&<CollapsibleSection title="근무시간 변경 기록" icon="ti-file-description" defaultOpen={false}>
         <p className="subtle" style={{marginBottom:12}}>세무·급여 확인용으로 이번 달 직원별 근무 예정일과 실근무시간을 함께 표시합니다.</p>
         <div className="workload-summary-board">
           {employeeWorkSummaries.map(({employee,month,week}:any)=>(
@@ -3032,9 +3052,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
             })}</tbody>
           </table>
         </div>
-      </section>}
-
-      {view==="employees"&&<ApprovedCompCard compRequests={compRequests} empMap={empMap} onChanged={load} />}
+      </CollapsibleSection>}
 
       {view==="employees"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-chart-pie" aria-hidden="true"></i>직원 연차 현황</h2>
