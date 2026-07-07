@@ -56,6 +56,9 @@ const workplaceTypeLabels: Record<string,string> = { office:"사무실", special
 const requestTypeLabels: Record<string,string> = { annual:"연차", half_am:"오전 반차", half_pm:"오후 반차", hourly:"시간차", sick:"병가", official:"공가", remote:"재택", field:"외근", special:"특별휴가", substitute:"대체휴가", compensatory:"보상휴가", time_fix:"근무시간 수정", comp_leave_use:"대체휴가 시간 사용" };
 const REQUEST_TYPES_UI = ["annual","half_am","half_pm","hourly","sick","official","special","substitute","compensatory"];
 const SINGLE_DAY_TYPES = ["half_am","half_pm","hourly","comp_leave_use"];
+const LOGIN_EMAIL_ALIASES: Record<string,string[]> = {
+  "leehuieun@lupl.kr": ["ADMIN001","22061201"],
+};
 
 function internalEmail(no: string) { return `${no.trim().toLowerCase()}@lupl.local`; }
 function won(n: number) { return Math.round(n).toLocaleString("ko-KR") + "원"; }
@@ -745,9 +748,17 @@ function LoginPage() {
   async function login() {
     setMessage("");
     const loginId=employeeNo.trim();
-    const email=loginId.includes("@") ? loginId.toLowerCase() : internalEmail(loginId);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setMessage("사번/이메일 또는 비밀번호를 확인해주세요.");
+    const normalizedId=loginId.toLowerCase();
+    const aliasNos=LOGIN_EMAIL_ALIASES[normalizedId]??[];
+    const candidateEmails=Array.from(new Set([
+      ...aliasNos.map(internalEmail),
+      loginId.includes("@") ? normalizedId : internalEmail(loginId),
+    ]));
+    for(const email of candidateEmails){
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if(!error) return;
+    }
+    setMessage("사번/이메일 또는 비밀번호를 확인해주세요.");
   }
   return (
     <div className="container"><section className="card auth-card">
