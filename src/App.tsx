@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements";
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
 const ALL_DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
@@ -68,6 +68,29 @@ const WORK_TIME_CHANGE_MODE_LABELS:Record<string,string> = {
   work_time:"근무시간 변경",
   date_change:"근무일 변경",
   no_work:"근무 안 함",
+};
+const IMPROVEMENT_TYPES = [
+  {value:"bug",label:"오류"},
+  {value:"ux",label:"불편"},
+  {value:"design",label:"디자인"},
+  {value:"feature",label:"기능추가"},
+  {value:"urgent",label:"긴급"},
+];
+const IMPROVEMENT_STATUS_LABELS:Record<string,string>={open:"대기",reviewing:"검토",planned:"수정 예정",done:"완료",dismissed:"보류"};
+const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
+  attendance:["오늘의 할일","출근하기","퇴근하기","내 기기","최근 기록","브라우저 알림"],
+  leave:["휴가 신청","연차 현황","신청 내역","대체휴가 시간 사용"],
+  overtime:["추가근무 신청","추가근무 내역","대체휴가 적립"],
+  worktime:["한 문장 입력","기존 근무조건","변경 후 근무조건","서명","요청 내역"],
+  "admin-dashboard":["승인 대기","일일 직원 근무 현황","강제 퇴근","확인 완료"],
+  employees:["추가근무 적립 내역","근무시간 변경 요청","근무시간 변경 기록","직원 연차 소진내용","직원 연차 현황","직원 계정 생성","직원 관리"],
+  workplaces:["근무지 등록","승인된 근무지","근무지 승인"],
+  schedule:["직원별 주간 캘린더","직원 출근 스케줄 설정","주간 스케줄 변경","특정 기간 미출근 설정"],
+  payroll:["급여 계산","직원별 급여·근무 기준","공제 내역"],
+  reports:["근태 요약","근태 기록","엑셀 내보내기"],
+  consents:["직원 서명 리포트","개인정보 동의","근무시간 변경 요청 서명"],
+  rnr:["업무 메모","AI 정리","R&R 스택","담당자별 보드"],
+  improvements:["개선 요청 목록","AI 정리","상태 관리"],
 };
 
 const workplaceTypeLabels: Record<string,string> = { office:"사무실", special_school:"특수학교", external_education:"외부 교육장", remote:"재택", other_field:"기타 외근지" };
@@ -779,6 +802,7 @@ export default function App() {
     payroll:"급여 계산",
     reports:"근태 보고서",
     consents:"직원 동의서",
+    improvements:"개선 요청함",
   };
   const personalMenus:{id:Tab;label:string;icon:string}[]=[
     {id:"attendance",label:"출퇴근",icon:"ti-clock"},
@@ -799,7 +823,9 @@ export default function App() {
   const extraMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
     {id:"payroll",label:"급여 계산",icon:"ti-coin"},
     {id:"rnr",label:"업무 R&R",icon:"ti-sitemap"},
+    {id:"improvements",label:"개선 요청함",icon:"ti-notes"},
   ];
+  const improvementMenuOptions=[...personalMenus,...adminMenus,...reportMenus,...extraMenus].map(item=>({id:item.id,label:item.label}));
   function go(next:Tab){setTab(next);setMobileNavOpen(false);}
   function menuButton(item:{id:Tab;label:string;icon:string;badge?:number}){
     return <button key={item.id} className={`side-nav-item ${tab===item.id?"active":""}`} onClick={()=>go(item.id)}><i className={`ti ${item.icon}`} aria-hidden="true"></i><span>{item.label}</span>{!!item.badge&&<b className="count-badge">{item.badge}</b>}</button>;
@@ -829,7 +855,7 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-inner">
             <button className="mobile-menu-button" title="메뉴 열기" onClick={()=>setMobileNavOpen(true)}><i className="ti ti-menu-2" aria-hidden="true"></i></button>
-            <div className="page-heading"><span>{["reports","consents"].includes(tab)?"리포트":["payroll","rnr"].includes(tab)?"기타":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리자":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
+            <div className="page-heading"><span>{["reports","consents"].includes(tab)?"리포트":["payroll","rnr","improvements"].includes(tab)?"기타":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리자":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
             <div className="topbar-user"><span>{employee.name}</span><b>{employee.employee_no} · {isAdmin?"관리자":"직원"}</b></div>
           </div>
         </header>
@@ -847,8 +873,10 @@ export default function App() {
           {tab==="payroll" && isAdmin && <SettingsPage currentEmployee={employee} section="payroll" />}
           {tab==="reports" && isAdmin && <ReportsPage />}
           {tab==="consents" && isAdmin && <ConsentReportPage />}
+          {tab==="improvements" && isAdmin && <ImprovementRequestsPage currentEmployee={employee} menuOptions={improvementMenuOptions} />}
         </main>
       </div>
+      <ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={pageTitles[tab]} menuOptions={improvementMenuOptions} />
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
       {validPrivacyConsent && !validWorkTimeConsent && validPrivacyConsent.consent_version !== PRIVACY_CONSENT_VERSION && <WorkTimeConsentModal employee={employee} onDone={load} />}
     </div>
@@ -887,6 +915,171 @@ function LoginPage() {
 
 function InactivePage({ signOut }: { signOut: () => void }) {
   return <div className="container"><section className="card auth-card"><h1 className="card-title">비활성 계정입니다</h1><p className="subtle">관리자에게 계정 활성화를 요청해주세요.</p><button className="button full" onClick={signOut}>로그아웃</button></section></div>;
+}
+
+function ImprovementQuickCapture({ employee, currentTab, currentPageTitle, menuOptions }:
+  { employee:any; currentTab:Tab; currentPageTitle:string; menuOptions:{id:Tab;label:string}[] }) {
+  const [open,setOpen]=useState(false);
+  const [requestType,setRequestType]=useState("bug");
+  const [menuId,setMenuId]=useState<Tab>(currentTab);
+  const [submenu,setSubmenu]=useState("");
+  const [note,setNote]=useState("");
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState(false);
+  useEffect(()=>{
+    function onKeyDown(event:KeyboardEvent) {
+      if(event.ctrlKey&&event.shiftKey&&event.key.toLowerCase()==="m"){
+        event.preventDefault();
+        setMenuId(currentTab);
+        setOpen(true);
+      }
+    }
+    window.addEventListener("keydown",onKeyDown);
+    return ()=>window.removeEventListener("keydown",onKeyDown);
+  },[currentTab]);
+  const currentMenu=menuOptions.find(menu=>menu.id===menuId);
+  const submenuOptions=IMPROVEMENT_SUBMENU_OPTIONS[menuId]??[];
+  async function save() {
+    setMsg("");
+    if(!note.trim()) return setMsg("개선 메모를 입력해주세요.");
+    setBusy(true);
+    const selectedType=IMPROVEMENT_TYPES.find(type=>type.value===requestType);
+    const {error}=await supabase.from("improvement_requests").insert({
+      created_by:employee.id,
+      request_type:requestType,
+      request_type_label:selectedType?.label??requestType,
+      menu_id:menuId,
+      menu_label:currentMenu?.label??currentPageTitle,
+      submenu_label:submenu||null,
+      page_title:currentPageTitle,
+      page_path:`${window.location.pathname}${window.location.hash}`,
+      note:note.trim(),
+      status:"open",
+      user_agent:navigator.userAgent,
+      viewport_width:window.innerWidth,
+      viewport_height:window.innerHeight,
+    });
+    if(error) setMsg(error.message.includes("improvement_requests")?"개선 요청 저장 테이블이 아직 DB에 없습니다. 새 SQL 패치를 먼저 실행해주세요.":error.message);
+    else { setMsg("개선 요청함에 저장되었습니다."); setNote(""); setSubmenu(""); setTimeout(()=>setOpen(false),650); }
+    setBusy(false);
+  }
+  return (
+    <>
+      <button className="improvement-fab" title="개선 메모 열기 (Ctrl+Shift+M)" onClick={()=>{setMenuId(currentTab);setOpen(true);}}>
+        <i className="ti ti-message-plus" aria-hidden="true"></i>
+      </button>
+      {open&&<div className="modal-backdrop improvement-backdrop" onClick={()=>setOpen(false)}>
+        <div className="modal-box improvement-modal" onClick={e=>e.stopPropagation()}>
+          <div className="modal-header">
+            <h2 className="card-title" style={{margin:0}}><i className="ti ti-message-plus" aria-hidden="true"></i>개선 메모</h2>
+            <button className="modal-close" title="닫기" onClick={()=>setOpen(false)}><i className="ti ti-x" aria-hidden="true"></i></button>
+          </div>
+          <div className="grid two">
+            <div className="form-row"><label className="label">메모 유형</label><select className="select" value={requestType} onChange={e=>setRequestType(e.target.value)}>{IMPROVEMENT_TYPES.map(type=><option key={type.value} value={type.value}>{type.label}</option>)}</select></div>
+            <div className="form-row"><label className="label">메뉴</label><select className="select" value={menuId} onChange={e=>{setMenuId(e.target.value as Tab);setSubmenu("");}}>{menuOptions.map(menu=><option key={menu.id} value={menu.id}>{menu.label}</option>)}</select></div>
+          </div>
+          <div className="form-row"><label className="label">하위 항목</label><select className="select" value={submenu} onChange={e=>setSubmenu(e.target.value)}><option value="">선택 안 함</option>{submenuOptions.map(option=><option key={option} value={option}>{option}</option>)}</select></div>
+          <div className="form-row"><label className="label">메모</label><textarea className="textarea compact-textarea" value={note} onChange={e=>setNote(e.target.value)} placeholder="예: 직원 현황에서 강제퇴근 버튼이 너무 안 보여서 바로 처리하기 어렵다." /></div>
+          <p className="subtle">현재 화면: {currentPageTitle} · 단축키 Ctrl+Shift+M</p>
+          {msg&&<div className={`alert ${msg.includes("저장")?"success":"error"}`}>{msg}</div>}
+          <div className="actions" style={{justifyContent:"flex-end"}}>
+            <button className="button ghost" onClick={()=>setOpen(false)}>닫기</button>
+            <button className="button" disabled={busy} onClick={save}><i className="ti ti-check" aria-hidden="true"></i>{busy?"저장 중":"저장"}</button>
+          </div>
+        </div>
+      </div>}
+    </>
+  );
+}
+
+function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmployee:any; menuOptions:{id:Tab;label:string}[] }) {
+  const [rows,setRows]=useState<any[]>([]);
+  const [statusFilter,setStatusFilter]=useState("open");
+  const [menuFilter,setMenuFilter]=useState("all");
+  const [msg,setMsg]=useState("");
+  const [aiBusy,setAiBusy]=useState(false);
+  const [aiSummary,setAiSummary]=useState<any|null>(null);
+  async function load() {
+    const {data,error}=await supabase.from("improvement_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(300);
+    if(error) setMsg(error.message.includes("improvement_requests")?"개선 요청 저장 테이블이 아직 DB에 없습니다. 새 SQL 패치를 먼저 실행해주세요.":error.message);
+    else { setRows(data??[]); setMsg(""); }
+  }
+  useEffect(()=>{load();},[]);
+  const visible=rows.filter(row=>(statusFilter==="all"||row.status===statusFilter)&&(menuFilter==="all"||row.menu_id===menuFilter));
+  async function updateStatus(id:string,status:string) {
+    const {error}=await supabase.from("improvement_requests").update({status,updated_at:new Date().toISOString()}).eq("id",id);
+    if(error) setMsg(error.message); else await load();
+  }
+  async function summarize() {
+    setMsg(""); setAiBusy(true); setAiSummary(null);
+    try {
+      const {data:sessionData}=await supabase.auth.getSession();
+      const token=sessionData.session?.access_token;
+      if(!token) throw new Error("로그인이 필요합니다.");
+      const response=await fetch("/api/improvement-summarize",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+        body:JSON.stringify({requests:visible.slice(0,80).map(row=>({
+          id:row.id,
+          type:row.request_type_label||row.request_type,
+          menu:row.menu_label,
+          submenu:row.submenu_label,
+          note:row.note,
+          status:row.status,
+          created_at:row.created_at,
+          requester:row.employees?.name,
+        }))}),
+      });
+      const data=await response.json();
+      if(!response.ok) throw new Error(data?.error||"AI 정리 실패");
+      setAiSummary(data.summary);
+    } catch(error:any) {
+      setMsg(error.message||String(error));
+    } finally {
+      setAiBusy(false);
+    }
+  }
+  const counts=IMPROVEMENT_TYPES.map(type=>({type,count:rows.filter(row=>row.request_type===type.value&&row.status==="open").length}));
+  const aiText=aiSummary ? [
+    `요약: ${aiSummary.overview??""}`,
+    ...(aiSummary.priority_items??[]).map((item:any,index:number)=>`${index+1}. [${item.menu??"-"}] ${item.title??""} - ${item.reason??""}`),
+    ...(aiSummary.action_items??[]).map((item:any,index:number)=>`작업 ${index+1}: ${item.task??item}`),
+  ].join("\n") : "";
+  return (
+    <section className="card improvement-page">
+      <div className="section-head">
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>앱에서 바로 남긴 개선 메모가 쌓입니다. 최종 수정은 요청하실 때 진행합니다.</p></div>
+        <button className="button secondary" onClick={summarize} disabled={aiBusy||visible.length===0}><i className="ti ti-sparkles" aria-hidden="true"></i>{aiBusy?"정리 중":"AI로 정리"}</button>
+      </div>
+      {msg&&<div className="alert error">{msg}</div>}
+      <div className="improvement-metrics">{counts.map(({type,count})=><div className="metric" key={type.value}><div className="metric-value">{count}</div><div className="metric-label">{type.label}</div></div>)}</div>
+      <div className="grid two">
+        <div className="form-row"><label className="label">상태</label><select className="select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="open">대기</option><option value="all">전체</option>{Object.entries(IMPROVEMENT_STATUS_LABELS).filter(([key])=>key!=="open").map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></div>
+        <div className="form-row"><label className="label">메뉴</label><select className="select" value={menuFilter} onChange={e=>setMenuFilter(e.target.value)}><option value="all">전체 메뉴</option>{menuOptions.map(menu=><option key={menu.id} value={menu.id}>{menu.label}</option>)}</select></div>
+      </div>
+      {aiSummary&&<div className="improvement-ai-box">
+        <div className="rnr-result-head"><b>{aiSummary.overview||"개선 요청 정리"}</b><span>AI 정리 결과 · 자동 수정은 하지 않습니다</span></div>
+        {Array.isArray(aiSummary.priority_items)&&<ul>{aiSummary.priority_items.map((item:any,index:number)=><li key={index}><b>{item.title}</b><span>{item.menu}{item.submenu?` · ${item.submenu}`:""} · {item.reason}</span></li>)}</ul>}
+        {Array.isArray(aiSummary.action_items)&&<p>{aiSummary.action_items.map((item:any)=>typeof item==="string"?item:item.task).filter(Boolean).join("\n")}</p>}
+        <button className="button ghost compact" onClick={()=>navigator.clipboard?.writeText(aiText)}>정리 내용 복사</button>
+      </div>}
+      <div className="improvement-stack">
+        {visible.length===0 ? <p className="subtle">표시할 개선 요청이 없습니다.</p> : visible.map(row=>(
+          <article className="improvement-item" key={row.id}>
+            <div className="improvement-item-head">
+              <div><span>{row.request_type_label||row.request_type}</span><b>{row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""}</b></div>
+              <em>{IMPROVEMENT_STATUS_LABELS[row.status]??row.status}</em>
+            </div>
+            <p>{row.note}</p>
+            <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)} · {row.page_title??"-"}</small>
+            <div className="actions">
+              {["open","reviewing","planned","done","dismissed"].map(status=><button key={status} className={`button compact ${row.status===status?"secondary":"ghost"}`} onClick={()=>updateStatus(row.id,status)}>{IMPROVEMENT_STATUS_LABELS[status]}</button>)}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function SignaturePad({ canvasRef }: { canvasRef: React.RefObject<HTMLCanvasElement|null> }) {
