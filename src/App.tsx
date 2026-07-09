@@ -38,6 +38,13 @@ const WORK_TIME_DETAIL_MAIN_TEXT = "근무요일, 근무시간, 휴게시간은 
 const WORK_TIME_DETAIL_LEGAL_TEXT = "(관계 법령 근로기준법 제17조, 제53조 / 기간제 및 단시간근로자 보호 등에 관한 법률 제17조)";
 const WORK_TIME_DETAIL_SIGN_TEXT = "이 서명은 위 변경 내용에만 적용되며, 연장근로·야간근로·휴일근로에 대한 포괄 동의가 아닙니다.";
 const WORK_TIME_DETAIL_TEXT = `${WORK_TIME_DETAIL_MAIN_TEXT}\n${WORK_TIME_DETAIL_LEGAL_TEXT}\n${WORK_TIME_DETAIL_SIGN_TEXT}`;
+const ATTENDANCE_CORRECTION_LEGAL_NOTICE_VERSION = "2026-07";
+const ATTENDANCE_CORRECTION_DETAIL_TEXT = [
+  "이 확인은 출퇴근 버튼 누락 또는 오입력으로 실제 근로 시작·종료 시각을 정정하기 위한 절차입니다.",
+  "(관계 법령 근로기준법 제17조, 제50조, 제53조, 제54조, 제56조)",
+  "이 서명은 근로계약상 소정근로시간 변경, 임금·연장근로수당·휴게시간·휴가 권리 포기, 향후 근로시간 변경에 대한 포괄 동의가 아닙니다.",
+  "기재된 시각이 실제 근로시간과 다르면 이의제기할 수 있으며, 회사는 객관 자료 확인 후 다시 정정합니다.",
+].join("\n");
 const PRIVACY_CONSENT_VERSION = "2026-07";
 const WORK_TIME_CONSENT_CHECK_TEXT = "근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 전자서명할 수 있으며, 실제 변경은 건별 요청 및 회사 승인 후 적용된다는 설명을 확인했습니다.";
 const ANNUAL_LEAVE_LEGAL_NOTE = "파트타임이라는 이유만으로 연차가 항상 없는 것은 아닙니다. 4주 평균 1주 소정근로시간이 15시간 미만이면 연차 규정 적용 제외가 가능하고, 15시간 이상 단시간근로자는 연차가 발생할 수 있습니다.";
@@ -202,6 +209,28 @@ function badgeClass(s?: string | null) {
 function statusLabel(status?: string | null) {
   return ({pending:"승인 대기",approved:"승인",rejected:"반려",denied:"반려"} as Record<string,string>)[String(status??"")] ?? (status || "-");
 }
+function attendanceCorrectionStatusLabel(status?: string | null) {
+  return ({pending:"서명 대기",signed:"서명 완료",objected:"이의제기",cancelled:"취소"} as Record<string,string>)[String(status??"")] ?? (status || "-");
+}
+function attendanceCorrectionTypeLabel(type?: string | null) {
+  return ({check_in:"출근 정정",check_out:"퇴근 정정",both:"출퇴근 정정"} as Record<string,string>)[String(type??"")] ?? "출퇴근 정정";
+}
+function attendanceCorrectionTimeLine(record:any) {
+  return `출근 ${formatDateTime(record.old_check_in_time)} -> ${formatDateTime(record.requested_check_in_time)} / 퇴근 ${formatDateTime(record.old_check_out_time)} -> ${formatDateTime(record.requested_check_out_time)}`;
+}
+function attendanceCorrectionDocumentText(employee:any, request:any) {
+  return [
+    "출퇴근 기록 정정 확인서",
+    `직원: ${employee?.name??"-"} (${employee?.employee_no??"-"})`,
+    `근무일: ${request.work_date}`,
+    `정정 구분: ${attendanceCorrectionTypeLabel(request.correction_type)}`,
+    `기존 기록: 출근 ${formatDateTime(request.old_check_in_time)} / 퇴근 ${formatDateTime(request.old_check_out_time)}`,
+    `정정 요청: 출근 ${formatDateTime(request.requested_check_in_time)} / 퇴근 ${formatDateTime(request.requested_check_out_time)}`,
+    `정정 사유: ${request.reason||"-"}`,
+    request.evidence_note ? `확인 자료: ${request.evidence_note}` : "확인 자료: -",
+    ATTENDANCE_CORRECTION_DETAIL_TEXT,
+  ].join("\n");
+}
 function workedMinutes(inT?: string | null, outT?: string | null) {
   if (!inT || !outT) return null;
   const a = new Date(inT).getTime(), b = new Date(outT).getTime();
@@ -245,6 +274,17 @@ function timeToMinutes(time?: string | null) {
 function kstDateTime(dateIso: string, time?: string | null) {
   const hhmm = String(time || "18:00").slice(0, 5);
   return new Date(`${dateIso}T${hhmm}:00+09:00`);
+}
+function dateTimeLocalValue(iso?: string | null) {
+  if(!iso) return "";
+  const d=kstDate(iso);
+  return `${d.toISOString().slice(0,10)}T${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}`;
+}
+function defaultDateTimeLocal(dateIso:string, time?:string|null) {
+  return `${dateIso}T${String(time||"09:00").slice(0,5)}`;
+}
+function dateTimeLocalToIso(value?: string | null) {
+  return value ? new Date(`${value}:00+09:00`).toISOString() : null;
 }
 function addMinutes(d: Date, minutes: number) {
   return new Date(d.getTime() + minutes * 60000);
@@ -1200,6 +1240,9 @@ function friendlySignatureDbError(error:any) {
   if(message.includes("work_time_change_requests")) {
     return "근무시간 변경 요청 저장 테이블이 아직 Supabase API에 반영되지 않았습니다. 새 DB 패치를 실행한 뒤 1분 후 다시 시도해주세요.";
   }
+  if(message.includes("attendance_correction_requests")) {
+    return "출퇴근 기록 정정 저장 테이블이 아직 Supabase API에 반영되지 않았습니다. 새 DB 패치를 실행한 뒤 1분 후 다시 시도해주세요.";
+  }
   return message || "저장 중 오류가 발생했습니다.";
 }
 
@@ -1315,6 +1358,84 @@ function WorkTimeConsentModal({ employee, onDone }: { employee:any; onDone:()=>v
   );
 }
 
+function AttendanceCorrectionSignModal({ employee, request, onDone }: { employee:any; request:any; onDone:()=>void }) {
+  const canvasRef=useRef<HTMLCanvasElement|null>(null);
+  const [showDetail,setShowDetail]=useState(true);
+  const [note,setNote]=useState("");
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState(false);
+  async function submit() {
+    setMsg("");
+    const signature=signatureData(canvasRef);
+    if(!signature||signature.length<1200) return setMsg("서명을 입력해주세요.");
+    setBusy(true);
+    try {
+      const {fingerprintHash,deviceInfo}=await getDeviceFingerprint();
+      const {error}=await supabase.rpc("sign_attendance_correction_request",{
+        p_request_id:request.id,
+        p_signature_data:signature,
+        p_signer_note:note.trim()||null,
+        p_device_fingerprint_hash:fingerprintHash,
+        p_device_info:deviceInfo,
+      });
+      if(error) throw error;
+      onDone();
+    } catch(e:any) {
+      setMsg(friendlySignatureDbError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function objectRequest() {
+    const signerNote=window.prompt("실제 출퇴근 시간과 다른 부분을 적어주세요.", note||"정정 요청 시각이 실제 근로시간과 다릅니다.");
+    if(signerNote===null) return;
+    setBusy(true); setMsg("");
+    try {
+      const {error}=await supabase.rpc("object_attendance_correction_request",{p_request_id:request.id,p_signer_note:signerNote});
+      if(error) throw error;
+      onDone();
+    } catch(e:any) {
+      setMsg(friendlySignatureDbError(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-box work-consent-modal" onClick={e=>e.stopPropagation()}>
+        <div className="popup-mark"><i className="ti ti-pencil-check" aria-hidden="true"></i></div>
+        <h2 className="card-title" style={{display:"block",marginBottom:8}}>출퇴근 기록 정정 확인</h2>
+        <p className="body-text">관리자가 출퇴근 버튼 누락 또는 오입력으로 판단한 기록 정정을 요청했습니다. 실제 근로시간과 맞는지 확인한 뒤 서명해주세요.</p>
+        <div className="alert" style={{margin:"13px 0 0"}}>서명 전에는 정정 기록이 최종 반영되지 않습니다. 다르면 이의제기를 눌러 사유를 남겨주세요.</div>
+        <div className="consent-preview" style={{marginTop:13}}>
+          <dl>
+            <div><dt>직원</dt><dd>{employee.name}</dd></div>
+            <div><dt>근무일</dt><dd>{request.work_date}</dd></div>
+            <div><dt>구분</dt><dd>{attendanceCorrectionTypeLabel(request.correction_type)}</dd></div>
+          </dl>
+          <div className="type-desc">{attendanceCorrectionTimeLine(request)}<br/>사유: {request.reason||"-"}{request.evidence_note?<><br/>확인 자료: {request.evidence_note}</>:null}</div>
+        </div>
+        <button className="collapsible-btn" style={{marginTop:13}} onClick={()=>setShowDetail(v=>!v)}>
+          상세 설명 보기
+          <i className={`ti ${showDetail?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
+        </button>
+        {showDetail&&<div className="type-desc work-time-detail work-time-detail-space" style={{whiteSpace:"pre-wrap"}}>{ATTENDANCE_CORRECTION_DETAIL_TEXT}</div>}
+        <div className="form-row" style={{marginTop:14}}>
+          <label className="label">메모</label>
+          <textarea className="textarea compact-textarea" value={note} onChange={e=>setNote(e.target.value)} placeholder="필요하면 확인 메모를 적어주세요." />
+        </div>
+        <div style={{marginTop:14}}><label className="label">서명</label><SignaturePad canvasRef={canvasRef} /></div>
+        {msg&&<div className="alert error" style={{marginTop:12}}>{msg}</div>}
+        <div className="actions" style={{marginTop:14}}>
+          <button className="button full" disabled={busy} onClick={submit}>확인하고 서명하기</button>
+          <button className="button ghost full" disabled={busy} onClick={()=>clearSignature(canvasRef)}>서명 다시 쓰기</button>
+          <button className="button danger full" disabled={busy} onClick={objectRequest}>이의제기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HomePage({ employee }: { employee: any }) {
   const [now,setNow] = useState(new Date());
   const [workplaces,setWorkplaces] = useState<any[]>([]);
@@ -1336,6 +1457,7 @@ function HomePage({ employee }: { employee: any }) {
   const [compTimeRows,setCompTimeRows] = useState<any[]>([]);
   const [todayOverrides,setTodayOverrides] = useState<any[]>([]);
   const [workTimeChanges,setWorkTimeChanges] = useState<any[]>([]);
+  const [attendanceCorrectionRequests,setAttendanceCorrectionRequests] = useState<any[]>([]);
   const [todayTasks,setTodayTasks] = useState<any[]>([]);
   const [todoDraft,setTodoDraft] = useState({title:"",content:""});
   const [todoMessage,setTodoMessage] = useState("");
@@ -1388,7 +1510,7 @@ function HomePage({ employee }: { employee: any }) {
   }
   async function load() {
     const today=todayIso();
-    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:taskRows},{data:rnrRows}]=await Promise.all([
+    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:taskRows},{data:rnrRows},{data:correctionRows,error:correctionError}]=await Promise.all([
       supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name"),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("check_in_time",{ascending:false}).limit(10),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).is("check_out_time",null).order("check_in_time",{ascending:false}),
@@ -1397,11 +1519,13 @@ function HomePage({ employee }: { employee: any }) {
       supabase.from("work_time_change_requests").select("*").eq("employee_id",employee.id).eq("status","approved").order("created_at",{ascending:false}).limit(100),
       supabase.from("daily_tasks").select("*").eq("task_date",today).eq("is_active",true).order("created_at",{ascending:false}).limit(100),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(80),
+      supabase.from("attendance_correction_requests").select("*").eq("employee_id",employee.id).eq("status","pending").order("created_at",{ascending:true}).limit(10),
     ]);
     setWorkplaces(places??[]);
     setCompTimeRows(compRows??[]);
     setTodayOverrides(overrides??[]);
     setWorkTimeChanges(changes??[]);
+    setAttendanceCorrectionRequests(correctionError?[]:correctionRows??[]);
     setTodayTasks(taskRows??[]);
     if(employee.role==="admin"){
       const {data:todoEmployeeRows}=await supabase.from("employees").select("id,name,employee_no").eq("employment_status","active").order("name");
@@ -1425,6 +1549,10 @@ function HomePage({ employee }: { employee: any }) {
     await loadDevices();
   }
   useEffect(()=>{ load(); },[]);
+  async function handleAttendanceCorrectionDone() {
+    setMessage("출퇴근 기록 정정 확인이 처리되었습니다.");
+    await load();
+  }
 
   function rememberSentReminder(key:string) {
     sentReminderKeys.current.add(key);
@@ -1690,6 +1818,7 @@ function HomePage({ employee }: { employee: any }) {
 
   return (
     <div className="home-layout">
+      {attendanceCorrectionRequests[0]&&<AttendanceCorrectionSignModal employee={employee} request={attendanceCorrectionRequests[0]} onDone={handleAttendanceCorrectionDone} />}
       <section className="card">
         <p className="date-line">{now.toLocaleDateString("ko-KR",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p>
         <div className="clock">{clockText(now)}</div>
@@ -2966,6 +3095,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [requests,setRequests]=useState<any[]>([]);
   const [compRequests,setCompRequests]=useState<any[]>([]);
   const [workTimeRequests,setWorkTimeRequests]=useState<any[]>([]);
+  const [attendanceCorrectionRequests,setAttendanceCorrectionRequests]=useState<any[]>([]);
   const [adjustments,setAdjustments]=useState<any[]>([]);
   const [overrides,setOverrides]=useState<any[]>([]);
   const [absences,setAbsences]=useState<any[]>([]);
@@ -2994,25 +3124,27 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [scheduleMsg,setScheduleMsg]=useState("");
   const [leaveModalEmp,setLeaveModalEmp]=useState<any|null>(null);
   const [leaveUsageEmpId,setLeaveUsageEmpId]=useState("all");
+  const [correctionDraft,setCorrectionDraft]=useState<any|null>(null);
 
   async function load() {
     const {data:emps}=await supabase.from("employees").select("*").order("created_at",{ascending:false});
     const list=emps??[]; const map:Record<string,any>={};
     list.forEach((e:any)=>{map[e.id]=e;});
     setEmployees(list); setEmpMap(map);
-    const [d,w,r,c,wt,a,ov,ab,lg,rn]=await Promise.all([
+    const [d,w,r,c,wt,ac,a,ov,ab,lg,rn]=await Promise.all([
       supabase.from("registered_devices").select("*").order("created_at",{ascending:false}),
       supabase.from("workplaces").select("*").order("created_at",{ascending:false}),
       supabase.from("attendance_requests").select("*").order("created_at",{ascending:false}),
       supabase.from("comp_time_requests").select("*").order("created_at",{ascending:false}),
       supabase.from("work_time_change_requests").select("*").order("created_at",{ascending:false}),
+      supabase.from("attendance_correction_requests").select("*").order("created_at",{ascending:false}).limit(300),
       supabase.from("leave_adjustments").select("*").order("created_at",{ascending:false}),
       supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(50),
       supabase.from("employee_absences").select("*").order("start_date",{ascending:false}),
       supabase.from("attendance_logs").select("id, employee_id, workplace_id, check_in_time, check_out_time, original_check_out_time, scheduled_check_out_time, overtime_review_status, status, workplaces(name,type)").order("check_in_time",{ascending:false}).limit(300),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
     ]);
-    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]);
+    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]);
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
@@ -3240,6 +3372,79 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   async function reviewDevice(id:string,status:string){const {error}=await supabase.from("registered_devices").update({status}).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function confirmAttendanceLog(id:string){const {error}=await supabase.rpc("confirm_attendance_log",{p_log_id:id,p_status:"확인 완료"});if(error)setMessage(error.message);else{setMessage("근태 기록을 확인 완료 처리했습니다.");await load();onChanged();}}
   async function forceClockOut(id:string){if(!window.confirm("이 기록을 현재 시각으로 강제 퇴근 처리할까요?")) return; const {error}=await supabase.rpc("close_attendance_log",{p_log_id:id,p_status:"관리자 강제퇴근",p_device_fingerprint_hash:null,p_device_info:{}});if(error)setMessage(error.message);else{setMessage("강제 퇴근 처리했습니다.");await load();onChanged();}}
+  function openAttendanceCorrection(employee:any, log:any|null) {
+    const workDate=log?.check_in_time ? localDateStr(log.check_in_time) : todayIso();
+    const schedule=getScheduleForDate(employee,workDate,overrides,workTimeRequests.filter((r:any)=>r.status==="approved"));
+    setCorrectionDraft({
+      employee_id:employee.id,
+      employee_name:employee.name,
+      employee_no:employee.employee_no,
+      attendance_log_id:log?.id??null,
+      work_date:workDate,
+      old_check_in_time:log?.check_in_time??null,
+      old_check_out_time:log?.check_out_time??null,
+      requested_check_in_time:log?.check_in_time ? dateTimeLocalValue(log.check_in_time) : defaultDateTimeLocal(workDate,schedule.work_start),
+      requested_check_out_time:log?.check_out_time ? dateTimeLocalValue(log.check_out_time) : "",
+      reason:"출퇴근 버튼 누락 또는 오입력 정정",
+      evidence_note:"관리자 확인",
+    });
+  }
+  function changeCorrectionWorkDate(workDate:string) {
+    setCorrectionDraft((draft:any)=>{
+      if(!draft) return draft;
+      const employee=empMap[draft.employee_id];
+      const schedule=getScheduleForDate(employee,workDate,overrides,workTimeRequests.filter((r:any)=>r.status==="approved"));
+      const keepTime=(value:string,fallback:string)=>value ? `${workDate}T${String(value).slice(11,16)}` : defaultDateTimeLocal(workDate,fallback);
+      return {
+        ...draft,
+        work_date:workDate,
+        requested_check_in_time:keepTime(draft.requested_check_in_time,schedule.work_start),
+        requested_check_out_time:draft.requested_check_out_time ? `${workDate}T${String(draft.requested_check_out_time).slice(11,16)}` : "",
+      };
+    });
+  }
+  async function saveAttendanceCorrection() {
+    if(!correctionDraft) return;
+    setMessage("");
+    const employee=empMap[correctionDraft.employee_id];
+    const requestedIn=dateTimeLocalToIso(correctionDraft.requested_check_in_time);
+    const requestedOut=dateTimeLocalToIso(correctionDraft.requested_check_out_time);
+    const changedIn=!!requestedIn && (!correctionDraft.old_check_in_time || Math.abs(new Date(requestedIn).getTime()-new Date(correctionDraft.old_check_in_time).getTime())>59000);
+    const changedOut=!!requestedOut && (!correctionDraft.old_check_out_time || Math.abs(new Date(requestedOut).getTime()-new Date(correctionDraft.old_check_out_time).getTime())>59000);
+    if(!changedIn&&!changedOut) return setMessage("정정할 출근 또는 퇴근 시각을 변경해주세요.");
+    if(!correctionDraft.attendance_log_id&&!requestedIn) return setMessage("출근 기록이 없는 날은 정정 출근 시각이 필요합니다.");
+    const effectiveIn=requestedIn||correctionDraft.old_check_in_time;
+    const effectiveOut=requestedOut||correctionDraft.old_check_out_time;
+    if(effectiveIn&&effectiveOut&&new Date(effectiveOut).getTime()<=new Date(effectiveIn).getTime()) return setMessage("퇴근 시각은 출근 시각보다 늦어야 합니다.");
+    const correction_type=changedIn&&changedOut?"both":changedIn?"check_in":"check_out";
+    const row={
+      employee_id:correctionDraft.employee_id,
+      attendance_log_id:correctionDraft.attendance_log_id,
+      work_date:correctionDraft.work_date,
+      correction_type,
+      old_check_in_time:correctionDraft.old_check_in_time,
+      old_check_out_time:correctionDraft.old_check_out_time,
+      requested_check_in_time:requestedIn,
+      requested_check_out_time:requestedOut,
+      reason:String(correctionDraft.reason??"").trim()||"출퇴근 버튼 누락 또는 오입력 정정",
+      evidence_note:String(correctionDraft.evidence_note??"").trim()||null,
+      legal_notice_version:ATTENDANCE_CORRECTION_LEGAL_NOTICE_VERSION,
+      requested_by:currentEmployee.id,
+      status:"pending",
+    };
+    const {error}=await supabase.from("attendance_correction_requests").insert({
+      ...row,
+      document_text:attendanceCorrectionDocumentText(employee,row),
+    });
+    if(error) setMessage(friendlySignatureDbError(error));
+    else { setMessage(`${employee?.name??"직원"}에게 출퇴근 기록 정정 확인을 요청했습니다.`); setCorrectionDraft(null); await load(); onChanged(); }
+  }
+  async function cancelAttendanceCorrection(id:string) {
+    const {data,error}=await supabase.from("attendance_correction_requests").update({status:"cancelled",updated_at:new Date().toISOString()}).eq("id",id).select("id").maybeSingle();
+    if(error) setMessage(friendlySignatureDbError(error));
+    else if(!data) setMessage("이미 처리된 정정 요청은 취소할 수 없습니다.");
+    else { setMessage("출퇴근 기록 정정 요청을 취소했습니다."); await load(); }
+  }
 
   function isTestEmployee(employee:any){
     const name=String(employee?.name??"").trim().toLowerCase();
@@ -3284,6 +3489,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     return r.status==="approved"&&r.work_date>="2026-06-24"&&!!compAttendance(r);
   });
   const pT=workTimeRequests.filter(r=>r.status==="pending");
+  const pA=attendanceCorrectionRequests.filter(r=>r.status==="pending");
   const pR=requests.filter(r=>r.status==="pending");
   const pD=devices.filter(d=>d.status==="pending");
   const reviewStatuses=["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음"];
@@ -3293,7 +3499,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(openToday) return false;
     return !l.check_out_time || reviewStatuses.includes(l.status);
   });
-  const pendingTotal=pW.length+pC.length+pT.length+pR.length+pD.length+pL.length;
+  const pendingTotal=pW.length+pC.length+pT.length+pA.length+pR.length+pD.length+pL.length;
   const checkedInCount=dailyRows.filter(x=>x.log?.check_in_time).length;
   const checkedOutCount=dailyRows.filter(x=>x.log?.check_out_time).length;
   const openClockOutCount=dailyRows.filter(x=>x.log?.check_in_time&&!x.log?.check_out_time).length;
@@ -3375,6 +3581,34 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   return (
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
+      {correctionDraft&&<div className="modal-backdrop" onClick={()=>setCorrectionDraft(null)}>
+        <div className="modal-box" style={{maxWidth:620}} onClick={e=>e.stopPropagation()}>
+          <div className="modal-header">
+            <h2 className="card-title" style={{margin:0}}><i className="ti ti-pencil-check" aria-hidden="true"></i>출퇴근 기록 정정 요청</h2>
+            <button className="modal-close" title="닫기" onClick={()=>setCorrectionDraft(null)}><i className="ti ti-x" aria-hidden="true"></i></button>
+          </div>
+          <p className="subtle" style={{marginTop:4}}>직원이 서명해야 실제 출퇴근 기록에 반영됩니다.</p>
+          <div className="consent-preview" style={{marginTop:12}}>
+            <dl>
+              <div><dt>직원</dt><dd>{correctionDraft.employee_name} ({correctionDraft.employee_no})</dd></div>
+              <div><dt>기존 출근</dt><dd>{formatDateTime(correctionDraft.old_check_in_time)}</dd></div>
+              <div><dt>기존 퇴근</dt><dd>{formatDateTime(correctionDraft.old_check_out_time)}</dd></div>
+            </dl>
+          </div>
+          <div className="grid two" style={{marginTop:12}}>
+            <div className="form-row"><label className="label">근무일</label><input className="input" type="date" value={correctionDraft.work_date} onChange={e=>changeCorrectionWorkDate(e.target.value)} /></div>
+            <div className="form-row"><label className="label">확인 자료</label><input className="input" value={correctionDraft.evidence_note} onChange={e=>setCorrectionDraft({...correctionDraft,evidence_note:e.target.value})} placeholder="예: 관리자 확인, 업무 메시지, 현장 확인" /></div>
+            <div className="form-row"><label className="label">정정 출근 시각</label><input className="input" type="datetime-local" value={correctionDraft.requested_check_in_time} onChange={e=>setCorrectionDraft({...correctionDraft,requested_check_in_time:e.target.value})} /></div>
+            <div className="form-row"><label className="label">정정 퇴근 시각</label><input className="input" type="datetime-local" value={correctionDraft.requested_check_out_time} onChange={e=>setCorrectionDraft({...correctionDraft,requested_check_out_time:e.target.value})} /></div>
+          </div>
+          <div className="form-row"><label className="label">정정 사유</label><textarea className="textarea compact-textarea" value={correctionDraft.reason} onChange={e=>setCorrectionDraft({...correctionDraft,reason:e.target.value})} /></div>
+          <div className="type-desc work-time-detail work-time-detail-space" style={{whiteSpace:"pre-wrap"}}>{ATTENDANCE_CORRECTION_DETAIL_TEXT}</div>
+          <div className="actions" style={{justifyContent:"flex-end",marginTop:16}}>
+            <button className="button ghost" onClick={()=>setCorrectionDraft(null)}>취소</button>
+            <button className="button" onClick={saveAttendanceCorrection}>직원 서명 요청</button>
+          </div>
+        </div>
+      </div>}
 
       {view==="dashboard"&&<section className="admin-command-center">
         <div className="admin-command-head">
@@ -3436,7 +3670,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   <td>{log ? formatDateTime(log.check_in_time) : "-"}</td>
                   <td>{log?.check_out_time ? formatDateTime(log.check_out_time) : "-"}</td>
                   <td><div className="status-badges"><span className={`badge ${display.primaryClass}`}>{display.primary}</span>{display.workType&&<span className="badge work-type">{display.workType}</span>}</div>{display.primary==="지각"&&<span className="late-detail">{display.lateMinutes}분 지각 · 기준 {String(display.scheduleStart).slice(0,5)}</span>}</td>
-                  <td>{log&&!log.check_out_time ? <button className="button danger compact" onClick={()=>forceClockOut(log.id)}>강제 퇴근</button> : <span className="subtle">-</span>}</td>
+                  <td><div className="actions">{log&&!log.check_out_time&&<button className="button danger compact" onClick={()=>forceClockOut(log.id)}>강제 퇴근</button>}<button className="button secondary compact" onClick={()=>openAttendanceCorrection(e,log)}>{log?"기록 정정":"출근 정정"}</button></div></td>
                 </tr>
                 );
               })}
@@ -3472,7 +3706,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   <span className={`badge ${!l.check_out_time?"warn":""}`}>{!l.check_out_time?"미퇴근":"확인 필요"}</span>
                 </div>
                 <div className="type-desc" style={{marginTop:8}}>상세: 출근 {formatDateTime(l.check_in_time)} / 퇴근 {formatDateTime(l.check_out_time)} / 상태 {l.status??"-"}</div>
-                <div className="actions"><button className="button secondary" onClick={()=>confirmAttendanceLog(l.id)}>확인 완료</button>{!l.check_out_time&&<button className="button danger" onClick={()=>forceClockOut(l.id)}>강제 퇴근</button>}</div>
+                <div className="actions"><button className="button secondary" onClick={()=>confirmAttendanceLog(l.id)}>확인 완료</button><button className="button ghost" onClick={()=>openAttendanceCorrection(empMap[l.employee_id],l)}>기록 정정</button>{!l.check_out_time&&<button className="button danger" onClick={()=>forceClockOut(l.id)}>강제 퇴근</button>}</div>
               </div>
             ))}
           </div>
@@ -3512,6 +3746,20 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   사유 {r.reason||"-"}
                 </div>
                 <div className="actions"><button className="button secondary" onClick={()=>reviewWorkTimeRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewWorkTimeRequest(r.id,"rejected")}>반려</button></div>
+              </div>
+            ))}
+          </div>
+          <div>
+            <h3>출퇴근 기록 정정 {pA.length>0&&<span className="count-badge">{pA.length}</span>}</h3>
+            {pA.length===0&&<p className="subtle">없음</p>}
+            {pA.map((r:any)=>(
+              <div className="list-row" key={r.id} style={{flexDirection:"column",alignItems:"stretch"}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
+                  <div><b>{empName(r.employee_id)}</b><div className="subtle">{r.work_date} · {attendanceCorrectionTypeLabel(r.correction_type)} · 직원 서명 대기</div></div>
+                  <span className="badge warn">{attendanceCorrectionStatusLabel(r.status)}</span>
+                </div>
+                <div className="type-desc" style={{marginTop:8}}>{attendanceCorrectionTimeLine(r)}<br/>사유 {r.reason||"-"}</div>
+                <div className="actions"><button className="button danger" onClick={()=>cancelAttendanceCorrection(r.id)}>요청 취소</button></div>
               </div>
             ))}
           </div>
@@ -4760,24 +5008,28 @@ function ConsentReportPage() {
   const [consents,setConsents]=useState<any[]>([]);
   const [workTimeConsents,setWorkTimeConsents]=useState<any[]>([]);
   const [workTimeRequests,setWorkTimeRequests]=useState<any[]>([]);
-  const [selected,setSelected]=useState<{employee:any;record:any;kind:"privacy"|"workTimeConsent"|"workTimeRequest"}|null>(null);
+  const [attendanceCorrections,setAttendanceCorrections]=useState<any[]>([]);
+  const [selected,setSelected]=useState<{employee:any;record:any;kind:"privacy"|"workTimeConsent"|"workTimeRequest"|"attendanceCorrection"}|null>(null);
   const [workRequestFilter,setWorkRequestFilter]=useState("all");
+  const [correctionFilter,setCorrectionFilter]=useState("all");
   const [message,setMessage]=useState("");
 
   async function load(){
-    const [employeeResult,consentResult,workConsentResult,workRequestResult]=await Promise.all([
+    const [employeeResult,consentResult,workConsentResult,workRequestResult,correctionResult]=await Promise.all([
       supabase.from("employees").select("id,name,employee_no,employment_status,is_active").order("employee_no",{ascending:true}),
       supabase.from("privacy_consents").select("*").order("created_at",{ascending:false}),
       supabase.from("work_time_change_consents").select("*").order("created_at",{ascending:false}),
       supabase.from("work_time_change_requests").select("*").order("created_at",{ascending:false}),
+      supabase.from("attendance_correction_requests").select("*").order("created_at",{ascending:false}).limit(500),
     ]);
-    if(employeeResult.error||consentResult.error||workConsentResult.error||workRequestResult.error) {
-      setMessage(employeeResult.error?.message??consentResult.error?.message??workConsentResult.error?.message??workRequestResult.error?.message??"동의서를 불러오지 못했습니다.");
+    if(employeeResult.error||consentResult.error||workConsentResult.error||workRequestResult.error||correctionResult.error) {
+      setMessage(employeeResult.error?.message??consentResult.error?.message??workConsentResult.error?.message??workRequestResult.error?.message??friendlySignatureDbError(correctionResult.error)??"동의서를 불러오지 못했습니다.");
     }
     setEmployees(employeeResult.data??[]);
     setConsents(consentResult.data??[]);
     setWorkTimeConsents(workConsentResult.data??[]);
     setWorkTimeRequests(workRequestResult.data??[]);
+    setAttendanceCorrections(correctionResult.error?[]:correctionResult.data??[]);
   }
   useEffect(()=>{load();},[]);
 
@@ -4788,7 +5040,8 @@ function ConsentReportPage() {
   const employeeMap:Record<string,any>={};
   employees.forEach(employee=>{employeeMap[employee.id]=employee;});
   const signedWorkTimeRequests=workTimeRequests.filter(request=>request.signature_data);
-  const totalSigned=consents.length+workTimeConsents.length+signedWorkTimeRequests.length;
+  const signedAttendanceCorrections=attendanceCorrections.filter(request=>request.signature_data);
+  const totalSigned=consents.length+workTimeConsents.length+signedWorkTimeRequests.length+signedAttendanceCorrections.length;
   const workRequestStatusGroups=[
     {key:"all",label:"전체",rows:workTimeRequests},
     ...[
@@ -4798,13 +5051,24 @@ function ConsentReportPage() {
     ].map(group=>({...group,rows:workTimeRequests.filter((request:any)=>request.status===group.key)})),
   ];
   const filteredWorkTimeRequests=workRequestFilter==="all"?workTimeRequests:workTimeRequests.filter((request:any)=>request.status===workRequestFilter);
+  const correctionStatusGroups=[
+    {key:"all",label:"전체",rows:attendanceCorrections},
+    ...[
+      {key:"pending",label:"서명 대기"},
+      {key:"signed",label:"서명 완료"},
+      {key:"objected",label:"이의제기"},
+      {key:"cancelled",label:"취소"},
+    ].map(group=>({...group,rows:attendanceCorrections.filter((request:any)=>request.status===group.key)})),
+  ];
+  const filteredAttendanceCorrections=correctionFilter==="all"?attendanceCorrections:attendanceCorrections.filter((request:any)=>request.status===correctionFilter);
 
-  function signedTitle(kind:"privacy"|"workTimeConsent"|"workTimeRequest"){
+  function signedTitle(kind:"privacy"|"workTimeConsent"|"workTimeRequest"|"attendanceCorrection"){
     if(kind==="privacy") return "개인정보 수집·이용 및 위치정보 동의서";
     if(kind==="workTimeConsent") return "근무시간 변경 안내 확인서";
+    if(kind==="attendanceCorrection") return "출퇴근 기록 정정 확인서";
     return "근로시간 변경 요청 및 합의서";
   }
-  function signedBody(kind:"privacy"|"workTimeConsent"|"workTimeRequest",record:any){
+  function signedBody(kind:"privacy"|"workTimeConsent"|"workTimeRequest"|"attendanceCorrection",record:any){
     if(kind==="privacy") {
       const body=[
         "주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.",
@@ -4815,9 +5079,10 @@ function ConsentReportPage() {
       return body;
     }
     if(kind==="workTimeConsent") return [record.notice_text??WORK_TIME_CONSENT_TEXT, record.detail_text??WORK_TIME_DETAIL_TEXT];
+    if(kind==="attendanceCorrection") return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
     return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
   }
-  function printSignedRecord(employee:any,record:any,kind:"privacy"|"workTimeConsent"|"workTimeRequest"){
+  function printSignedRecord(employee:any,record:any,kind:"privacy"|"workTimeConsent"|"workTimeRequest"|"attendanceCorrection"){
     const popup=window.open("","_blank","width=860,height=1000");
     if(!popup) return setMessage("인쇄 창이 차단되었습니다. 브라우저의 팝업 차단을 해제해주세요.");
     popup.opener=null;
@@ -4825,7 +5090,7 @@ function ConsentReportPage() {
     const title=signedTitle(kind);
     const body=signedBody(kind,record);
     const version=record.consent_version??record.legal_notice_version??"-";
-    const status=record.status==="pending"?"승인 대기":record.status==="approved"?"승인":record.status==="rejected"?"반려":"-";
+    const status=kind==="attendanceCorrection" ? attendanceCorrectionStatusLabel(record.status) : record.status==="pending"?"승인 대기":record.status==="approved"?"승인":record.status==="rejected"?"반려":"-";
     popup.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${escapeHtml(employee.name)} ${escapeHtml(title)}</title><style>
       @page{size:A4;margin:18mm}body{font-family:Arial,"Malgun Gothic",sans-serif;color:#111827;line-height:1.65;margin:0}
       h1{font-size:24px;margin:0 0 8px}h2{font-size:15px;margin:28px 0 8px;border-bottom:1px solid #d1d5db;padding-bottom:7px}
@@ -4851,7 +5116,7 @@ function ConsentReportPage() {
     {message&&<div className="alert error">{message}</div>}
     <section className="card">
       <div className="schedule-board-toolbar">
-        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원 서명 리포트</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근무시간 변경 안내, 근무시간 변경 요청 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원 서명 리포트</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근무시간 변경 안내, 근무시간 변경 요청, 출퇴근 기록 정정 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
         <span className="badge good">서명 {totalSigned}건</span>
       </div>
       <div className="table-wrap" style={{marginTop:18}}>
@@ -4905,6 +5170,37 @@ function ConsentReportPage() {
         </table>
       </div>
       {filteredWorkTimeRequests.length===0&&<p className="subtle" style={{marginTop:12}}>표시할 근무시간 변경 요청 서명이 없습니다.</p>}
+    </section>
+    <section className="card">
+      <h2 className="card-title"><i className="ti ti-pencil-check" aria-hidden="true"></i>출퇴근 기록 정정 서명</h2>
+      <div className="consent-status-grid">
+        {correctionStatusGroups.map(group=>(
+          <button className={`consent-status-card ${correctionFilter===group.key?"active":""}`} key={group.key} onClick={()=>setCorrectionFilter(group.key)}>
+            <b>{group.label}</b>
+            <strong>{group.rows.length}건</strong>
+            <span>누르면 아래 목록에서 정정 전후 시각과 서명을 확인합니다.</span>
+          </button>
+        ))}
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>직원</th><th>근무일</th><th>정정 구분</th><th>정정 전후</th><th>사유</th><th>상태</th><th>서명 일시</th><th>관리</th></tr></thead>
+          <tbody>{filteredAttendanceCorrections.map(request=>{
+            const employee=employeeMap[request.employee_id]??{name:"알 수 없음",employee_no:"-"};
+            return <tr key={request.id}>
+              <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
+              <td>{request.work_date}</td>
+              <td>{attendanceCorrectionTypeLabel(request.correction_type)}</td>
+              <td>{attendanceCorrectionTimeLine(request)}</td>
+              <td>{request.reason||"-"}</td>
+              <td><span className={`badge ${request.status==="signed"?"good":request.status==="objected"?"bad":"warn"}`}>{attendanceCorrectionStatusLabel(request.status)}</span></td>
+              <td>{formatDateTime(request.signed_at)}</td>
+              <td><div className="actions"><button className="button secondary compact" disabled={!request.signature_data} onClick={()=>setSelected({employee,record:request,kind:"attendanceCorrection"})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!request.signature_data} onClick={()=>printSignedRecord(employee,request,"attendanceCorrection")}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button></div></td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+      {filteredAttendanceCorrections.length===0&&<p className="subtle" style={{marginTop:12}}>표시할 출퇴근 기록 정정 서명이 없습니다.</p>}
     </section>
     {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}>
       <div className="modal-box consent-modal" onClick={e=>e.stopPropagation()}>
