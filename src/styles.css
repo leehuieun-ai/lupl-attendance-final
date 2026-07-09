@@ -219,9 +219,13 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .workload-summary-card span { margin-top: 3px; color: var(--muted); font-size: 12px; }
 .workload-summary-card strong { margin-top: 7px; color: var(--blue-dark); font-size: 15px; }
 .workload-summary-card small { margin-top: 3px; color: #596579; font-size: 12px; }
-.work-time-record-table td { vertical-align: top; }
+.work-time-record-table table { min-width: 980px; }
+.work-time-record-table td { vertical-align: top; line-height: 1.5; white-space: pre-line; }
+.work-time-record-table td:first-child,
+.work-time-record-table td:nth-child(5) { white-space: nowrap; }
+.work-time-record-table .badge { white-space: nowrap; }
 .work-change-kind { display: inline-flex; align-items: center; min-height: 24px; border-radius: 999px; padding: 3px 9px; background: #eef3fe; color: var(--blue-dark); font-size: 12px; font-weight: 800; white-space: nowrap; }
-.work-change-detail { margin-top: 6px; color: var(--ink); font-weight: 700; line-height: 1.45; }
+.work-change-detail { margin-top: 6px; color: var(--ink); font-weight: 650; line-height: 1.55; white-space: pre-line; }
 .work-change-detail + small { display: block; margin-top: 4px; color: var(--muted); line-height: 1.45; }
 th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { background: #f7f9fc; color: #5a6475; font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -280,12 +284,12 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .team-week-grid { display: grid; grid-template-columns: 190px repeat(5,minmax(150px,1fr)); min-width: 980px; }
 .team-week-head { min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 4px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fff; color: #475467; font-size: 12px; font-weight: 700; }
 .team-week-head small { color: var(--muted); font-size: 10px; font-weight: 500; }
-.team-week-employee { min-height: 58px; display: flex; align-items: center; gap: 9px; padding: 8px 11px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fff; }
+.team-week-employee { min-height: 58px; display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fff; }
 .team-week-employee i { width: 7px; height: 34px; border-radius: 3px; flex-shrink: 0; }
 .team-week-employee b, .team-week-employee small { display: block; }
 .team-week-employee b { font-size: 12px; }
 .team-week-employee small { margin-top: 2px; color: var(--muted); font-size: 10px; }
-.team-week-employee .team-week-month { color: #2563eb; font-weight: 750; }
+.team-week-employee .team-week-month { color: #2563eb; font-size: 9px; font-weight: 650; line-height: 1.28; white-space: normal; }
 .team-week-cell { min-height: 58px; padding: 9px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: color-mix(in srgb,var(--employee-color) 10%,white); color: var(--employee-color); }
 .team-week-cell b, .team-week-cell small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .team-week-cell b { font-size: 11px; }
@@ -400,7 +404,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
   margin: 3px 3px;
   padding: 14px 3px 9px;
 }
-.week-time-event.team-lane-event b { font-size: 12px; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; }
+.week-time-event.team-lane-event b { font-size: 11px; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; }
 .week-time-event.team-lane-event .event-time-label { display: flex; flex-direction: column; align-items: center; gap: 0; margin-top: 5px; font-size: 10px; line-height: 1.1; white-space: normal; font-weight: 750; }
 .week-time-event.team-lane-event .event-time-label em { font-style: normal; }
 .week-time-event.team-lane-event .event-time-label i { font-style: normal; line-height: .8; }
@@ -765,7 +769,7 @@ body { overflow-x: hidden; }
 .employee-detail-picker b, .employee-detail-picker span { display: block; white-space: nowrap; }
 .employee-detail-picker b { color: #172033; font-size: 14px; }
 .employee-detail-picker span { margin-top: 2px; color: #64748b; font-size: 11px; font-weight: 750; }
-.employee-contract-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 10px; }
+.employee-contract-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap: 10px; }
 .employee-contract-grid div {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -775,11 +779,11 @@ body { overflow-x: hidden; }
 .employee-contract-grid span, .employee-contract-grid small { display: block; color: #64748b; font-size: 12px; font-weight: 750; }
 .employee-contract-grid b { display: block; margin: 4px 0 3px; color: #172033; font-size: 17px; letter-spacing: 0; }
 .employee-contract-grid .select,
-.employee-contract-grid .input { margin-top: 6px; background: #fff; }
+.employee-contract-grid .input { margin-top: 6px; background: #fff; font-size: 13px; }
 .compact-select { min-height: 38px; padding: 8px 10px; }
 .compact-days { display: grid; grid-template-columns: repeat(7,minmax(30px,1fr)); gap: 4px; margin-top: 7px; }
 .compact-days .day-btn { min-height: 30px; padding: 5px 0; font-size: 12px; }
-.inline-time-edit { display: grid; grid-template-columns: repeat(2,minmax(116px,1fr)); gap: 6px; margin-top: 6px; }
+.inline-time-edit { display: grid; grid-template-columns: minmax(0,1fr); gap: 6px; margin-top: 6px; }
 .inline-time-edit .input { min-height: 38px; padding: 8px 9px; }
 .employee-contract-note {
   display: flex;
@@ -895,13 +899,16 @@ body { overflow-x: hidden; }
 .workplace-row > div:first-child { min-width: 0; flex: 1; }
 .workplace-row .actions { flex-wrap: nowrap; flex-shrink: 0; }
 .workplace-category-group { display: grid; gap: 8px; margin-top: 12px; }
-.workplace-category-group h4 { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; padding: 8px 10px; border-radius: 8px; background: #f7f9fc; border: 1px solid var(--line); color: #182235; font-size: 13px; }
-.workplace-category-group h4 span { color: var(--muted); font-size: 12px; font-weight: 650; }
+.workplace-category-toggle { width: 100%; min-height: 40px; display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 8px; margin: 0; padding: 8px 10px; border-radius: 8px; background: #f7f9fc; border: 1px solid var(--line); color: #182235; font-size: 13px; font-weight: 800; text-align: left; }
+.workplace-category-toggle small { color: var(--muted); font-size: 12px; font-weight: 650; }
+.workplace-category-toggle i { color: var(--muted); font-size: 16px; }
 .worktime-page { max-width: 1040px; margin: 0 auto; width: 100%; grid-template-columns: minmax(0,1fr); justify-items: stretch; }
 .worktime-page > .card { width: 100%; }
 .payroll-head .card-title { margin-bottom: 4px; }
 .payroll-month-picker { min-width: 180px; }
 .payroll-employee-cell { display: grid; gap: 3px; min-width: 0; }
+.payroll-employee-button { width: 100%; border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; }
+.payroll-employee-button:hover b { color: var(--blue-dark); }
 .payroll-employee-cell b { color: var(--ink); white-space: nowrap; }
 .payroll-employee-cell small { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .payroll-summary-list { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 12px 0 14px; background: #fff; }
@@ -914,6 +921,10 @@ body { overflow-x: hidden; }
 .payroll-summary-row b { color: var(--ink); white-space: nowrap; }
 .payroll-summary-row span { color: #364154; white-space: nowrap; }
 .payroll-summary-row small { color: var(--muted); font-size: 12px; }
+.payroll-summary-row.active { background: #f3f7ff; box-shadow: inset 3px 0 0 var(--blue); }
+.payroll-selected-detail { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 14px 0 10px; padding: 10px 12px; border: 1px solid #dbe5f3; border-radius: 8px; background: #f8fafc; }
+.payroll-selected-detail b { color: var(--ink); font-size: 14px; }
+.payroll-selected-detail span { color: var(--muted); font-size: 12px; font-weight: 700; }
 .nowrap-select { white-space: nowrap; min-width: 92px; }
 .no-wrap-checkbox { white-space: nowrap; word-break: keep-all; align-items: center; }
 

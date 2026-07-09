@@ -2040,8 +2040,12 @@ function workChangeKind(request:any) {
   return "근무조건 변경";
 }
 function workChangeConditionLabel(request:any) {
-  if(isNoWorkChange(request)) return "변경 후: 해당 기간 근무 없음";
-  return `변경 후: ${daysLabel(request?.new_work_days??[])} · ${timeRangeLabel(request?.new_work_start,request?.new_work_end)} · 휴게 ${timeRangeLabel(request?.new_break_start,request?.new_break_end)}`;
+  if(isNoWorkChange(request)) return "출근 안 함";
+  return [
+    `근무요일 ${daysLabel(request?.new_work_days??[])}`,
+    `근무시간 ${timeRangeLabel(request?.new_work_start,request?.new_work_end)}`,
+    `휴게 ${timeRangeLabel(request?.new_break_start,request?.new_break_end)}`,
+  ].join("\n");
 }
 function workChangePreviousLabel(request:any) {
   return `기존: ${daysLabel(request?.old_work_days??[])} · ${timeRangeLabel(request?.old_work_start,request?.old_work_end)} · 휴게 ${timeRangeLabel(request?.old_break_start,request?.old_break_end)}`;
@@ -2049,14 +2053,23 @@ function workChangePreviousLabel(request:any) {
 function workChangeWorkloadLabel(request:any) {
   const daily=isNoWorkChange(request)?0:netDailyHours(request?.new_work_start,request?.new_work_end,request?.new_break_start,request?.new_break_end);
   const totalHours=Math.round(daily*Number(request?.total_work_days||0)*10)/10;
-  return `근무 ${request?.total_work_days??0}일 · 실근무 ${formatHourValue(totalHours)}시간 · 주 ${formatHourValue(request?.weekly_work_hours||0)}시간`;
+  return [
+    `근무 ${request?.total_work_days??0}일`,
+    `실근무 ${formatHourValue(totalHours)}시간`,
+    `주 ${formatHourValue(request?.weekly_work_hours||0)}시간`,
+  ].join("\n");
 }
 function workChangeSummaryLine(employee:any,request:any) {
   const daily=isNoWorkChange(request)?0:netDailyHours(request?.new_work_start,request?.new_work_end,request?.new_break_start,request?.new_break_end);
   const totalHours=Math.round(daily*Number(request?.total_work_days||0)*10)/10;
   const period=workChangePeriodLabel(request);
   const reason=String(request?.reason??"").trim();
-  return `${employee?.name??"직원"}님 ${period} ${workChangeKind(request)} · 최종 근무 ${request?.total_work_days??0}일, ${formatHourValue(totalHours)}시간${reason?` · 사유 ${reason}`:""}`;
+  return [
+    `${employee?.name??"직원"}님 ${period}`,
+    workChangeKind(request),
+    `최종 근무 ${request?.total_work_days??0}일, ${formatHourValue(totalHours)}시간`,
+    reason?`사유 ${reason}`:"",
+  ].filter(Boolean).join("\n");
 }
 function leaveRequestTimeLabel(request:any) {
   const period=`${request.start_date}${request.end_date&&request.end_date!==request.start_date?`~${request.end_date}`:""}`;
@@ -2237,6 +2250,12 @@ function parsePromptTimeRange(text:string) {
     if(startMinutes!=null&&endMinutes!=null&&endMinutes<=startMinutes) end=minutesToTime(endMinutes+12*60);
   }
   return start&&end?{start,end}:null;
+}
+function parsePromptSingleTime(text:string) {
+  const timeWord="(?:\\d{1,2}|한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉)?|스무|스물(?:한|두|세|네)?|일|이|삼|사|오|육|칠|팔|구|십|이십(?:일|이|삼|사)?)";
+  const re=new RegExp(`(?:(오전|오후|아침|낮|저녁|밤)\\s*)?(${timeWord})\\s*(?:시\\s*(?:(\\d{1,2}|[가-힣]{1,4})\\s*분)?|:\\s*(\\d{1,2}))`);
+  const match=text.match(re);
+  return match ? parsePromptTime(match[1],match[2],match[3]??match[4]) : null;
 }
 function parsePromptTimeRanges(text:string) {
   const ranges=splitWorkTimePromptSegments(text).map(parsePromptTimeRange).filter(Boolean);
@@ -2901,6 +2920,7 @@ function WorkplacePage({ employee }: { employee: any }) {
   const [query,setQuery]=useState(""); const [places,setPlaces]=useState<any[]>([]); const [workplaces,setWorkplaces]=useState<any[]>([]); const [message,setMessage]=useState("");
   const [reqType,setReqType]=useState("special_school"); const [reqPrivate,setReqPrivate]=useState(false);
   const [editing,setEditing]=useState<any|null>(null);
+  const [openPlaceTypes,setOpenPlaceTypes]=useState<Record<string,boolean>>({});
   const isAdmin=employee.role==="admin";
   async function load() {
     const {data}=await supabase.from("workplaces").select("*").neq("approval_status","rejected").order("created_at",{ascending:false});
@@ -2968,6 +2988,12 @@ function WorkplacePage({ employee }: { employee: any }) {
   const approvedGroups=Object.entries(workplaceTypeLabels)
     .map(([type,label])=>({type,label,items:approved.filter(w=>w.type===type)}))
     .filter(group=>group.items.length>0);
+  function placeTypeOpen(type:string) {
+    return openPlaceTypes[type] ?? true;
+  }
+  function togglePlaceType(type:string) {
+    setOpenPlaceTypes(current=>({...current,[type]:!(current[type]??true)}));
+  }
   return (
     <div className="grid two">
       <section className="card">
@@ -3000,8 +3026,12 @@ function WorkplacePage({ employee }: { employee: any }) {
         {approved.length===0&&<p className="subtle">승인된 근무지가 없습니다.</p>}
         {approvedGroups.map(group=>(
           <div className="workplace-category-group" key={group.type}>
-            <h4>{group.label}<span>{group.items.length}곳</span></h4>
-            {group.items.map(w=>(
+            <button type="button" className="workplace-category-toggle" onClick={()=>togglePlaceType(group.type)}>
+              <span>{group.label}</span>
+              <small>{group.items.length}곳</small>
+              <i className={`ti ${placeTypeOpen(group.type)?"ti-chevron-up":"ti-chevron-down"}`} aria-hidden="true"></i>
+            </button>
+            {placeTypeOpen(group.type)&&group.items.map(w=>(
               <div className="list-row workplace-row" key={w.id}>
                 <div>
                   <b>{w.name}</b>
@@ -3996,15 +4026,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             )}
           </div>
         </div>
-        <div className="rnr-board">
-          {rnrEntries.length===0 ? <p className="subtle">아직 저장된 R&R이 없습니다.</p> : rnrEntries.slice(0,12).map(entry=>(
-            <button className="rnr-entry rnr-entry-button" key={entry.id} onClick={()=>openRnr(entry)}>
-              <span>{entry.department||"공통"} · {entry.position||entry.category||"업무"}</span>
-              <b>{rnrDisplayTitle(entry)}</b>
-              <small>담당 {rnrAssigneeName(entry)} · 자세히 보기</small>
-            </button>
-          ))}
-        </div>
         <div className="rnr-section-title"><b>부서·직책·업무별 R&R 스택</b><span>같은 유형의 업무가 쌓여 다음 담당자가 기준 업무를 빠르게 볼 수 있습니다.</span></div>
         <div className="rnr-department-tabs">
           <button className={rnrDepartmentFilter==="all"?"active":""} onClick={()=>setRnrDepartmentFilter("all")}>전체</button>
@@ -4264,14 +4285,84 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
       .find(employee=>compact.includes(String(employee.name??"").replace(/\s/g,""))||compact.includes(String(employee.employee_no??"").replace(/\s/g,"")))
       ?? selectedEmployee;
   }
+  function explicitScheduleEventFor(employee:any,date:string){
+    return events.find((event:any)=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type));
+  }
+  function workInfoForDate(employee:any,date:string){
+    const sched=getScheduleForDate(employee,date,overrides,workTimeChanges);
+    const explicitEvent=explicitScheduleEventFor(employee,date);
+    const eventIsWork=["work","am_only","pm_only"].includes(explicitEvent?.event_type);
+    const workday=explicitEvent ? eventIsWork : (sched.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
+    const start=explicitEvent?.start_time??sched.work_start;
+    const end=explicitEvent?.end_time??sched.work_end;
+    const hours=workday?netDailyHours(start,end,sched.break_start??"12:00",sched.break_end??"13:00"):0;
+    return {workday,start,end,hours,event:explicitEvent};
+  }
+  function scheduledWorkStatsWithEvents(employee:any,startIso:string,endIso:string){
+    let days=0; let hours=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
+    while(d<=end){
+      const info=workInfoForDate(employee,isoDate(d));
+      if(info.workday){days++;hours+=info.hours;}
+      d=addLocalDays(d,1);
+    }
+    return {days,hours:Math.round(hours*10)/10};
+  }
   async function applyScheduleCommand(){
     const raw=scheduleCommand.trim();
     if(!raw) return setMessage("변경할 일정을 한 줄로 입력해주세요. 예: 홍준기 월화수 09:00~18:00");
     const employee=commandTargetEmployee(raw);
     if(!employee) return setMessage("직원 이름을 찾지 못했습니다. 예: 홍준기 월화수 09:00~18:00");
+    const dateRange=parseKoreanDateRange(raw,0);
+    const noWork=/출근\s*안|근무\s*안|일\s*안|안\s*함|휴무|쉬는|쉼/.test(raw);
+    const parsedTime=parsePromptTimeRange(raw);
+    const singleTime=parsedTime?null:parsePromptSingleTime(raw);
+    if(dateRange){
+      const schedule=getScheduleForDate(employee,dateRange.start_date,overrides,workTimeChanges);
+      let nextStart=String(schedule.work_start??employee.work_start??"09:00").slice(0,5);
+      let nextEnd=String(schedule.work_end??employee.work_end??"18:00").slice(0,5);
+      if(parsedTime){
+        nextStart=parsedTime.start;
+        nextEnd=parsedTime.end;
+      }else if(singleTime){
+        if(/퇴근|종료|마감|끝/.test(raw)) nextEnd=singleTime;
+        else nextStart=singleTime;
+      }
+      const startMin=timeToMinutes(nextStart);
+      const endMin=timeToMinutes(nextEnd);
+      if(!noWork&&startMin!=null&&endMin!=null&&endMin<=startMin) nextEnd=minutesToTime(startMin+8*60);
+      const periodLabel=dateRange.start_date===dateRange.end_date?dateRange.start_date:`${dateRange.start_date}~${dateRange.end_date}`;
+      const title=noWork?"출근 안 함":"시간 변경 근무";
+      const preview=[
+        `${employee.name} 직원의 ${periodLabel} 일정만 변경합니다.`,
+        noWork ? "변경: 출근 안 함" : `변경: ${timeLabel(nextStart)}~${timeLabel(nextEnd)}`,
+        "",
+        "기본 주간 근무요일은 바꾸지 않습니다.",
+        "이 일정대로 반영할까요?"
+      ].join("\n");
+      if(!window.confirm(preview)) return;
+      const payload={
+        employee_id:employee.id,
+        title,
+        event_type:noWork?"hidden":"work",
+        start_date:dateRange.start_date,
+        end_date:dateRange.end_date,
+        start_time:noWork?null:nextStart,
+        end_time:noWork?null:nextEnd,
+        note:null,
+        updated_at:new Date().toISOString(),
+      };
+      const existing=events.find((event:any)=>event.employee_id===employee.id&&event.start_date===dateRange.start_date&&event.end_date===dateRange.end_date&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type));
+      const result=existing?.id
+        ? await supabase.from("employee_schedule_events").update(payload).eq("id",existing.id)
+        : await supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
+      if(result.error) return setMessage(`일정 변경 실패: ${result.error.message}`);
+      setScheduleCommand("");
+      setMessage(`${employee.name} ${periodLabel} 일정을 변경했습니다.`);
+      await onChanged();
+      return;
+    }
     const oldDays=employee.work_days??["mon","tue","wed","thu","fri"];
     const nextDays=commandDays(raw,oldDays);
-    const parsedTime=parsePromptTimeRange(raw);
     const nextStart=parsedTime?.start??String(employee.work_start??"09:00").slice(0,5);
     const nextEnd=parsedTime?.end??String(employee.work_end??"18:00").slice(0,5);
     const dailyHours=netDailyHours(nextStart,nextEnd,"12:00","13:00");
@@ -4548,10 +4639,10 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
       </div>
       <div className="schedule-command-bar">
         <i className="ti ti-sparkles" aria-hidden="true"></i>
-        <input className="input" value={scheduleCommand} onChange={e=>setScheduleCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyScheduleCommand()} placeholder="예: 홍준기 월화수 09:00~18:00 / 정혜리 평일 오전 10시부터 오후 7시" />
+        <input className="input" value={scheduleCommand} onChange={e=>setScheduleCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyScheduleCommand()} placeholder="예: 이희은 7월 10일 오전 열한시 출근 / 홍준기 월화수 09:00~18:00" />
         <button className="button secondary" onClick={applyScheduleCommand}>일정 변경</button>
       </div>
-      <p className="subtle schedule-command-help">직원명, 근무요일, 시간을 한 줄로 적으면 확인 후 기본 근무일정과 월 근무시간 기준에 반영됩니다.</p>
+      <p className="subtle schedule-command-help">날짜를 쓰면 해당 날짜만 바뀌고, 날짜 없이 요일과 시간을 쓰면 기본 근무일정과 월 근무시간 기준에 반영됩니다.</p>
       {message&&<div className={`alert ${message.includes("실패")?"error":"success"}`} style={{marginTop:14}}>{message}</div>}
       {movingBase&&<div className="alert" style={{marginTop:14}}>{movingBase.employeeName}의 {DAY_LABELS[dayKeyFromDate(dateFromIso(movingBase.sourceDate))]}요일 근무를 이동할 날짜 칸을 눌러주세요.</div>}
       <div className="schedule-employee-tabs">
@@ -4579,20 +4670,14 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
             })}
             {activeEmployees.flatMap(employee=>{
               const color=employeeColorFromList(activeEmployees,employee.id);
-              const monthStats=scheduledWorkStats(employee,monthRange.start,monthRange.end,overrides,workTimeChanges);
+              const monthStats=scheduledWorkStatsWithEvents(employee,monthRange.start,monthRange.end);
               return [
                 <div className="team-week-employee" key={`${employee.id}-name`}><i style={{background:color}}></i><div><b>{employee.name}</b><small>{[employee.department,employee.position].filter(Boolean).join(" · ")||employee.employee_no}</small><small className="team-week-month">{dateFromIso(monthRange.start).getMonth()+1}월 / 근무일수 {monthStats.days}일 / 근무시간 {formatHourValue(monthStats.hours)}시간</small></div></div>,
                 ...dates.map(date=>{
-                  const sched=getScheduleForDate(employee,date,overrides,workTimeChanges);
-                  const explicitEvent=events.find(event=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type));
-                  const eventIsWork=["work","am_only","pm_only"].includes(explicitEvent?.event_type);
-                  const workday=explicitEvent ? eventIsWork : (sched.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
-                  const start=explicitEvent?.start_time??sched.work_start;
-                  const end=explicitEvent?.end_time??sched.work_end;
-                  const hours=workday?netDailyHours(start,end,sched.break_start??"12:00",sched.break_end??"13:00"):0;
-                  return <div className={`team-week-cell ${workday?"":"off"}`} key={`${employee.id}-${date}`} style={{"--employee-color":color} as React.CSSProperties}>
-                    <b>{workday?`${timeLabel(start)}~${timeLabel(end)}`:"휴무"}</b>
-                    <small>{workday?`실근무 ${formatHourValue(hours)}시간`:"근무 없음"}</small>
+                  const info=workInfoForDate(employee,date);
+                  return <div className={`team-week-cell ${info.workday?"":"off"}`} key={`${employee.id}-${date}`} style={{"--employee-color":color} as React.CSSProperties}>
+                    <b>{info.workday?`${timeLabel(info.start)}~${timeLabel(info.end)}`:"휴무"}</b>
+                    <small>{info.workday?`실근무 ${formatHourValue(info.hours)}시간`:"근무 없음"}</small>
                   </div>;
                 }),
               ];
@@ -4900,8 +4985,8 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
         <div className="payroll-summary-head">직원별 급여·근무 기준 <span>{payrollMonthLabel} 승인된 근무시간 변경을 반영합니다</span></div>
         <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>주 근무시간</span><span>월 근무시간</span><span>예상 급여</span><small>{payrollMonthLabel} 기준</small></div>
         {payrollSummaryRows.map(({employee,week,month,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay}:any)=>(
-          <div className="payroll-summary-row" key={employee.id}>
-            <div className="payroll-employee-cell"><b>{employee.name}</b><small>사번 {employee.employee_no||"-"} · {employee.role==="admin"?"관리자":"직원"}</small></div>
+          <div className={`payroll-summary-row ${empId===employee.id?"active":""}`} key={employee.id}>
+            <button type="button" className="payroll-employee-cell payroll-employee-button" onClick={()=>setEmpId(employee.id)}><b>{employee.name}</b><small>사번 {employee.employee_no||"-"} · {employee.role==="admin"?"관리자":"직원"}</small></button>
             <span>{hourlyWage?won(hourlyWage):"-"}</span>
             <span>{monthlySalary?won(monthlySalary):"-"}</span>
             <span>{formatHourValue(week.hours)}시간</span>
@@ -4912,6 +4997,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
         ))}
         <div className="payroll-summary-row payroll-summary-total"><b>총 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollEstimatedTotal)}</span><small>직원별 예상 급여 합계</small></div>
       </div>
+      {empId&&emp&&<div className="payroll-selected-detail"><b>{emp.name} 급여 세부내역</b><span>{payrollMonthLabel} 기준으로 아래 공제와 예상 실수령액을 계산합니다.</span></div>}
       {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 소정근로시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)}</div>}
       {empId&&monthly>0&&(
         <div className="table-wrap" style={{marginTop:8}}>
@@ -5324,13 +5410,23 @@ function ReportsPage() {
     const no=String(employee?.employee_no??"").trim().toLowerCase();
     return name!=="test"&&!no.startsWith("test");
   }
-  const visibleEmployees=employees.filter(reportEmployeeVisible);
+  const employeeMap=Object.fromEntries(employees.map((employee:any)=>[employee.id,employee]));
+  function employeeForLog(log:any) {
+    return employeeMap[log.employee_id] ?? log.employees ?? null;
+  }
+  const baseVisibleEmployees=employees.filter(reportEmployeeVisible);
+  const visibleLogs=logs.filter((log:any)=>reportEmployeeVisible(employeeForLog(log)));
+  const extraLogEmployees=visibleLogs
+    .map((log:any)=>employeeForLog(log))
+    .filter((employee:any)=>employee?.id&&!baseVisibleEmployees.some((visible:any)=>visible.id===employee.id));
+  const visibleEmployees=[...baseVisibleEmployees,...extraLogEmployees];
   const visibleEmployeeIds=new Set(visibleEmployees.map((employee:any)=>employee.id));
-  const visibleLogs=logs.filter((log:any)=>reportEmployeeVisible(log.employees));
   const visibleCompRequests=compRequests.filter((request:any)=>visibleEmployeeIds.has(request.employee_id));
-  const allLogRows = visibleLogs.map(l=>({
-    직원:l.employees?.name??"-",
-    사번:l.employees?.employee_no??"-",
+  const allLogRows = visibleLogs.map(l=>{
+    const logEmployee=employeeForLog(l);
+    return {
+    직원:logEmployee?.name??"-",
+    사번:logEmployee?.employee_no??"-",
     근무지:l.workplaces?.name??"-",
     유형:workplaceTypeLabels[l.workplaces?.type]??"-",
     출근:formatDateTime(l.check_in_time),
@@ -5340,7 +5436,7 @@ function ReportsPage() {
     상태:l.status,
     초과근무심사:l.overtime_review_status==="approved"?"승인":l.overtime_review_status==="rejected"?"미인정":"-",
     기기:l.device_status??"-"
-  }));
+  };});
 
   function downloadAll(){
     exportRowsToExcel("lupl_attendance_report.xlsx","근태",allLogRows);
@@ -5429,7 +5525,7 @@ function ReportsPage() {
 
       <section className="card">
         <h2 className="card-title"><i className="ti ti-alert-triangle" aria-hidden="true"></i>예외함</h2>
-        <DataTable rows={exceptions.map(l=>({직원:l.employees?.name,근무지:l.workplaces?.name,출근:formatDateTime(l.check_in_time),퇴근:formatDateTime(l.check_out_time),상태:l.status}))} />
+        <DataTable rows={exceptions.map(l=>({직원:employeeForLog(l)?.name,근무지:l.workplaces?.name,출근:formatDateTime(l.check_in_time),퇴근:formatDateTime(l.check_out_time),상태:l.status}))} />
       </section>
     </div>
   );
