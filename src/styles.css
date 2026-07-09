@@ -503,8 +503,25 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .work-consent-modal { max-width: 430px; }
 .work-consent-modal .signature-pad { height: 132px; }
 
-.work-change-card { max-width: 760px; margin: 0 auto; }
+.work-change-card { max-width: 1040px; margin: 0 auto; }
 .work-change-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.work-change-layout { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(280px,.75fr); gap: 16px; align-items: flex-start; }
+.work-change-main, .work-change-history { min-width: 0; }
+.worktime-command-bar { margin: 6px 0 0; }
+.work-change-preview { display: grid; gap: 4px; margin: 12px 0 12px; border: 1px solid #d7e6ff; background: #f7fbff; border-radius: 8px; padding: 12px; }
+.work-change-preview b { color: var(--blue-dark); font-size: 13px; }
+.work-change-preview span { color: #344054; font-size: 13px; line-height: 1.45; }
+.work-old-toggle { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 3px 10px; align-items: center; margin: 12px 0 0; text-align: left; }
+.work-old-toggle span { color: var(--ink); font-weight: 850; }
+.work-old-toggle small { grid-column: 1; color: var(--muted); font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-old-toggle i { grid-column: 2; grid-row: 1 / span 2; }
+.work-old-grid { margin: 10px 0 14px; }
+.work-change-history { border: 1px solid var(--line); border-radius: 8px; background: #fbfcfe; padding: 12px; }
+.work-change-history-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.work-change-history-head h3 { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--ink); font-size: 14px; font-weight: 850; }
+.work-change-history-head span { color: var(--muted); font-size: 12px; font-weight: 750; }
+.work-change-history-row { align-items: flex-start; }
+.work-change-history-row b { display: block; color: var(--ink); font-size: 13px; line-height: 1.35; }
 .work-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0 10px; }
 .work-section-head h3 { margin: 0; font-size: 15px; font-weight: 750; letter-spacing: -0.03em; }
 .locked-badge { flex-shrink: 0; border-radius: 999px; padding: 6px 10px; background: #f3f5f8; color: var(--muted); font-size: 12px; font-weight: 750; }
@@ -618,6 +635,10 @@ body { overflow-x: hidden; }
   .readonly-field { grid-template-columns: 78px minmax(0,1fr); padding: 12px; }
   .input-action-row { grid-template-columns: minmax(0,1fr); }
   .period-summary, .work-change-summary { grid-template-columns: minmax(0,1fr); }
+  .work-change-layout { grid-template-columns: minmax(0,1fr); }
+  .worktime-command-bar { grid-template-columns: auto minmax(0,1fr); }
+  .worktime-command-bar .button { grid-column: 1 / -1; width: 100%; justify-content: center; }
+  .work-old-toggle small { white-space: normal; }
   .period-card .grid.two { gap: 0; }
 }
 

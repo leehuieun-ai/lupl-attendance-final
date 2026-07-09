@@ -88,7 +88,7 @@ const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
   attendance:["오늘의 할일","출근하기","퇴근하기","내 기기","최근 기록","브라우저 알림"],
   leave:["휴가 신청","연차 현황","신청 내역","대체휴가 시간 사용"],
   overtime:["추가근무 신청","추가근무 내역","대체휴가 적립"],
-  worktime:["한 문장 입력","기존 근무조건","변경 후 근무조건","서명","요청 내역"],
+  worktime:["한 문장 입력","기존 근무조건","변경 사유","상세 설명","서명","요청 내역"],
   "admin-dashboard":["승인 대기","일일 직원 근무 현황","강제 퇴근","확인 완료"],
   employees:["추가근무 적립 내역","근무시간 변경 요청","근무시간 변경 기록","직원 연차 소진내용","직원 연차 현황","직원 계정 생성","직원 관리"],
   workplaces:["근무지 등록","승인된 근무지","근무지 승인"],
@@ -2334,7 +2334,7 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
   const [newBreakStart,setNewBreakStart]=useState("12:00");
   const [newBreakEnd,setNewBreakEnd]=useState("13:00");
   const [reason,setReason]=useState("");
-  const [showDetail,setShowDetail]=useState(false);
+  const [showOldConditions,setShowOldConditions]=useState(false);
   const [msg,setMsg]=useState("");
   const [busy,setBusy]=useState(false);
   const canvasRef=useRef<HTMLCanvasElement|null>(null);
@@ -2344,12 +2344,22 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
   const oldEnd=timeLabel(selectedEmployee.work_end??"18:00");
   const oldContractStart=employeeContractStart(selectedEmployee);
   const oldContractEnd=employeeContractEnd(selectedEmployee);
-  const periodDays=daysFromPeriods(periods);
-  const newDays=manualDays??periodDays;
-  const effectiveNewDays=changeMode==="no_work"?[]:(newDays.length>0?newDays:oldDays);
-  const periodPayload=periods.map(p=>{const s=countDaysInRange(p.start_date,p.end_date,effectiveNewDays); return {...p,total_days:s.totalDays,work_days_count:s.workDays};});
-  const totals=summarizePeriods(periods,effectiveNewDays);
-  const weeklyHours=Math.round(netDailyHours(newStart,newEnd,newBreakStart,newBreakEnd)*effectiveNewDays.length*10)/10;
+  const parsedNatural=naturalText.trim()?parseWorkTimeChangePrompt(naturalText,oldDays):{};
+  const displayChangeMode=parsedNatural.mode??changeMode;
+  const displayPeriods=parsedNatural.periods?.length?parsedNatural.periods:periods;
+  const displayManualDays=parsedNatural.mode==="no_work"?[]:(parsedNatural.newDays??manualDays);
+  const periodDays=daysFromPeriods(displayPeriods);
+  const newDays=displayManualDays??periodDays;
+  const effectiveNewDays=displayChangeMode==="no_work"?[]:(newDays.length>0?newDays:oldDays);
+  const displayNewStart=parsedNatural.start??newStart;
+  const displayNewEnd=parsedNatural.end??newEnd;
+  const periodPayload=displayPeriods.map(p=>{const s=countDaysInRange(p.start_date,p.end_date,effectiveNewDays); return {...p,total_days:s.totalDays,work_days_count:s.workDays};});
+  const totals=summarizePeriods(displayPeriods,effectiveNewDays);
+  const weeklyHours=Math.round(netDailyHours(displayNewStart,displayNewEnd,newBreakStart,newBreakEnd)*effectiveNewDays.length*10)/10;
+  const periodLabel=periodPayload.map((p:any)=>p.start_date===p.end_date?p.start_date:`${p.start_date}~${p.end_date}`).join(" / ");
+  const changePreview=displayChangeMode==="no_work"
+    ? `${periodLabel || "-"} · 출근 안 함 · 총 ${totals.totalDays}일`
+    : `${periodLabel || "-"} · ${daysLabel(effectiveNewDays)} · ${timeRangeLabel(displayNewStart,displayNewEnd)} · 휴게 ${timeRangeLabel(newBreakStart,newBreakEnd)} · 주 ${weeklyHours.toFixed(1)}시간`;
 
   async function load() {
     const {data}=await supabase.from("work_time_change_requests").select("*").eq("employee_id",selectedEmployee.id).order("created_at",{ascending:false});
@@ -2373,6 +2383,7 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
     setManualDays(null);
     setPeriods([{id:"p1",start_date:todayIso(),end_date:todayIso()}]);
     setReason("");
+    setShowOldConditions(false);
     clearSignature(canvasRef);
   },[selectedEmployee.id]);
   function updatePeriod(id:string,patch:Record<string,string>){setManualDays(null);setPeriods(list=>list.map(p=>p.id===id?{...p,...patch}:p));}
@@ -2417,16 +2428,19 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
   }
   async function submit() {
     setMsg("");
-    if(changeMode!=="no_work"&&effectiveNewDays.length===0) return setMsg("변경 후 근무요일을 확인해주세요.");
-    if(periods.some(p=>!p.start_date||!p.end_date||p.end_date<p.start_date)) return setMsg("적용기간의 시작일과 종료일을 확인해주세요.");
-    if(!newStart||!newEnd) return setMsg("변경 후 근무시간을 입력해주세요.");
+    if(!naturalText.trim()) return setMsg("변경 내용을 한 줄로 적어주세요.");
+    const hasDraft=parsedNatural.mode||parsedNatural.periods||parsedNatural.newDays||parsedNatural.start||parsedNatural.end;
+    if(!hasDraft) return setMsg("날짜, 시간, 근무 안함, 요일 변경 중 하나를 포함해 적어주세요.");
+    if(displayChangeMode!=="no_work"&&effectiveNewDays.length===0) return setMsg("변경 후 근무요일을 확인해주세요.");
+    if(displayPeriods.some((p:any)=>!p.start_date||!p.end_date||p.end_date<p.start_date)) return setMsg("적용기간의 시작일과 종료일을 확인해주세요.");
+    if(!displayNewStart||!displayNewEnd) return setMsg("변경 후 근무시간을 입력해주세요.");
     if(breakMinutes(newBreakStart,newBreakEnd) < 0) return setMsg("휴게시간을 확인해주세요.");
-    const noScheduleChange=sameDays(effectiveNewDays,oldDays)&&newStart===oldStart&&newEnd===oldEnd&&newBreakStart==="12:00"&&newBreakEnd==="13:00";
-    if(changeMode!=="no_work"&&noScheduleChange) return setMsg("변경된 근무조건이 없습니다. 날짜, 근무요일, 근무시간 중 변경 내용을 입력해주세요.");
+    const noScheduleChange=sameDays(effectiveNewDays,oldDays)&&displayNewStart===oldStart&&displayNewEnd===oldEnd&&newBreakStart==="12:00"&&newBreakEnd==="13:00";
+    if(displayChangeMode!=="no_work"&&noScheduleChange) return setMsg("변경된 근무조건이 없습니다. 날짜, 근무요일, 근무시간 중 변경 내용을 입력해주세요.");
     const signature=signatureData(canvasRef);
     if(!signature||signature.length<1200) return setMsg("자필 서명을 입력해주세요.");
     setBusy(true);
-    const documentText=buildWorkTimeChangeDocument(selectedEmployee,periodPayload,effectiveNewDays,newStart,newEnd,newBreakStart,newBreakEnd,reason,changeMode);
+    const documentText=buildWorkTimeChangeDocument(selectedEmployee,periodPayload,effectiveNewDays,displayNewStart,displayNewEnd,newBreakStart,newBreakEnd,reason,displayChangeMode);
     const {error}=await supabase.from("work_time_change_requests").insert({
       employee_id:selectedEmployee.id,
       old_work_days:oldDays,
@@ -2435,8 +2449,8 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
       old_break_start:"12:00",
       old_break_end:"13:00",
       new_work_days:effectiveNewDays,
-      new_work_start:newStart,
-      new_work_end:newEnd,
+      new_work_start:displayNewStart,
+      new_work_end:displayNewEnd,
       new_break_start:newBreakStart,
       new_break_end:newBreakEnd,
       periods:periodPayload,
@@ -2471,127 +2485,83 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
           <span className="badge">작성중</span>
         </div>
 
-        {isAdmin ? (
-          <div className="form-row">
-            <label className="label">직원 이름</label>
-            <select className="select" value={selectedEmployeeId} onChange={e=>setSelectedEmployeeId(e.target.value)}>
-              {selectableEmployees.map(e=><option key={e.id} value={e.id}>{e.name}{e.employee_no?` · ${e.employee_no}`:""}</option>)}
-            </select>
-          </div>
-        ) : (
-          <div className="type-desc work-change-guide">
-            <b>{selectedEmployee.name} 본인 요청</b>
-            <span>로그인한 직원 계정으로 자동 접수됩니다.</span>
-          </div>
-        )}
-
-        <div className="work-section-head">
-          <h3>기존 근무조건</h3>
-          <span className="locked-badge">자동 기입</span>
-        </div>
-        <div className="readonly-grid">
-          <div className="readonly-field"><span>기준</span><b>근로계약서 기준</b></div>
-          <div className="readonly-field"><span>근무 시작일</span><b>{oldContractStart}</b></div>
-          <div className="readonly-field"><span>근무 종료일</span><b>{oldContractEnd??"정해진 종료일 없음"}</b></div>
-          <div className="readonly-field"><span>근무요일</span><b>{daysLabel(oldDays)}</b></div>
-          <div className="readonly-field"><span>근무시간</span><b>{timeRangeLabel(oldStart,oldEnd)}</b></div>
-          <div className="readonly-field"><span>휴게시간</span><b>12:00 ~ 13:00</b></div>
-        </div>
-
-        <div className="work-section-head">
-          <h3>변경 후 근무조건</h3>
-        </div>
-        <div className="type-desc work-change-guide">
-          <span className="work-change-guide-line">아래 입력칸에 “7월 7일부터 8일까지 오전 열시부터 오후 여덟시까지 근무”처럼 적고 초안을 누르면 적용기간과 시간이 자동으로 채워집니다.</span>
-          <span className="work-change-guide-line">여러 기간은 쉼표로 이어 적을 수 있습니다. 예: “8월 7일부터 8월 10일까지 오전 열한시부터 오후 여덟시까지 근무, 7월 7일 오전 열한시부터 오후 여덟시까지 근무”</span>
-        </div>
-
-        <div className="natural-change-box">
-          <div className="grid two">
-            <div className="form-row"><label className="label">변경 유형</label>
-              <select className="select" value={changeMode} onChange={e=>{setChangeMode(e.target.value); if(e.target.value==="no_work") setManualDays([]); else if(manualDays?.length===0) setManualDays(null);}}>
-                {Object.entries(WORK_TIME_CHANGE_MODE_LABELS).map(([value,label])=><option key={value} value={value}>{label}</option>)}
-              </select>
+        <div className="work-change-layout">
+          <div className="work-change-main">
+            <div className="form-row">
+              <label className="label">직원 이름</label>
+              {isAdmin ? (
+                <select className="select" value={selectedEmployeeId} onChange={e=>setSelectedEmployeeId(e.target.value)}>
+                  {selectableEmployees.map(e=><option key={e.id} value={e.id}>{e.name}{e.employee_no?` · ${e.employee_no}`:""}</option>)}
+                </select>
+              ) : (
+                <input className="input" value={`${selectedEmployee.name}${selectedEmployee.employee_no?` · ${selectedEmployee.employee_no}`:""}`} readOnly />
+              )}
             </div>
-            <div className="form-row"><label className="label">한 문장으로 입력</label>
-              <div className="input-action-row">
-                <input className="input" value={naturalText} onChange={e=>setNaturalText(e.target.value)} placeholder="예: 7월 10일부터 12일까지 근무 안함 / 8월 7일부터 10일까지 오전 열한시부터 오후 여덟시까지 근무" />
-                <button className="button secondary compact" onClick={applyNaturalDraft}><i className="ti ti-sparkles" aria-hidden="true"></i>초안</button>
-              </div>
+
+            <label className="label">변경 내용</label>
+            <div className="schedule-command-bar worktime-command-bar">
+              <i className="ti ti-sparkles" aria-hidden="true"></i>
+              <input className="input" value={naturalText} onChange={e=>setNaturalText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyNaturalDraft()} placeholder="예: 7월 10일부터 12일까지 근무 안함 / 8월 7일부터 10일까지 오전 열한시부터 오후 여덟시까지 근무" />
+              <button className="button secondary" onClick={applyNaturalDraft}>내용 확인</button>
+            </div>
+            <p className="subtle schedule-command-help">날짜와 시간을 한 줄로 적으면 아래 확인 내용에 자동 반영됩니다. 여러 기간은 쉼표로 이어 적을 수 있습니다.</p>
+
+            <div className="work-change-preview">
+              <b>{WORK_TIME_CHANGE_MODE_LABELS[displayChangeMode]??"근무조건 변경"}</b>
+              <span>{changePreview}</span>
+            </div>
+
+            <button className="collapsible-btn work-old-toggle" type="button" onClick={()=>setShowOldConditions(v=>!v)}>
+              <span>기존 근무조건</span>
+              <small>{daysLabel(oldDays)} · {timeRangeLabel(oldStart,oldEnd)} · 휴게 12:00 ~ 13:00</small>
+              <i className={`ti ${showOldConditions?"ti-chevron-up":"ti-chevron-down"}`} aria-hidden="true"></i>
+            </button>
+            {showOldConditions&&<div className="readonly-grid work-old-grid">
+              <div className="readonly-field"><span>기준</span><b>근로계약서 기준</b></div>
+              <div className="readonly-field"><span>근무 시작일</span><b>{oldContractStart}</b></div>
+              <div className="readonly-field"><span>근무 종료일</span><b>{oldContractEnd??"정해진 종료일 없음"}</b></div>
+              <div className="readonly-field"><span>근무요일</span><b>{daysLabel(oldDays)}</b></div>
+              <div className="readonly-field"><span>근무시간</span><b>{timeRangeLabel(oldStart,oldEnd)}</b></div>
+              <div className="readonly-field"><span>휴게시간</span><b>12:00 ~ 13:00</b></div>
+            </div>}
+
+            <div className="form-row"><label className="label">변경 사유</label><textarea className="textarea" value={reason} onChange={e=>setReason(e.target.value)} placeholder="예: 학업 일정, 개인 사정, 매장 운영 일정 조정 등" /></div>
+
+            <div className="work-section-head">
+              <h3>상세 설명</h3>
+            </div>
+            <WorkTimeDetailBlock className="work-time-detail-space" />
+
+            <div style={{marginTop:16}}>
+              <label className="label">자필 서명</label>
+              <SignaturePad canvasRef={canvasRef} />
+            </div>
+            <div className="actions" style={{marginTop:16}}>
+              <button className="button full" disabled={busy} onClick={submit}>확인하고 서명하기</button>
+              <button className="button ghost" disabled={busy} onClick={()=>clearSignature(canvasRef)}>서명 다시 쓰기</button>
             </div>
           </div>
-          <p className="subtle" style={{margin:0}}>쉼표로 여러 기간을 적으면 적용기간이 각각 생성됩니다. 변경 사유는 아래 사유 칸에 별도로 적어주세요.</p>
-        </div>
 
-        <div className="period-stack">
-          {periods.map((p,index)=>{
-            const stats=countDaysInRange(p.start_date,p.end_date,effectiveNewDays);
-            return (
-              <div className="period-card" key={p.id}>
-                <div className="grid two">
-                  <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={p.start_date} onChange={e=>updatePeriod(p.id,{start_date:e.target.value})} /></div>
-                  <div className="form-row"><label className="label">종료일</label><input className="input" type="date" value={p.end_date} onChange={e=>updatePeriod(p.id,{end_date:e.target.value})} /></div>
-                </div>
-                <div className="period-summary">
-                  <div><span>총 적용일</span><b>{stats.totalDays}일</b></div>
-                  <div><span>근무 예정일</span><b>{stats.workDays}일</b></div>
-                </div>
-                {periods.length>1&&<button className="button ghost compact" onClick={()=>removePeriod(p.id)}>기간 삭제</button>}
-                {index===periods.length-1&&<button className="add-period-button" onClick={addPeriod}>+ 적용기간 추가</button>}
+          <aside className="work-change-history">
+            <div className="work-change-history-head">
+              <h3><i className="ti ti-list-details" aria-hidden="true"></i>요청 내역</h3>
+              <span>{requests.length}건</span>
+            </div>
+            {requests.length===0 ? <p className="subtle">요청 내역이 없습니다.</p> : (
+              <div className="grid">
+                {requests.map(r=>(
+                  <div className="list-row work-change-history-row" key={r.id}>
+                    <div>
+                      <b>{(r.periods??[]).map((p:any)=>p.start_date===p.end_date?p.start_date:`${p.start_date}~${p.end_date}`).join(" / ") || "-"}</b>
+                      <div className="subtle">{daysLabel(r.new_work_days??[])} · {timeRangeLabel(r.new_work_start,r.new_work_end)} · 주 {Number(r.weekly_work_hours||0).toFixed(1)}시간</div>
+                    </div>
+                    <span className={`badge ${badgeClass(r.status)}`}>{r.status==="pending"?"승인 대기":r.status==="approved"?"승인":"반려"}</span>
+                  </div>
+                ))}
               </div>
-            );
-          })}
+            )}
+          </aside>
         </div>
-
-        <div className="form-row"><label className="label">근무요일</label>
-          <p className="subtle" style={{margin:"0 0 8px"}}>적용기간에 포함된 날짜 기준으로 자동 선택됩니다.</p>
-          <div className="days-grid">{ALL_DAYS.map(d=><button key={d} type="button" disabled className={`day-btn ${effectiveNewDays.includes(d)?"active":""}`}>{DAY_LABELS[d]}</button>)}</div>
-        </div>
-        <div className="grid two">
-          <div className="form-row"><label className="label">근무 시작</label><input className="input" type="time" value={newStart} onChange={e=>setNewStart(e.target.value)} /></div>
-          <div className="form-row"><label className="label">근무 종료</label><input className="input" type="time" value={newEnd} onChange={e=>setNewEnd(e.target.value)} /></div>
-        </div>
-        <div className="grid two">
-          <div className="form-row"><label className="label">휴게 시작</label><input className="input" type="time" value={newBreakStart} onChange={e=>setNewBreakStart(e.target.value)} /></div>
-          <div className="form-row"><label className="label">휴게 종료</label><input className="input" type="time" value={newBreakEnd} onChange={e=>setNewBreakEnd(e.target.value)} /></div>
-        </div>
-        <div className="work-change-summary">
-          <div><span>주 소정근로시간</span><b>{weeklyHours.toFixed(1)}시간</b></div>
-          <div><span>전체 적용</span><b>{totals.totalDays}일 / 근무 {totals.workDays}일</b></div>
-        </div>
-        <div className="form-row"><label className="label">변경 사유</label><textarea className="textarea" value={reason} onChange={e=>setReason(e.target.value)} placeholder="예: 학업 일정, 개인 사정, 매장 운영 일정 조정 등" /></div>
-
-        <button className="collapsible-btn" onClick={()=>setShowDetail(v=>!v)}>
-          상세 설명 보기
-          <i className={`ti ${showDetail?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
-        </button>
-        {showDetail&&<WorkTimeDetailBlock className="work-time-detail-space" />}
-
-        <div style={{marginTop:16}}>
-          <label className="label">자필 서명</label>
-          <SignaturePad canvasRef={canvasRef} />
-        </div>
-        <div className="actions" style={{marginTop:16}}>
-          <button className="button full" disabled={busy} onClick={submit}>확인하고 서명하기</button>
-          <button className="button ghost" disabled={busy} onClick={()=>clearSignature(canvasRef)}>서명 다시 쓰기</button>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2 className="card-title"><i className="ti ti-list-details" aria-hidden="true"></i>근무시간 변경 요청 내역</h2>
-        {requests.length===0 ? <p className="subtle">요청 내역이 없습니다.</p> : (
-          <div className="grid">
-            {requests.map(r=>(
-              <div className="list-row" key={r.id}>
-                <div>
-                  <b>{(r.periods??[]).map((p:any)=>`${p.start_date}~${p.end_date}`).join(" / ") || "-"}</b>
-                  <div className="subtle">{daysLabel(r.new_work_days??[])} · {timeRangeLabel(r.new_work_start,r.new_work_end)} · 주 {Number(r.weekly_work_hours||0).toFixed(1)}시간</div>
-                </div>
-                <span className={`badge ${badgeClass(r.status)}`}>{r.status==="pending"?"승인 대기":r.status==="approved"?"승인":"반려"}</span>
-              </div>
-            ))}
-          </div>
-        )}
       </section>
     </div>
   );
