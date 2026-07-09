@@ -76,7 +76,7 @@ const IMPROVEMENT_TYPES = [
   {value:"feature",label:"기능추가"},
   {value:"urgent",label:"긴급"},
 ];
-const IMPROVEMENT_STATUS_LABELS:Record<string,string>={open:"대기",reviewing:"검토",planned:"수정 예정",done:"완료",dismissed:"보류"};
+const IMPROVEMENT_STATUS_LABELS:Record<string,string>={open:"대기",reviewing:"검토",planned:"수정 예정",done:"개선완료",dismissed:"보류"};
 const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
   attendance:["오늘의 할일","출근하기","퇴근하기","내 기기","최근 기록","브라우저 알림"],
   leave:["휴가 신청","연차 현황","신청 내역","대체휴가 시간 사용"],
