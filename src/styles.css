@@ -250,6 +250,20 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .schedule-board-card { overflow: hidden; padding: 24px; }
 .schedule-board-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .schedule-board-toolbar .button { flex-shrink: 0; }
+.schedule-command-bar {
+  display: grid;
+  grid-template-columns: auto minmax(0,1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px;
+  border: 1px solid #dbe5f3;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.schedule-command-bar > i { color: var(--blue-dark); font-size: 18px; }
+.schedule-command-bar .input { background: #fff; }
+.schedule-command-help { margin: 7px 0 0; }
 .schedule-employee-tabs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
 .schedule-employee-tabs > span { margin-right: 4px; color: #5a6475; font-size: 12px; font-weight: 700; }
 .schedule-employee-tabs button { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid #dde5f0; border-radius: 8px; padding: 9px 14px; background: #fff; color: #4f5d73; font-size: 13px; font-weight: 750; transition: all .15s ease; }
@@ -263,7 +277,7 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .team-week-title b { font-size: 13px; }
 .team-week-title div span, .team-week-title > span { color: var(--muted); font-size: 11px; }
 .team-week-title div span { margin-top: 2px; }
-.team-week-grid { display: grid; grid-template-columns: 150px repeat(5,minmax(150px,1fr)); min-width: 920px; }
+.team-week-grid { display: grid; grid-template-columns: 190px repeat(5,minmax(150px,1fr)); min-width: 980px; }
 .team-week-head { min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 4px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fff; color: #475467; font-size: 12px; font-weight: 700; }
 .team-week-head small { color: var(--muted); font-size: 10px; font-weight: 500; }
 .team-week-employee { min-height: 58px; display: flex; align-items: center; gap: 9px; padding: 8px 11px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: #fff; }
@@ -443,6 +457,8 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
   .comp-time-grid { grid-template-columns: 1fr; }
   .schedule-board-toolbar { align-items: stretch; flex-direction: column; }
   .schedule-board-toolbar .button { width: 100%; justify-content: center; }
+  .schedule-command-bar { grid-template-columns: 1fr; }
+  .schedule-command-bar > i { display: none; }
 }
 
 /* 휴가 유형 설명 박스 */
@@ -648,6 +664,7 @@ body { overflow-x: hidden; }
 .improvement-modal { max-width: 520px; }
 .improvement-backdrop { z-index: 80; }
 .improvement-metrics { display: grid; grid-template-columns: repeat(auto-fit,minmax(120px,1fr)); gap: 10px; margin-bottom: 14px; }
+.improvement-summary-line { margin: 4px 0 14px; color: #5a6475; font-size: 13px; font-weight: 650; }
 .improvement-ai-box { border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 14px; margin: 12px 0; }
 .improvement-ai-box ul { margin: 8px 0 12px; padding-left: 18px; color: #364154; line-height: 1.55; }
 .improvement-ai-box li span { display: block; color: var(--muted); font-size: 12px; }
@@ -713,6 +730,19 @@ body { overflow-x: hidden; }
 .rejected-archive-row b { display: block; color: #172033; font-size: 14px; }
 .rejected-archive-row small { display: block; color: #5b6678; font-size: 12px; line-height: 1.45; margin-top: 3px; }
 .rejected-archive-row em { display: block; color: #94a3b8; font-size: 11px; font-style: normal; margin-top: 4px; }
+.approval-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f7f9fc;
+  border: 1px solid #e2e8f0;
+  color: #182235;
+  font-size: 14px;
+  font-weight: 850;
+}
 .employee-detail-panel {
   border: 1px solid #dbe5f3;
   border-radius: 8px;
@@ -735,7 +765,7 @@ body { overflow-x: hidden; }
 .employee-detail-picker b, .employee-detail-picker span { display: block; white-space: nowrap; }
 .employee-detail-picker b { color: #172033; font-size: 14px; }
 .employee-detail-picker span { margin-top: 2px; color: #64748b; font-size: 11px; font-weight: 750; }
-.employee-contract-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 10px; }
+.employee-contract-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 10px; }
 .employee-contract-grid div {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -747,9 +777,9 @@ body { overflow-x: hidden; }
 .employee-contract-grid .select,
 .employee-contract-grid .input { margin-top: 6px; background: #fff; }
 .compact-select { min-height: 38px; padding: 8px 10px; }
-.compact-days { gap: 4px; margin-top: 7px; }
-.compact-days .day-btn { min-height: 30px; padding: 5px 9px; font-size: 12px; }
-.inline-time-edit { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.compact-days { display: grid; grid-template-columns: repeat(7,minmax(30px,1fr)); gap: 4px; margin-top: 7px; }
+.compact-days .day-btn { min-height: 30px; padding: 5px 0; font-size: 12px; }
+.inline-time-edit { display: grid; grid-template-columns: repeat(2,minmax(116px,1fr)); gap: 6px; margin-top: 6px; }
 .inline-time-edit .input { min-height: 38px; padding: 8px 9px; }
 .employee-contract-note {
   display: flex;
@@ -769,7 +799,7 @@ body { overflow-x: hidden; }
 .employee-admin-table { min-width: 1100px; table-layout: auto; }
 .employee-admin-table th:nth-child(1), .employee-admin-table td:nth-child(1) { min-width: 132px; }
 .employee-admin-table th:nth-child(2), .employee-admin-table td:nth-child(2) { min-width: 156px; }
-.employee-admin-table th:nth-child(4), .employee-admin-table td:nth-child(4) { min-width: 74px; white-space: nowrap; }
+.employee-admin-table th:nth-child(4), .employee-admin-table td:nth-child(4) { min-width: 112px; white-space: nowrap; }
 .employee-admin-table th:nth-child(8), .employee-admin-table td:nth-child(8) { min-width: 176px; }
 .employee-admin-table th:nth-child(9), .employee-admin-table td:nth-child(9) { min-width: 92px; white-space: nowrap; }
 .employee-identity { display: grid; gap: 2px; min-width: 0; }
@@ -839,7 +869,7 @@ body { overflow-x: hidden; }
 .comp-employee-filter button:hover { border-color: #bdccef; background: #f8fbff; }
 .comp-employee-filter button.active { border-color: #93b4ff; background: var(--blue-soft); box-shadow: inset 0 0 0 1px #bfdbfe; }
 .comp-employee-filter b { display: block; color: #182235; font-size: 14px; margin-bottom: 4px; }
-.comp-employee-filter span { display: block; color: var(--muted); font-size: 13px; font-weight: 750; line-height: 1.45; }
+.comp-employee-filter span { display: block; color: var(--muted); font-size: 13px; font-weight: 500; line-height: 1.45; }
 .rnr-department-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .rnr-department-tabs button { min-height: 36px; border: 1px solid #dfe5ee; border-radius: 999px; background: #fff; color: #4f5d73; padding: 8px 13px; font-size: 13px; font-weight: 800; }
 .rnr-department-tabs button.active { border-color: #93b4ff; background: var(--blue-soft); color: var(--blue-dark); }
@@ -851,6 +881,9 @@ body { overflow-x: hidden; }
 .attendance-status-bars { min-height: 42px; display: flex; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
 .attendance-status-bars span { min-width: fit-content; display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; color: #fff; font-size: 12px; font-weight: 850; white-space: nowrap; }
 .attendance-status-bars .empty { width: 100%; color: var(--muted); background: transparent; }
+.attendance-status-detail { display: grid; gap: 6px; }
+.attendance-status-counts { display: flex; flex-wrap: wrap; gap: 6px; }
+.attendance-status-counts span { border: 1px solid var(--line); border-radius: 999px; background: #fff; padding: 4px 8px; color: #5a6475; font-size: 11px; font-weight: 650; }
 .consent-status-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 10px; margin: 0 0 14px; }
 .consent-status-card { border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; padding: 12px; text-align: left; cursor: pointer; }
 .consent-status-card.active { border-color: #93b4ff; background: var(--blue-soft); box-shadow: inset 0 0 0 1px #bfdbfe; }
@@ -861,7 +894,13 @@ body { overflow-x: hidden; }
 .workplace-row { flex-wrap: nowrap; align-items: flex-start; }
 .workplace-row > div:first-child { min-width: 0; flex: 1; }
 .workplace-row .actions { flex-wrap: nowrap; flex-shrink: 0; }
-.worktime-page { max-width: 980px; margin: 0 auto; width: 100%; }
+.workplace-category-group { display: grid; gap: 8px; margin-top: 12px; }
+.workplace-category-group h4 { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0; padding: 8px 10px; border-radius: 8px; background: #f7f9fc; border: 1px solid var(--line); color: #182235; font-size: 13px; }
+.workplace-category-group h4 span { color: var(--muted); font-size: 12px; font-weight: 650; }
+.worktime-page { max-width: 1040px; margin: 0 auto; width: 100%; grid-template-columns: minmax(0,1fr); justify-items: stretch; }
+.worktime-page > .card { width: 100%; }
+.payroll-head .card-title { margin-bottom: 4px; }
+.payroll-month-picker { min-width: 180px; }
 .payroll-employee-cell { display: grid; gap: 3px; min-width: 0; }
 .payroll-employee-cell b { color: var(--ink); white-space: nowrap; }
 .payroll-employee-cell small { color: var(--muted); font-size: 12px; white-space: nowrap; }
@@ -953,7 +992,8 @@ body { overflow-x: hidden; }
 
   .admin-command-head,
   .employee-detail-head,
-  .rejected-archive-row {
+  .rejected-archive-row,
+  .payroll-head {
     flex-direction: column;
     align-items: stretch;
   }
@@ -961,6 +1001,23 @@ body { overflow-x: hidden; }
   .admin-flow-grid,
   .employee-contract-grid {
     grid-template-columns: minmax(0,1fr);
+  }
+
+  .compact-days {
+    grid-template-columns: repeat(7,minmax(28px,1fr));
+  }
+
+  .inline-time-edit {
+    grid-template-columns: minmax(0,1fr);
+  }
+
+  .workplace-row {
+    flex-wrap: wrap;
+  }
+
+  .workplace-row .actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 
   .attendance-status-bars {

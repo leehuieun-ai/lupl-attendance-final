@@ -92,12 +92,12 @@ const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
   "admin-dashboard":["승인 대기","일일 직원 근무 현황","강제 퇴근","확인 완료"],
   employees:["추가근무 적립 내역","근무시간 변경 요청","근무시간 변경 기록","직원 연차 소진내용","직원 연차 현황","직원 계정 생성","직원 관리"],
   workplaces:["근무지 등록","승인된 근무지","근무지 승인"],
-  schedule:["직원별 주간 캘린더","직원 출근 스케줄 설정","주간 스케줄 변경","특정 기간 미출근 설정"],
+  schedule:["직원별 주간 캘린더","일정 한 줄 변경","주간 스케줄 변경","특정 기간 미출근 설정"],
   payroll:["급여 계산","직원별 급여·근무 기준","공제 내역"],
   reports:["근태 요약","근태 기록","엑셀 내보내기"],
   consents:["직원 서명 리포트","개인정보 동의","근무시간 변경 요청 서명"],
   rnr:["업무 메모","AI 정리","R&R 스택","담당자별 보드"],
-  improvements:["개선 요청 목록","AI 정리","상태 관리"],
+  improvements:["개선 요청 목록","상태 관리"],
 };
 
 const workplaceTypeLabels: Record<string,string> = { office:"사무실", special_school:"특수학교", external_education:"외부 교육장", remote:"재택", other_field:"기타 외근지" };
@@ -142,6 +142,10 @@ function todayIso() { return localDateStr(); }
 function monthDay(iso?: string | null) {
   if (!iso) return "-";
   return localDateStr(iso).slice(5, 10);
+}
+function monthLabel(iso: string) {
+  const d = dateFromIso(iso);
+  return `${d.getFullYear()}년 ${d.getMonth()+1}월`;
 }
 function isWeekendDate(iso?: string | null) {
   if (!iso) return false;
@@ -540,6 +544,20 @@ function countUnpaidAbsenceWorkdays(emp:any, absences:any[], startIso:string, en
 }
 function monthRangeFor(anchor=todayIso()) { const d=dateFromIso(anchor); const start=new Date(d.getFullYear(), d.getMonth(), 1); const end=new Date(d.getFullYear(), d.getMonth()+1, 0); return {start:isoDate(start), end:isoDate(end)}; }
 function currentMonthRange() { return monthRangeFor(todayIso()); }
+function monthRangeFromValue(value:string) {
+  const [year,month]=value.split("-").map(Number);
+  const start=new Date(year,month-1,1);
+  const end=new Date(year,month,0);
+  return {start:isoDate(start), end:isoDate(end)};
+}
+function monthSelectOptions(anchor=todayIso(), before=6, after=2) {
+  const d=dateFromIso(anchor);
+  return Array.from({length:before+after+1},(_,index)=>{
+    const month=new Date(d.getFullYear(),d.getMonth()-before+index,1);
+    const value=`${month.getFullYear()}-${String(month.getMonth()+1).padStart(2,"0")}`;
+    return {value,label:`${month.getFullYear()}년 ${month.getMonth()+1}월`};
+  }).reverse();
+}
 
 
 async function fetchCurrentEmployee() {
@@ -1147,31 +1165,22 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       setGithubBusy(false);
     }
   }
-  const counts=IMPROVEMENT_TYPES.map(type=>({type,count:rows.filter(row=>row.request_type===type.value&&row.status==="open").length}));
-  const aiText=aiSummary ? [
-    `요약: ${aiSummary.overview??""}`,
-    ...(aiSummary.priority_items??[]).map((item:any,index:number)=>`${index+1}. [${item.menu??"-"}] ${item.title??""} - ${item.reason??""}`),
-    ...(aiSummary.action_items??[]).map((item:any,index:number)=>`작업 ${index+1}: ${item.task??item}`),
-  ].join("\n") : "";
+  const openCount=rows.filter(row=>row.status==="open").length;
+  const doneCount=rows.filter(row=>row.status==="done").length;
+  const hiddenCount=rows.filter(row=>row.status==="dismissed").length;
   return (
     <section className="card improvement-page">
       <div className="section-head">
         <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>{isAdmin?"앱에서 바로 남긴 개선 메모가 쌓입니다. 처리한 항목은 개선완료로 정리합니다.":"내가 남긴 개선 요청과 처리 상태를 확인합니다."}</p></div>
-        {isAdmin&&<div className="actions"><button className="button ghost" onClick={markVisibleDone} disabled={visible.length===0}><i className="ti ti-checks" aria-hidden="true"></i>보이는 항목 완료</button><button className="button ghost" onClick={markActiveDone} disabled={rows.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button><button className="button secondary" onClick={createGithubIssue} disabled={githubBusy||visible.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button><button className="button secondary" onClick={summarize} disabled={aiBusy||visible.length===0}><i className="ti ti-sparkles" aria-hidden="true"></i>{aiBusy?"정리 중":"AI로 정리"}</button></div>}
+        {isAdmin&&<div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={githubBusy||visible.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button><button className="button ghost" onClick={markActiveDone} disabled={rows.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button></div>}
       </div>
       {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")?"success":"error"}`}>{msg}</div>}
       {githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
-      <div className="improvement-metrics">{counts.map(({type,count})=><div className="metric" key={type.value}><div className="metric-value">{count}</div><div className="metric-label">{type.label}</div></div>)}</div>
+      <div className="improvement-summary-line">대기 {openCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
       <div className="grid two">
         <div className="form-row"><label className="label">상태</label><select className="select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="open">대기</option><option value="all">전체</option>{Object.entries(IMPROVEMENT_STATUS_LABELS).filter(([key])=>key!=="open").map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></div>
         <div className="form-row"><label className="label">메뉴</label><select className="select" value={menuFilter} onChange={e=>setMenuFilter(e.target.value)}><option value="all">전체 메뉴</option>{menuOptions.map(menu=><option key={menu.id} value={menu.id}>{menu.label}</option>)}</select></div>
       </div>
-      {aiSummary&&<div className="improvement-ai-box">
-        <div className="rnr-result-head"><b>{aiSummary.overview||"개선 요청 정리"}</b><span>AI 정리 결과 · 자동 수정은 하지 않습니다</span></div>
-        {Array.isArray(aiSummary.priority_items)&&<ul>{aiSummary.priority_items.map((item:any,index:number)=><li key={index}><b>{item.title}</b><span>{item.menu}{item.submenu?` · ${item.submenu}`:""} · {item.reason}</span></li>)}</ul>}
-        {Array.isArray(aiSummary.action_items)&&<p>{aiSummary.action_items.map((item:any)=>typeof item==="string"?item:item.task).filter(Boolean).join("\n")}</p>}
-        <button className="button ghost compact" onClick={()=>navigator.clipboard?.writeText(aiText)}>정리 내용 복사</button>
-      </div>}
       <div className="improvement-stack">
         {visible.length===0 ? <p className="subtle">표시할 개선 요청이 없습니다.</p> : visible.map(row=>(
           <article className="improvement-item" key={row.id}>
@@ -1182,7 +1191,9 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
             <p>{row.note}</p>
             <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)} · {row.page_title??"-"}</small>
             {isAdmin&&<div className="actions">
-              {["open","reviewing","planned","done","dismissed"].map(status=><button key={status} className={`button compact ${row.status===status?"secondary":"ghost"}`} onClick={()=>updateStatus(row.id,status)}>{IMPROVEMENT_STATUS_LABELS[status]}</button>)}
+              {row.status!=="done"&&<button className="button secondary compact" onClick={()=>updateStatus(row.id,"done")}>완료</button>}
+              {row.status!=="dismissed"&&<button className="button ghost compact" onClick={()=>updateStatus(row.id,"dismissed")}>삭제</button>}
+              {row.status!=="open"&&<button className="button ghost compact" onClick={()=>updateStatus(row.id,"open")}>대기</button>}
             </div>}
           </article>
         ))}
@@ -2954,6 +2965,9 @@ function WorkplacePage({ employee }: { employee: any }) {
   }
   const approved=workplaces.filter(w=>w.approval_status==="approved");
   const pending=workplaces.filter(w=>w.approval_status==="pending");
+  const approvedGroups=Object.entries(workplaceTypeLabels)
+    .map(([type,label])=>({type,label,items:approved.filter(w=>w.type===type)}))
+    .filter(group=>group.items.length>0);
   return (
     <div className="grid two">
       <section className="card">
@@ -2984,16 +2998,21 @@ function WorkplacePage({ employee }: { employee: any }) {
           <button className="button ghost" onClick={load}><i className="ti ti-refresh" aria-hidden="true"></i>새로고침</button>
         </div>
         {approved.length===0&&<p className="subtle">승인된 근무지가 없습니다.</p>}
-        {approved.map(w=>(
-          <div className="list-row workplace-row" key={w.id}>
-            <div>
-              <b>{w.name}</b>
-              <div className="subtle">{w.address??"주소 없음"} · {workplaceTypeLabels[w.type]??w.type} · 반경 {w.radius_m}m · {w.visibility==="private"?"나에게만":"전체 공개"}</div>
-            </div>
-            {isAdmin&&<div className="actions">
-              <button className="button ghost" title="근무지 수정" onClick={()=>setEditing({...w})}><i className="ti ti-edit" aria-hidden="true"></i>수정</button>
-              <button className="button danger" title="근무지 삭제" onClick={()=>archiveWorkplace(w)}><i className="ti ti-trash" aria-hidden="true"></i>삭제</button>
-            </div>}
+        {approvedGroups.map(group=>(
+          <div className="workplace-category-group" key={group.type}>
+            <h4>{group.label}<span>{group.items.length}곳</span></h4>
+            {group.items.map(w=>(
+              <div className="list-row workplace-row" key={w.id}>
+                <div>
+                  <b>{w.name}</b>
+                  <div className="subtle">{w.address??"주소 없음"} · 반경 {w.radius_m}m · {w.visibility==="private"?"나에게만":"전체 공개"}</div>
+                </div>
+                {isAdmin&&<div className="actions">
+                  <button className="button ghost" title="근무지 수정" onClick={()=>setEditing({...w})}><i className="ti ti-edit" aria-hidden="true"></i>수정</button>
+                  <button className="button danger" title="근무지 삭제" onClick={()=>archiveWorkplace(w)}><i className="ti ti-trash" aria-hidden="true"></i>삭제</button>
+                </div>}
+              </div>
+            ))}
           </div>
         ))}
         <h3>승인 대기 {pending.length>0&&<span className="count-badge">{pending.length}</span>}</h3>
@@ -3691,7 +3710,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         <h2 className="card-title"><i className="ti ti-inbox" aria-hidden="true"></i>승인 대기{pendingTotal>0&&<span className="count-badge">{pendingTotal}</span>}</h2>
         <div className="grid two">
           <div>
-            <h3 style={{marginTop:0}}>근무지 {pW.length>0&&<span className="count-badge">{pW.length}</span>}</h3>
+            <h3 className="approval-section-title">근무지 {pW.length>0&&<span className="count-badge">{pW.length}</span>}</h3>
             {pW.length===0&&<p className="subtle">없음</p>}
             {pW.map(w=>(
               <div className="list-row" key={w.id} style={{flexDirection:"column",alignItems:"stretch"}}>
@@ -3706,7 +3725,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             ))}
           </div>
           <div>
-            <h3 style={{marginTop:0}}>위치·미퇴근 확인 {pL.length>0&&<span className="count-badge">{pL.length}</span>}</h3>
+            <h3 className="approval-section-title">위치·미퇴근 확인 {pL.length>0&&<span className="count-badge">{pL.length}</span>}</h3>
             {pL.length===0&&<p className="subtle">없음</p>}
             {pL.map((l:any)=>(
               <div className="list-row" key={l.id} style={{flexDirection:"column",alignItems:"stretch"}}>
@@ -3720,7 +3739,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             ))}
           </div>
           <div>
-            <h3>추가근무 {pC.length>0&&<span className="count-badge">{pC.length}</span>}</h3>
+            <h3 className="approval-section-title">추가근무 {pC.length>0&&<span className="count-badge">{pC.length}</span>}</h3>
             {pC.length===0&&<p className="subtle">없음</p>}
             {pC.map(r=>{
               const log=compAttendance(r);
@@ -3741,7 +3760,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             })}
           </div>
           <div>
-            <h3>근무시간 변경 {pT.length>0&&<span className="count-badge">{pT.length}</span>}</h3>
+            <h3 className="approval-section-title">근무시간 변경 {pT.length>0&&<span className="count-badge">{pT.length}</span>}</h3>
             {pT.length===0&&<p className="subtle">없음</p>}
             {pT.map(r=>(
               <div className="list-row" key={r.id} style={{flexDirection:"column",alignItems:"stretch"}}>
@@ -3759,7 +3778,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             ))}
           </div>
           <div>
-            <h3>출퇴근 기록 정정 {pA.length>0&&<span className="count-badge">{pA.length}</span>}</h3>
+            <h3 className="approval-section-title">출퇴근 기록 정정 {pA.length>0&&<span className="count-badge">{pA.length}</span>}</h3>
             {pA.length===0&&<p className="subtle">없음</p>}
             {pA.map((r:any)=>(
               <div className="list-row" key={r.id} style={{flexDirection:"column",alignItems:"stretch"}}>
@@ -3773,12 +3792,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             ))}
           </div>
           <div>
-            <h3>휴가 신청 {pR.length>0&&<span className="count-badge">{pR.length}</span>}</h3>
+            <h3 className="approval-section-title">휴가 신청 {pR.length>0&&<span className="count-badge">{pR.length}</span>}</h3>
             {pR.length===0&&<p className="subtle">없음</p>}
             {pR.map(r=>(<div className="list-row" key={r.id}><div><b>{empName(r.employee_id)}</b><div className="subtle">{leaveTypeDisplayLabel(r)} · {r.start_date}{r.end_date!==r.start_date?"~"+r.end_date:""}{r.start_time?` ${r.start_time.slice(0,5)}~${r.end_time?.slice(0,5)}`:""}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewRequest(r.id,"rejected")}>반려</button></div></div>))}
           </div>
           <div>
-            <h3>기기 {pD.length>0&&<span className="count-badge">{pD.length}</span>}</h3>
+            <h3 className="approval-section-title">기기 {pD.length>0&&<span className="count-badge">{pD.length}</span>}</h3>
             {pD.length===0&&<p className="subtle">없음</p>}
             {pD.map(d=>(<div className="list-row" key={d.id}><div><b>{empName(d.employee_id)}</b><div className="subtle">{d.device_info?.platform||"기기"}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewDevice(d.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewDevice(d.id,"rejected")}>반려</button></div></div>))}
           </div>
@@ -4177,6 +4196,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   const [draggingEmployeeId,setDraggingEmployeeId]=useState<string|null>(null);
   const [movingBase,setMovingBase]=useState<{employeeId:string;employeeName:string;sourceDate:string}|null>(null);
   const [timeDrag,setTimeDrag]=useState<any|null>(null);
+  const [scheduleCommand,setScheduleCommand]=useState("");
   const timeDragRef=useRef<any|null>(null);
   const timeDragClickGuard=useRef(0);
   const weekStart=weekStartIso(weekAnchor);
@@ -4228,6 +4248,68 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   },[employees.length]);
   function emptyEvent(employeeId=selectedEmployee?.id??activeEmployees[0]?.id??"",date=todayIso()){
     return {employee_id:employeeId,title:"",event_type:"info",start_date:date,end_date:date,start_time:"",end_time:"",note:"",apply_all:false};
+  }
+  function commandDays(text:string, fallback:string[]){
+    if(/평일|월\s*~\s*금|월-금/.test(text)) return ["mon","tue","wed","thu","fri"];
+    const found=ALL_DAYS.filter(day=>{
+      if(day==="sun") return /일\s*요일|일요일/.test(text);
+      return new RegExp(`${DAY_LABELS[day]}\\s*(?:요일)?`).test(text);
+    });
+    return found.length>0?found:fallback;
+  }
+  function commandTargetEmployee(text:string){
+    const compact=text.replace(/\s/g,"");
+    return [...activeEmployees]
+      .sort((a,b)=>String(b.name??"").length-String(a.name??"").length)
+      .find(employee=>compact.includes(String(employee.name??"").replace(/\s/g,""))||compact.includes(String(employee.employee_no??"").replace(/\s/g,"")))
+      ?? selectedEmployee;
+  }
+  async function applyScheduleCommand(){
+    const raw=scheduleCommand.trim();
+    if(!raw) return setMessage("변경할 일정을 한 줄로 입력해주세요. 예: 홍준기 월화수 09:00~18:00");
+    const employee=commandTargetEmployee(raw);
+    if(!employee) return setMessage("직원 이름을 찾지 못했습니다. 예: 홍준기 월화수 09:00~18:00");
+    const oldDays=employee.work_days??["mon","tue","wed","thu","fri"];
+    const nextDays=commandDays(raw,oldDays);
+    const parsedTime=parsePromptTimeRange(raw);
+    const nextStart=parsedTime?.start??String(employee.work_start??"09:00").slice(0,5);
+    const nextEnd=parsedTime?.end??String(employee.work_end??"18:00").slice(0,5);
+    const dailyHours=netDailyHours(nextStart,nextEnd,"12:00","13:00");
+    const weeklyWorkDays=nextDays.length;
+    const monthlyStandardHours=Math.round(weeklyWorkDays*dailyHours*4.345*10)/10;
+    const preview=[
+      `${employee.name} 직원의 기본 근무일정을 변경합니다.`,
+      `기존: ${daysLabel(oldDays)} · ${timeRangeLabel(employee.work_start??"09:00",employee.work_end??"18:00")}`,
+      `변경: ${daysLabel(nextDays)} · ${timeRangeLabel(nextStart,nextEnd)}`,
+      `주 ${formatHourValue(dailyHours*weeklyWorkDays)}시간 · 월 ${formatHourValue(monthlyStandardHours)}시간 기준`,
+      "",
+      "이 일정대로 변경 맞나요?"
+    ].join("\n");
+    if(!window.confirm(preview)) return;
+    const {error}=await supabase.from("employees").update({
+      work_days:nextDays,
+      work_start:nextStart,
+      work_end:nextEnd,
+      weekly_work_days:weeklyWorkDays,
+      daily_work_hours:dailyHours,
+      monthly_standard_hours:monthlyStandardHours,
+    }).eq("id",employee.id);
+    if(error) return setMessage(`일정 변경 실패: ${error.message}`);
+    const currentWeekStart=weekStartIso(todayIso());
+    await Promise.all(overrides.filter((override:any)=>override.employee_id===employee.id&&override.week_start>=currentWeekStart).map(async (override:any)=>{
+      const overrideDays=override.work_days??oldDays;
+      const hasRemovedDay=overrideDays.some((day:string)=>!nextDays.includes(day));
+      const timeMatchesOld=timeLabel(override.work_start)===timeLabel(employee.work_start??"09:00")&&timeLabel(override.work_end)===timeLabel(employee.work_end??"18:00");
+      if(!hasRemovedDay&&!timeMatchesOld) return null;
+      return supabase.from("weekly_schedule_overrides").update({
+        work_days:hasRemovedDay?overrideDays.filter((day:string)=>nextDays.includes(day)):overrideDays,
+        work_start:timeMatchesOld?nextStart:override.work_start,
+        work_end:timeMatchesOld?nextEnd:override.work_end,
+      }).eq("id",override.id);
+    }));
+    setScheduleCommand("");
+    setMessage(`${employee.name} 기본 근무일정을 변경했습니다.`);
+    await onChanged();
   }
   function changeWeek(offset:number){setWeekAnchor(addIsoDays(weekStart,offset*7));}
   function goToday(){
@@ -4463,8 +4545,13 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
           <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-calendar-week" aria-hidden="true"></i>직원 근무 일정</h2>
           <p className="subtle" style={{margin:0}}>월요일부터 금요일까지 실제 시간대로 확인합니다. 기본 근무칸을 누른 뒤 이동할 날짜 칸을 누르면 근무요일이 바뀝니다.</p>
         </div>
-        <button className="button" onClick={()=>setEditing(emptyEvent(selectedEmployee?.id,dates[0]))}><i className="ti ti-plus" aria-hidden="true"></i>일정 추가</button>
       </div>
+      <div className="schedule-command-bar">
+        <i className="ti ti-sparkles" aria-hidden="true"></i>
+        <input className="input" value={scheduleCommand} onChange={e=>setScheduleCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyScheduleCommand()} placeholder="예: 홍준기 월화수 09:00~18:00 / 정혜리 평일 오전 10시부터 오후 7시" />
+        <button className="button secondary" onClick={applyScheduleCommand}>일정 변경</button>
+      </div>
+      <p className="subtle schedule-command-help">직원명, 근무요일, 시간을 한 줄로 적으면 확인 후 기본 근무일정과 월 근무시간 기준에 반영됩니다.</p>
       {message&&<div className={`alert ${message.includes("실패")?"error":"success"}`} style={{marginTop:14}}>{message}</div>}
       {movingBase&&<div className="alert" style={{marginTop:14}}>{movingBase.employeeName}의 {DAY_LABELS[dayKeyFromDate(dateFromIso(movingBase.sourceDate))]}요일 근무를 이동할 날짜 칸을 눌러주세요.</div>}
       <div className="schedule-employee-tabs">
@@ -4494,7 +4581,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
               const color=employeeColorFromList(activeEmployees,employee.id);
               const monthStats=scheduledWorkStats(employee,monthRange.start,monthRange.end,overrides,workTimeChanges);
               return [
-                <div className="team-week-employee" key={`${employee.id}-name`}><i style={{background:color}}></i><div><b>{employee.name}</b><small>{[employee.department,employee.position].filter(Boolean).join(" · ")||employee.employee_no}</small><small className="team-week-month">이번 달 {monthStats.days}일 · {formatHourValue(monthStats.hours)}시간</small></div></div>,
+                <div className="team-week-employee" key={`${employee.id}-name`}><i style={{background:color}}></i><div><b>{employee.name}</b><small>{[employee.department,employee.position].filter(Boolean).join(" · ")||employee.employee_no}</small><small className="team-week-month">{dateFromIso(monthRange.start).getMonth()+1}월 / 근무일수 {monthStats.days}일 / 근무시간 {formatHourValue(monthStats.hours)}시간</small></div></div>,
                 ...dates.map(date=>{
                   const sched=getScheduleForDate(employee,date,overrides,workTimeChanges);
                   const explicitEvent=events.find(event=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type));
@@ -4666,6 +4753,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
   const [pay,setPay]=useState({monthly:"",hourly:"",annual:"",weeklyDays:"",dailyHours:"",monthlyHours:""});
   const [payMsg,setPayMsg]=useState("");
   const [localEmployees,setLocalEmployees]=useState<any[]>(employees);
+  const [payrollMonthValue,setPayrollMonthValue]=useState(todayIso().slice(0,7));
   useEffect(()=>{setLocalEmployees(employees);},[employees]);
   const emp=empId?localEmployees.find(e=>e.id===empId):null;
   function recalc(next:any, source:string) {
@@ -4754,7 +4842,9 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
   const annual=numberValue(pay.annual)||monthly*12;
   const monthlyHours=numberValue(pay.monthlyHours);
   const approvedWorkTimeChanges=workTimeChanges.filter((request:any)=>request.status==="approved");
-  const month=currentMonthRange();
+  const month=monthRangeFromValue(payrollMonthValue);
+  const payrollMonthLabel=monthLabel(month.start);
+  const payrollMonthOptions=monthSelectOptions(todayIso(),8,2);
   const scheduledDays=emp?countScheduledWorkdays(emp, month.start, month.end, overrides, approvedWorkTimeChanges):0;
   const absentDays=emp?countUnpaidAbsenceWorkdays(emp, absences, month.start, month.end, overrides, approvedWorkTimeChanges):0;
   const dayRate=scheduledDays>0?monthly/scheduledDays:0;
@@ -4775,8 +4865,18 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
   const payrollEstimatedTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.estimatedPay||0),0);
   return (
     <section className="card">
-      <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산</h2>
-      <p className="subtle" style={{marginBottom:12}}>시급, 월급, 연봉, 주 근무일, 일 근무시간, 월 소정근로시간 중 값을 바꾸면 나머지 기준값이 자동 계산됩니다. 4대보험은 정기분 추정치입니다.</p>
+      <div className="section-head payroll-head">
+        <div>
+          <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산</h2>
+          <p className="subtle" style={{margin:0}}>시급, 월급, 연봉, 주 근무일, 일 근무시간, 월 소정근로시간 중 값을 바꾸면 나머지 기준값이 자동 계산됩니다. 4대보험은 정기분 추정치입니다.</p>
+        </div>
+        <div className="payroll-month-picker">
+          <label className="label">월별 보기</label>
+          <select className="select" value={payrollMonthValue} onChange={e=>setPayrollMonthValue(e.target.value)}>
+            {payrollMonthOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
+      </div>
       <div className="grid two">
         <div className="form-row"><label className="label">직원</label>
           <select className="select" value={empId} onChange={e=>setEmpId(e.target.value)}>
@@ -4797,8 +4897,8 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
       </div>
       <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
       <div className="payroll-summary-list">
-        <div className="payroll-summary-head">직원별 급여·근무 기준 <span>이번 달 승인된 근무시간 변경을 반영합니다</span></div>
-        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>주 근무시간</span><span>월 근무시간</span><span>예상 급여</span><small>이번 달 기준</small></div>
+        <div className="payroll-summary-head">직원별 급여·근무 기준 <span>{payrollMonthLabel} 승인된 근무시간 변경을 반영합니다</span></div>
+        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>주 근무시간</span><span>월 근무시간</span><span>예상 급여</span><small>{payrollMonthLabel} 기준</small></div>
         {payrollSummaryRows.map(({employee,week,month,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay}:any)=>(
           <div className="payroll-summary-row" key={employee.id}>
             <div className="payroll-employee-cell"><b>{employee.name}</b><small>사번 {employee.employee_no||"-"} · {employee.role==="admin"?"관리자":"직원"}</small></div>
@@ -4807,7 +4907,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
             <span>{formatHourValue(week.hours)}시간</span>
             <span>{formatHourValue(monthlyStandardHours||month.hours)}시간</span>
             <span>{estimatedPay?won(estimatedPay):"-"}</span>
-            <small>이번 달 예정 {month.days}일 · 실제 기준 {formatHourValue(month.hours)}시간</small>
+            <small>{payrollMonthLabel} 예정 {month.days}일 · 실제 기준 {formatHourValue(month.hours)}시간</small>
           </div>
         ))}
         <div className="payroll-summary-row payroll-summary-total"><b>총 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollEstimatedTotal)}</span><small>직원별 예상 급여 합계</small></div>
@@ -4828,7 +4928,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
           </table>
         </div>
       )}
-      {empId&&<p className="subtle" style={{marginTop:8}}>이번 달 근무 예정일 {scheduledDays}일 · 무급 미출근 반영 {absentDays}일 · 주간 스케줄 변경 포함</p>}
+      {empId&&<p className="subtle" style={{marginTop:8}}>{payrollMonthLabel} 근무 예정일 {scheduledDays}일 · 무급 미출근 반영 {absentDays}일 · 주간 스케줄 변경 포함</p>}
     </section>
   );
 }
@@ -4930,38 +5030,10 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
   }
 
   return (
-    <section className="card">
-      <h2 className="card-title"><i className="ti ti-calendar-week" aria-hidden="true"></i>직원 출근 스케줄 설정</h2>
-      <p className="subtle" style={{marginBottom:14}}>기본 출근 요일·시간·계약유형을 설정합니다. 이 기준으로 지각·결근이 판단됩니다.</p>
+    <section className="card schedule-detail-card">
+      <h2 className="card-title"><i className="ti ti-calendar-cog" aria-hidden="true"></i>세부 일정 관리</h2>
+      <p className="subtle" style={{marginBottom:14}}>기본 근무요일·시간은 위 한 줄 변경에서 처리하고, 특정 기간 미출근이나 한 주짜리 예외 일정만 여기서 관리합니다.</p>
       {msg&&<div className={`alert ${msg.includes("저장")||msg.includes("등록")?"success":""}`}>{msg}</div>}
-
-      <div className="form-row"><label className="label">직원 선택</label>
-        <select className="select" value={scheduleEmpId} onChange={e=>setScheduleEmpId(e.target.value)}>
-          <option value="">직원 선택</option>
-          {employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name} · {CONTRACT_LABELS[e.contract_type??"daily"]} · {(e.work_days??["mon","tue","wed","thu","fri"]).map((d:string)=>DAY_LABELS[d]).join("")}</option>)}
-        </select>
-      </div>
-      {scheduleEmpId&&(<>
-        <div className="form-row"><label className="label">계약 유형</label>
-          <select className="select" value={contractType} onChange={e=>setContractType(e.target.value)}>
-            {Object.entries(CONTRACT_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}
-          </select>
-        </div>
-        {contractType==="fixed_term"&&(
-          <div className="grid two">
-            <div className="form-row"><label className="label">계약 시작일</label><input className="input" type="date" value={contractStart} onChange={e=>setContractStart(e.target.value)} /></div>
-            <div className="form-row"><label className="label">계약 종료일</label><input className="input" type="date" value={contractEnd} onChange={e=>setContractEnd(e.target.value)} /></div>
-          </div>
-        )}
-        <div className="form-row"><label className="label">출근 요일</label>
-          <div className="days-grid">{ALL_DAYS.map(d=><button key={d} type="button" className={`day-btn ${editDays.includes(d)?"active":""}`} onClick={()=>setEditDays(days=>toggleDay(days,d))}>{DAY_LABELS[d]}</button>)}</div>
-        </div>
-        <div className="grid two">
-          <div className="form-row"><label className="label">출근 시간</label><input className="input" type="time" value={editStart} onChange={e=>setEditStart(e.target.value)} /></div>
-          <div className="form-row"><label className="label">퇴근 시간</label><input className="input" type="time" value={editEnd} onChange={e=>setEditEnd(e.target.value)} /></div>
-        </div>
-        <button className="button" onClick={saveSchedule}><i className="ti ti-device-floppy" aria-hidden="true"></i>저장</button>
-      </>)}
 
       <CollapsibleSection title="특정 기간 미출근 설정" icon="ti-calendar-off">
       <p className="subtle" style={{marginBottom:10}}>특정 월·일부터 며칠간 출근하지 않는 경우 등록합니다. 결근 판단에서 제외되고, 무급이면 급여 계산에 반영됩니다.</p>
@@ -5324,17 +5396,26 @@ function ReportsPage() {
           {statusChartRows.map(({employee,counts,total,shownTotal}:any)=>(
             <div className="attendance-status-row" key={employee.id}>
               <div className="attendance-status-name"><b>{employee.name}</b><span>{shownTotal}건</span></div>
-              <div className="attendance-status-bars">
-                {[
-                  ["normal","정상","#2563eb"],
-                  ["late","지각","#dc2626"],
-                  ["field","외근","#ea580c"],
-                  ["remote","재택","#059669"],
-                  ["exception","예외","#7c3aed"],
-                ].map(([key,label,color]:any)=>counts[key]>0&&(
-                  <span key={key} style={{width:`${Math.max(8,(counts[key]/total)*100)}%`,background:color}} title={`${label} ${counts[key]}건`}>{label} {counts[key]}</span>
-                ))}
-                {shownTotal===0&&<span className="empty">기록 없음</span>}
+              <div className="attendance-status-detail">
+                <div className="attendance-status-bars">
+                  {[
+                    ["normal","정상","#2563eb"],
+                    ["late","지각","#dc2626"],
+                    ["field","외근","#ea580c"],
+                    ["remote","재택","#059669"],
+                    ["exception","예외","#7c3aed"],
+                  ].map(([key,label,color]:any)=>counts[key]>0&&(
+                    <span key={key} style={{width:`${Math.max(8,(counts[key]/total)*100)}%`,background:color}} title={`${label} ${counts[key]}건`}>{label} {counts[key]}</span>
+                  ))}
+                  {shownTotal===0&&<span className="empty">기록 없음</span>}
+                </div>
+                <div className="attendance-status-counts">
+                  <span>정상 {counts.normal}건</span>
+                  <span>지각 {counts.late}건</span>
+                  <span>외근 {counts.field}건</span>
+                  <span>재택 {counts.remote}건</span>
+                  <span>예외 {counts.exception}건</span>
+                </div>
               </div>
             </div>
           ))}
