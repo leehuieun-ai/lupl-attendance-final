@@ -246,9 +246,6 @@ function kstDateTime(dateIso: string, time?: string | null) {
 function addMinutes(d: Date, minutes: number) {
   return new Date(d.getTime() + minutes * 60000);
 }
-function approvedOrPendingCompRequests(list:any[]) {
-  return list.filter((r:any)=>["approved","pending"].includes(r.status));
-}
 function latestCompEndForDate(compRequests:any[], dateIso:string) {
   return compRequests.filter((r:any)=>r.status==="approved")
     .filter((r:any)=>r.work_date===dateIso&&r.end_time)
@@ -815,6 +812,7 @@ export default function App() {
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"worktime",label:"근무시간 변경",icon:"ti-calendar-time"},
+    {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
     {id:"admin-dashboard",label:"오늘",icon:"ti-layout-dashboard"},
@@ -830,7 +828,6 @@ export default function App() {
   ];
   const extraMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
     {id:"rnr",label:"업무 R&R",icon:"ti-sitemap"},
-    {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const improvementMenuOptions=[...personalMenus,...adminMenus,...reportMenus,...extraMenus].map(item=>({id:item.id,label:item.label}));
   function go(next:Tab){setTab(next);setMobileNavOpen(false);}
@@ -880,7 +877,7 @@ export default function App() {
           {tab==="payroll" && isAdmin && <SettingsPage currentEmployee={employee} section="payroll" />}
           {tab==="reports" && isAdmin && <ReportsPage />}
           {tab==="consents" && isAdmin && <ConsentReportPage />}
-          {tab==="improvements" && isAdmin && <ImprovementRequestsPage currentEmployee={employee} menuOptions={improvementMenuOptions} />}
+          {tab==="improvements" && <ImprovementRequestsPage currentEmployee={employee} menuOptions={improvementMenuOptions} />}
         </main>
       </div>
       <ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={pageTitles[tab]} menuOptions={improvementMenuOptions} />
@@ -1006,8 +1003,13 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   const [msg,setMsg]=useState("");
   const [aiBusy,setAiBusy]=useState(false);
   const [aiSummary,setAiSummary]=useState<any|null>(null);
+  const [githubBusy,setGithubBusy]=useState(false);
+  const [githubIssue,setGithubIssue]=useState<any|null>(null);
+  const isAdmin=currentEmployee?.role==="admin";
   async function load() {
-    const {data,error}=await supabase.from("improvement_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(300);
+    let query=supabase.from("improvement_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(300);
+    if(!isAdmin) query=query.eq("created_by",currentEmployee.id);
+    const {data,error}=await query;
     if(error) setMsg(error.message.includes("improvement_requests")?"개선 요청 저장 테이블이 아직 DB에 없습니다. 새 SQL 패치를 먼저 실행해주세요.":error.message);
     else { setRows(data??[]); setMsg(""); }
   }
@@ -1018,13 +1020,23 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     if(error) setMsg(error.message); else await load();
   }
   async function markVisibleDone() {
+    if(!isAdmin) return;
     const ids=visible.filter(row=>row.status!=="done").map(row=>row.id);
     if(ids.length===0) return setMsg("개선완료로 바꿀 항목이 없습니다.");
     if(!window.confirm(`현재 보이는 개선 요청 ${ids.length}건을 개선완료로 변경할까요?`)) return;
     const {error}=await supabase.from("improvement_requests").update({status:"done",updated_at:new Date().toISOString()}).in("id",ids);
     if(error) setMsg(error.message); else { setMsg(`${ids.length}건을 개선완료로 변경했습니다.`); await load(); }
   }
+  async function markActiveDone() {
+    if(!isAdmin) return;
+    const ids=rows.filter(row=>!["done","dismissed"].includes(row.status)).map(row=>row.id);
+    if(ids.length===0) return setMsg("처리할 개선 요청이 없습니다.");
+    if(!window.confirm(`대기/검토/수정 예정 개선 요청 ${ids.length}건을 모두 개선완료로 변경할까요?`)) return;
+    const {error}=await supabase.from("improvement_requests").update({status:"done",updated_at:new Date().toISOString()}).in("id",ids);
+    if(error) setMsg(error.message); else { setMsg(`${ids.length}건을 모두 개선완료로 변경했습니다.`); await load(); }
+  }
   async function summarize() {
+    if(!isAdmin) return;
     setMsg(""); setAiBusy(true); setAiSummary(null);
     try {
       const {data:sessionData}=await supabase.auth.getSession();
@@ -1053,6 +1065,42 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       setAiBusy(false);
     }
   }
+  async function createGithubIssue() {
+    if(!isAdmin) return;
+    const target=visible.filter(row=>!["done","dismissed"].includes(row.status));
+    if(target.length===0) return setMsg("GitHub Issue로 보낼 개선 요청이 없습니다.");
+    setMsg(""); setGithubBusy(true); setGithubIssue(null);
+    try {
+      const {data:sessionData}=await supabase.auth.getSession();
+      const token=sessionData.session?.access_token;
+      if(!token) throw new Error("로그인이 필요합니다.");
+      const response=await fetch("/api/improvement-github-issue",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+        body:JSON.stringify({requests:target.slice(0,100).map(row=>({
+          id:row.id,
+          type:row.request_type_label||row.request_type,
+          menu:row.menu_label,
+          submenu:row.submenu_label,
+          note:row.note,
+          status:row.status,
+          created_at:row.created_at,
+          requester:row.employees?.name,
+        }))}),
+      });
+      const data=await response.json();
+      if(!response.ok) throw new Error(data?.error||"GitHub Issue 생성 실패");
+      const ids=target.filter(row=>row.status!=="planned").map(row=>row.id);
+      if(ids.length>0) await supabase.from("improvement_requests").update({status:"planned",updated_at:new Date().toISOString()}).in("id",ids);
+      await load();
+      setGithubIssue(data.issue);
+      setMsg(`GitHub Issue #${data.issue?.number} 생성 완료`);
+    } catch(error:any) {
+      setMsg(error.message||String(error));
+    } finally {
+      setGithubBusy(false);
+    }
+  }
   const counts=IMPROVEMENT_TYPES.map(type=>({type,count:rows.filter(row=>row.request_type===type.value&&row.status==="open").length}));
   const aiText=aiSummary ? [
     `요약: ${aiSummary.overview??""}`,
@@ -1062,10 +1110,11 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   return (
     <section className="card improvement-page">
       <div className="section-head">
-        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>앱에서 바로 남긴 개선 메모가 쌓입니다. 최종 수정은 요청하실 때 진행합니다.</p></div>
-        <div className="actions"><button className="button ghost" onClick={markVisibleDone} disabled={visible.length===0}><i className="ti ti-checks" aria-hidden="true"></i>보이는 항목 개선완료</button><button className="button secondary" onClick={summarize} disabled={aiBusy||visible.length===0}><i className="ti ti-sparkles" aria-hidden="true"></i>{aiBusy?"정리 중":"AI로 정리"}</button></div>
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>{isAdmin?"앱에서 바로 남긴 개선 메모가 쌓입니다. 처리한 항목은 개선완료로 정리합니다.":"내가 남긴 개선 요청과 처리 상태를 확인합니다."}</p></div>
+        {isAdmin&&<div className="actions"><button className="button ghost" onClick={markVisibleDone} disabled={visible.length===0}><i className="ti ti-checks" aria-hidden="true"></i>보이는 항목 완료</button><button className="button ghost" onClick={markActiveDone} disabled={rows.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button><button className="button secondary" onClick={createGithubIssue} disabled={githubBusy||visible.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button><button className="button secondary" onClick={summarize} disabled={aiBusy||visible.length===0}><i className="ti ti-sparkles" aria-hidden="true"></i>{aiBusy?"정리 중":"AI로 정리"}</button></div>}
       </div>
-      {msg&&<div className={`alert ${msg.includes("변경했습니다")?"success":"error"}`}>{msg}</div>}
+      {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")?"success":"error"}`}>{msg}</div>}
+      {githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
       <div className="improvement-metrics">{counts.map(({type,count})=><div className="metric" key={type.value}><div className="metric-value">{count}</div><div className="metric-label">{type.label}</div></div>)}</div>
       <div className="grid two">
         <div className="form-row"><label className="label">상태</label><select className="select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="open">대기</option><option value="all">전체</option>{Object.entries(IMPROVEMENT_STATUS_LABELS).filter(([key])=>key!=="open").map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></div>
@@ -1086,9 +1135,9 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
             </div>
             <p>{row.note}</p>
             <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)} · {row.page_title??"-"}</small>
-            <div className="actions">
+            {isAdmin&&<div className="actions">
               {["open","reviewing","planned","done","dismissed"].map(status=><button key={status} className={`button compact ${row.status===status?"secondary":"ghost"}`} onClick={()=>updateStatus(row.id,status)}>{IMPROVEMENT_STATUS_LABELS[status]}</button>)}
-            </div>
+            </div>}
           </article>
         ))}
       </div>
