@@ -538,7 +538,8 @@ function countUnpaidAbsenceWorkdays(emp:any, absences:any[], startIso:string, en
   });
   return count;
 }
-function currentMonthRange() { const now=new Date(); const start=new Date(now.getFullYear(), now.getMonth(), 1); const end=new Date(now.getFullYear(), now.getMonth()+1, 0); return {start:isoDate(start), end:isoDate(end)}; }
+function monthRangeFor(anchor=todayIso()) { const d=dateFromIso(anchor); const start=new Date(d.getFullYear(), d.getMonth(), 1); const end=new Date(d.getFullYear(), d.getMonth()+1, 0); return {start:isoDate(start), end:isoDate(end)}; }
+function currentMonthRange() { return monthRangeFor(todayIso()); }
 
 
 async function fetchCurrentEmployee() {
@@ -2429,7 +2430,7 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
   }
 
   return (
-    <div className="grid">
+    <div className="grid worktime-page">
       {msg&&<div className={`alert ${msg.includes("저장")?"success":""}`}>{msg}</div>}
       <section className="card work-change-card">
         <div className="work-change-title">
@@ -2984,7 +2985,7 @@ function WorkplacePage({ employee }: { employee: any }) {
         </div>
         {approved.length===0&&<p className="subtle">승인된 근무지가 없습니다.</p>}
         {approved.map(w=>(
-          <div className="list-row" key={w.id}>
+          <div className="list-row workplace-row" key={w.id}>
             <div>
               <b>{w.name}</b>
               <div className="subtle">{w.address??"주소 없음"} · {workplaceTypeLabels[w.type]??w.type} · 반경 {w.radius_m}m · {w.visibility==="private"?"나에게만":"전체 공개"}</div>
@@ -2998,7 +2999,7 @@ function WorkplacePage({ employee }: { employee: any }) {
         <h3>승인 대기 {pending.length>0&&<span className="count-badge">{pending.length}</span>}</h3>
         {pending.length===0&&<p className="subtle">승인 대기 근무지가 없습니다.</p>}
         {pending.map(w=>(
-          <div className="list-row" key={w.id}>
+          <div className="list-row workplace-row" key={w.id}>
             <div><b>{w.name}</b><div className="subtle">{w.address??"주소 없음"} · {workplaceTypeLabels[w.type]??w.type} · 반경 {w.radius_m}m</div></div>
             {isAdmin&&<div className="actions">
               <button className="button ghost" title="근무지 수정" onClick={()=>setEditing({...w})}><i className="ti ti-edit" aria-hidden="true"></i>수정</button>
@@ -3239,7 +3240,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const category=rnrSuggestion.category||classifyRnrCategory(`${rnrInput} ${rnrSuggestion.summary??""}`);
     const payload={
       raw_input:rnrInput.trim(),
-      title:professionalRnrTitle(rnrSuggestion.title||rnrInput.trim(),category),
+      title:professionalRnrTitle(`${rnrInput.trim()} ${rnrSuggestion.summary??""} ${rnrSuggestion.title??""}`,category),
       summary:rnrSuggestion.summary||rnrInput.trim(),
       department:rnrSuggestion.department||assignee?.department||"",
       position:rnrSuggestion.position||assignee?.position||"",
@@ -3273,7 +3274,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const checklist=String(editingRnr.checklistText??"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
     const category=editingRnr.category||classifyRnrCategory(`${editingRnr.title} ${editingRnr.summary}`);
     const payload={
-      title:professionalRnrTitle(editingRnr.title,category),
+      title:professionalRnrTitle(`${editingRnr.summary??""} ${editingRnr.title??""}`,category),
       summary:String(editingRnr.summary??"").trim()||professionalRnrTitle(editingRnr.title,category),
       department:editingRnr.department||assignee?.department||"",
       position:editingRnr.position||assignee?.position||"",
@@ -3472,11 +3473,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const pW=workplaces.filter(w=>w.approval_status==="pending");
   const approvedWorkTimeChanges=workTimeRequests.filter(r=>r.status==="approved");
   const payrollMonth=currentMonthRange();
-  const employeeWorkSummaries=activeEmployees.map((employee:any)=>({
-    employee,
-    month:scheduledWorkStats(employee,payrollMonth.start,payrollMonth.end,overrides,approvedWorkTimeChanges),
-    week:weeklyStatsForDate(employee,todayIso(),overrides,approvedWorkTimeChanges),
-  }));
   function actualCompSettled(r:any){
     return settledCompIds.has(r.id)
       || !!r.attendance_log_id
@@ -3576,6 +3572,18 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const selectedWeeklyHours=selectedDetailEmployee?Math.round(selectedDailyHours*(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"]).length*10)/10:0;
   const selectedMonthStats=selectedDetailEmployee?scheduledWorkStats(selectedDetailEmployee,payrollMonth.start,payrollMonth.end,overrides,approvedWorkTimeChanges):null;
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
+  async function updateEmployeeContract(emp:any, patch:Record<string,any>) {
+    const next={...emp,...patch};
+    const derived:any={};
+    if("work_days" in patch || "work_start" in patch || "work_end" in patch) {
+      const dailyHours=netDailyHours(next.work_start??"09:00",next.work_end??"18:00",next.break_start??"12:00",next.break_end??"13:00");
+      const weeklyDays=(next.work_days??[]).length;
+      derived.weekly_work_days=weeklyDays;
+      derived.daily_work_hours=dailyHours;
+      derived.monthly_standard_hours=Math.round(weeklyDays*dailyHours*4.345*10)/10;
+    }
+    await updateEmployee(emp.id,{...patch,...derived});
+  }
   const showsApprovals=view==="approvals";
 
   return (
@@ -3679,7 +3687,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         </div>
       </section>}
 
-      {showsApprovals&&<CollapsibleSection title={`승인 대기${pendingTotal>0?` (${pendingTotal})`:""}`} icon="ti-inbox" defaultOpen={true}>
+      {showsApprovals&&<section className="card">
+        <h2 className="card-title"><i className="ti ti-inbox" aria-hidden="true"></i>승인 대기{pendingTotal>0&&<span className="count-badge">{pendingTotal}</span>}</h2>
         <div className="grid two">
           <div>
             <h3 style={{marginTop:0}}>근무지 {pW.length>0&&<span className="count-badge">{pW.length}</span>}</h3>
@@ -3774,7 +3783,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             {pD.map(d=>(<div className="list-row" key={d.id}><div><b>{empName(d.employee_id)}</b><div className="subtle">{d.device_info?.platform||"기기"}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewDevice(d.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewDevice(d.id,"rejected")}>반려</button></div></div>))}
           </div>
         </div>
-      </CollapsibleSection>}
+      </section>}
 
       {view==="approvals"&&<section className="card rejected-archive-card">
         <div className="section-head">
@@ -3818,12 +3827,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           ))}
         </div>
         <div className="employee-contract-grid">
-          <div><span>계약 유형</span><b>{CONTRACT_LABELS[selectedDetailEmployee.contract_type??"daily"]??"일반"}</b><small>{selectedDetailEmployee.contract_end?`${employeeContractStart(selectedDetailEmployee)} ~ ${selectedDetailEmployee.contract_end}`:`${employeeContractStart(selectedDetailEmployee)}부터`}</small></div>
-          <div><span>근무 요일</span><b>{daysLabel(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"])}</b><small>일정·급여 계산에 반영</small></div>
-          <div><span>근무 시간</span><b>{timeRangeLabel(selectedDetailEmployee.work_start??"09:00",selectedDetailEmployee.work_end??"18:00")}</b><small>휴게 {timeRangeLabel(selectedBreakStart,selectedBreakEnd)}</small></div>
+          <div><span>계약 유형</span><select className="select compact-select" value={selectedDetailEmployee.contract_type??"daily"} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{contract_type:e.target.value})}>{Object.entries(CONTRACT_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><small>{selectedDetailEmployee.contract_end?`${employeeContractStart(selectedDetailEmployee)} ~ ${selectedDetailEmployee.contract_end}`:`${employeeContractStart(selectedDetailEmployee)}부터`}</small></div>
+          <div><span>근무 요일</span><div className="days-grid compact-days">{ALL_DAYS.map(day=><button key={day} type="button" className={`day-btn ${(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"]).includes(day)?"active":""}`} onClick={()=>updateEmployeeContract(selectedDetailEmployee,{work_days:toggleDay(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"],day)})}>{DAY_LABELS[day]}</button>)}</div><small>일정·급여 계산에 반영</small></div>
+          <div><span>근무 시간</span><div className="inline-time-edit"><input className="input" type="time" value={timeLabel(selectedDetailEmployee.work_start??"09:00")} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{work_start:e.target.value})} /><input className="input" type="time" value={timeLabel(selectedDetailEmployee.work_end??"18:00")} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{work_end:e.target.value})} /></div><small>휴게 {timeRangeLabel(selectedBreakStart,selectedBreakEnd)}</small></div>
           <div><span>1일 실근무</span><b>{formatHourValue(selectedDailyHours)}시간</b><small>휴게시간 제외</small></div>
           <div><span>주 소정</span><b>{formatHourValue(selectedWeeklyHours)}시간</b><small>{(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"]).length}일 기준</small></div>
           <div><span>이번 달 예정</span><b>{selectedMonthStats?`${selectedMonthStats.days}일 · ${formatHourValue(selectedMonthStats.hours)}시간`:"-"}</b><small>승인된 변경·개별 일정 반영</small></div>
+          <div><span>연차 적용</span><b>{selectedDetailEmployee.no_annual_leave?"연차 없음":"자동 계산"}</b><small>{selectedDetailEmployee.no_annual_leave?"직원 관리에도 없음 체크됨":"근무조건 기준으로 산정"}</small></div>
         </div>
         <div className="employee-contract-note">
           <i className="ti ti-info-circle" aria-hidden="true"></i>
@@ -3856,16 +3866,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
 
       {view==="employees"&&<CollapsibleSection title="근무시간 변경 기록" icon="ti-file-description" defaultOpen={false}>
         <p className="subtle" style={{marginBottom:12}}>세무·급여 확인용으로 이번 달 직원별 근무 예정일과 실근무시간을 함께 표시합니다.</p>
-        <div className="workload-summary-board">
-          {employeeWorkSummaries.map(({employee,month,week}:any)=>(
-            <div className="workload-summary-card" key={employee.id}>
-              <b>{employee.name}</b>
-              <span>{daysLabel(employee.work_days??[])} · {timeRangeLabel(employee.work_start,employee.work_end)}</span>
-              <strong>이번 달 {month.days}일 · {formatHourValue(month.hours)}시간</strong>
-              <small>이번 주 {week.days}일 · {formatHourValue(week.hours)}시간</small>
-            </div>
-          ))}
-        </div>
         <div className="table-wrap work-time-record-table">
           <table>
             <thead><tr><th>직원</th><th>적용기간</th><th>변경 내용</th><th>근무 산정</th><th>상태</th><th>사유</th></tr></thead>
@@ -3932,7 +3932,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             <tbody>
               {employees.filter(e=>e.employment_status==="active").map(e=>{
                 const lv=leaveForEmployee(e.id); if(!lv) return null;
-                return (<tr key={e.id}><td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span></td><td>{lv.total.toFixed(1)}일</td><td>{lv.used.toFixed(1)}일</td><td><b style={{color:lv.remain<3?"var(--red)":"inherit"}}>{lv.remain.toFixed(1)}일</b></td><td>{lv.compEarned.toFixed(1)}일 ({lv.compRemainH}h)</td><td><button className="button secondary" onClick={()=>setLeaveModalEmp(e)}>연차 관리</button></td></tr>);
+                return (<tr key={e.id}><td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span>{e.no_annual_leave&&<><br/><span className="badge warn">연차 없음</span></>}</td><td>{lv.total.toFixed(1)}일</td><td>{lv.used.toFixed(1)}일</td><td><b style={{color:lv.remain<3?"var(--red)":"inherit"}}>{lv.remain.toFixed(1)}일</b></td><td>{lv.compEarned.toFixed(1)}일 ({lv.compRemainH}h)</td><td><button className="button secondary" onClick={()=>setLeaveModalEmp(e)}>연차 관리</button></td></tr>);
               })}
             </tbody>
           </table>
@@ -4182,7 +4182,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   const weekStart=weekStartIso(weekAnchor);
   const dates=Array.from({length:5},(_,i)=>addIsoDays(weekStart,i));
   const weekEnd=dates[4];
-  const monthRange=currentMonthRange();
+  const monthRange=monthRangeFor(weekAnchor);
   const isAll=selectedEmpId==="all";
   const employeeCount=Math.max(1,activeEmployees.length);
   const teamColumnCount=dates.length*employeeCount;
@@ -4769,8 +4769,10 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
     const monthlyStandardHours=savedMonthlyHours||monthStats.hours;
     const monthlySalary=Number(employee.monthly_salary||0);
     const hourlyWage=Number(employee.hourly_wage||(monthlySalary&&monthlyStandardHours?Math.round(monthlySalary/monthlyStandardHours):0));
-    return {employee,week,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage};
+    const estimatedPay=hourlyWage?Math.round(hourlyWage*monthStats.hours):monthlySalary;
+    return {employee,week,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay};
   });
+  const payrollEstimatedTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.estimatedPay||0),0);
   return (
     <section className="card">
       <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산</h2>
@@ -4796,17 +4798,19 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
       <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
       <div className="payroll-summary-list">
         <div className="payroll-summary-head">직원별 급여·근무 기준 <span>이번 달 승인된 근무시간 변경을 반영합니다</span></div>
-        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>주 근무시간</span><span>월 근무시간</span><small>이번 달 기준</small></div>
-        {payrollSummaryRows.map(({employee,week,month,monthlyStandardHours,monthlySalary,hourlyWage}:any)=>(
+        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>주 근무시간</span><span>월 근무시간</span><span>예상 급여</span><small>이번 달 기준</small></div>
+        {payrollSummaryRows.map(({employee,week,month,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay}:any)=>(
           <div className="payroll-summary-row" key={employee.id}>
             <div className="payroll-employee-cell"><b>{employee.name}</b><small>사번 {employee.employee_no||"-"} · {employee.role==="admin"?"관리자":"직원"}</small></div>
             <span>{hourlyWage?won(hourlyWage):"-"}</span>
             <span>{monthlySalary?won(monthlySalary):"-"}</span>
             <span>{formatHourValue(week.hours)}시간</span>
             <span>{formatHourValue(monthlyStandardHours||month.hours)}시간</span>
+            <span>{estimatedPay?won(estimatedPay):"-"}</span>
             <small>이번 달 예정 {month.days}일 · 실제 기준 {formatHourValue(month.hours)}시간</small>
           </div>
         ))}
+        <div className="payroll-summary-row payroll-summary-total"><b>총 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollEstimatedTotal)}</span><small>직원별 예상 급여 합계</small></div>
       </div>
       {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 소정근로시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)}</div>}
       {empId&&monthly>0&&(
@@ -5146,7 +5150,6 @@ function ConsentReportPage() {
           <button className={`consent-status-card ${workRequestFilter===group.key?"active":""}`} key={group.key} onClick={()=>setWorkRequestFilter(group.key)}>
             <b>{group.label}</b>
             <strong>{group.rows.length}건</strong>
-            <span>누르면 아래 목록에서 사유와 서명 내용을 확인합니다.</span>
           </button>
         ))}
       </div>
@@ -5178,7 +5181,6 @@ function ConsentReportPage() {
           <button className={`consent-status-card ${correctionFilter===group.key?"active":""}`} key={group.key} onClick={()=>setCorrectionFilter(group.key)}>
             <b>{group.label}</b>
             <strong>{group.rows.length}건</strong>
-            <span>누르면 아래 목록에서 정정 전후 시각과 서명을 확인합니다.</span>
           </button>
         ))}
       </div>
@@ -5221,13 +5223,24 @@ function ReportsPage() {
   const [employees,setEmployees]=useState<any[]>([]);
   const [compRequests,setCompRequests]=useState<any[]>([]);
 
+  async function fetchAllAttendanceLogs(){
+    const rows:any[]=[];
+    const pageSize=1000;
+    for(let from=0;;from+=pageSize){
+      const {data,error}=await supabase.from("attendance_logs").select("*, employees(name, employee_no), workplaces(name,type)").order("check_in_time",{ascending:false}).range(from,from+pageSize-1);
+      if(error) break;
+      rows.push(...(data??[]));
+      if(!data||data.length<pageSize) break;
+    }
+    return rows;
+  }
   async function load(){
     const [l,e,c]=await Promise.all([
-      supabase.from("attendance_logs").select("*, employees(name, employee_no), workplaces(name,type)").order("check_in_time",{ascending:false}).limit(1000),
+      fetchAllAttendanceLogs(),
       supabase.from("employees").select("id, name, employee_no, role, employment_status, is_active, joined_at, created_at").order("created_at",{ascending:false}).limit(1000),
       supabase.from("comp_time_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(1000)
     ]);
-    setLogs(l.data??[]);
+    setLogs(l??[]);
     setEmployees(e.data??[]);
     setCompRequests(c.data??[]);
   }
@@ -5241,7 +5254,7 @@ function ReportsPage() {
   }
   const visibleEmployees=employees.filter(reportEmployeeVisible);
   const visibleEmployeeIds=new Set(visibleEmployees.map((employee:any)=>employee.id));
-  const visibleLogs=logs.filter((log:any)=>visibleEmployeeIds.has(log.employee_id));
+  const visibleLogs=logs.filter((log:any)=>reportEmployeeVisible(log.employees));
   const visibleCompRequests=compRequests.filter((request:any)=>visibleEmployeeIds.has(request.employee_id));
   const allLogRows = visibleLogs.map(l=>({
     직원:l.employees?.name??"-",
