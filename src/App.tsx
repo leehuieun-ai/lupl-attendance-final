@@ -426,6 +426,11 @@ function approvedWorkTimeChangeForDate(changes:any[] = [], emp:any, dateIso:stri
 function getScheduleForDate(emp:any, dateIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
   if(!emp) return {work_days:["mon","tue","wed","thu","fri"], work_start:"09:00", work_end:"18:00"};
   const baseDays=emp.work_days ?? ["mon","tue","wed","thu","fri"];
+  const contractStart=employeeContractStart(emp);
+  const contractEnd=emp.contract_type==="fixed_term" ? emp.contract_end : null;
+  if((contractStart&&dateIso<contractStart)||(contractEnd&&dateIso>contractEnd)) {
+    return {work_days:[], work_start:emp.work_start??"09:00", work_end:emp.work_end??"18:00", break_start:"12:00", break_end:"13:00"};
+  }
   const change=approvedWorkTimeChangeForDate(workTimeChanges,emp,dateIso);
   if(change) return {
     work_days: change.new_work_days ?? baseDays,
@@ -559,7 +564,7 @@ function ApprovedCompCard({ compRequests, leaveRequests, empMap, onChanged }: { 
   const approved=uniqueCompRequests(compRequests);
   const month=currentMonthRange();
   const usedByEmployee=leaveRequests
-    .filter((request:any)=>request.request_type==="comp_leave_use"&&request.status==="approved")
+    .filter((request:any)=>isCompLeaveUsageRequest(request)&&request.status==="approved")
     .reduce((map:Record<string,number>,request:any)=>{
       const hours=Number((request.amount_hours??(Number(request.amount_days||0)*8))||0);
       map[request.employee_id]=(map[request.employee_id]??0)+hours;
@@ -1862,8 +1867,15 @@ function leaveRequestTimeLabel(request:any) {
   const time=request.start_time?` ${String(request.start_time).slice(0,5)}~${String(request.end_time??"").slice(0,5)}`:"";
   return `${period}${time}`;
 }
+function isCompLeaveUsageRequest(request:any) {
+  return ["comp_leave_use","hourly"].includes(request?.request_type) && Number((request?.amount_hours??0)||0)>0;
+}
+function leaveTypeDisplayLabel(request:any) {
+  if(isCompLeaveUsageRequest(request)) return "대체휴가 시간 사용";
+  return requestTypeLabels[request?.request_type]??request?.request_type??"-";
+}
 function leaveDeductionLabel(request:any) {
-  if(request.request_type==="comp_leave_use") {
+  if(isCompLeaveUsageRequest(request)) {
     const hours=Number((request.amount_hours??(Number(request.amount_days||0)*8))||0);
     return `추가근무 적립분 ${formatHourValue(hours)}시간 사용`;
   }
@@ -2430,7 +2442,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   const remaining=Math.max(0,totalGranted-approvedUsed);
   const expectedRemaining=Math.max(0,totalGranted-pendingUsed);
   const compEarnedHours=Math.round(compEarned*8*10)/10;
-  const compUsedHours=requests.filter(r=>r.request_type==="comp_leave_use"&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
+  const compUsedHours=requests.filter(r=>isCompLeaveUsageRequest(r)&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
   const compRemainHours=Math.max(0,compEarnedHours-compUsedHours);
   const remainPct=totalGranted>0?Math.round((remaining/totalGranted)*100):0;
   const meta=LEAVE_TYPE_META[form.request_type];
@@ -2637,7 +2649,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       {showLeave&&<section className="card">
         <h2 className="card-title"><i className="ti ti-list" aria-hidden="true"></i>신청 내역</h2>
         <DataTable rows={[
-          ...requests.map(r=>({구분:requestTypeLabels[r.request_type]??r.request_type,기간:`${r.start_date}${r.end_date!==r.start_date?"~"+r.end_date:""}`,시간:r.start_time?`${r.start_time?.slice(0,5)}~${r.end_time?.slice(0,5)}`:"-",환산:r.amount_days!=null?r.amount_days+"일":r.amount_hours!=null?r.amount_hours+"시간":"-",상태:r.status,사유:r.reason??"-"})),
+          ...requests.map(r=>({구분:leaveTypeDisplayLabel(r),기간:`${r.start_date}${r.end_date!==r.start_date?"~"+r.end_date:""}`,시간:r.start_time?`${r.start_time?.slice(0,5)}~${r.end_time?.slice(0,5)}`:"-",환산:r.amount_days!=null&&!isCompLeaveUsageRequest(r)?r.amount_days+"일":r.amount_hours!=null?r.amount_hours+"시간":"-",상태:r.status,사유:r.reason??"-"})),
         ]} />
       </section>}
     </div>
@@ -2961,7 +2973,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     const total=automaticAnnualLeaveDays(emp,ent)+adjDays;
     const remain=Math.max(0,total-used);
     const compH=Math.round(compEarned*8*10)/10;
-    const compUsedH=reqs.filter(r=>r.request_type==="comp_leave_use"&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
+    const compUsedH=reqs.filter(r=>isCompLeaveUsageRequest(r)&&r.status==="approved").reduce((s,r)=>s+(r.amount_hours??(r.amount_days??0)*8),0);
     const pendingComp=comps.filter(c=>c.status==="pending").reduce((s,c)=>s+Number(c.converted_days||0),0);
     return {total,used,remain,compEarned,compUsedH,compRemainH:Math.max(0,compH-compUsedH),pendingComp};
   }
@@ -3344,7 +3356,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
           <div>
             <h3>휴가 신청 {pR.length>0&&<span className="count-badge">{pR.length}</span>}</h3>
             {pR.length===0&&<p className="subtle">없음</p>}
-            {pR.map(r=>(<div className="list-row" key={r.id}><div><b>{empName(r.employee_id)}</b><div className="subtle">{requestTypeLabels[r.request_type]??r.request_type} · {r.start_date}{r.end_date!==r.start_date?"~"+r.end_date:""}{r.start_time?` ${r.start_time.slice(0,5)}~${r.end_time?.slice(0,5)}`:""}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewRequest(r.id,"rejected")}>반려</button></div></div>))}
+            {pR.map(r=>(<div className="list-row" key={r.id}><div><b>{empName(r.employee_id)}</b><div className="subtle">{leaveTypeDisplayLabel(r)} · {r.start_date}{r.end_date!==r.start_date?"~"+r.end_date:""}{r.start_time?` ${r.start_time.slice(0,5)}~${r.end_time?.slice(0,5)}`:""}</div></div><div className="actions"><button className="button secondary" onClick={()=>reviewRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewRequest(r.id,"rejected")}>반려</button></div></div>))}
           </div>
           <div>
             <h3>기기 {pD.length>0&&<span className="count-badge">{pD.length}</span>}</h3>
@@ -3433,9 +3445,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
               {leaveUsageRows.slice(0,80).map((request:any)=>(
                 <tr key={request.id}>
                   <td data-label="직원"><b>{empName(request.employee_id)}</b></td>
-                  <td data-label="구분">{requestTypeLabels[request.request_type]??request.request_type}</td>
+                  <td data-label="구분">{leaveTypeDisplayLabel(request)}</td>
                   <td data-label="기간/시간">{leaveRequestTimeLabel(request)}</td>
-                  <td data-label="차감 기준"><span className={request.request_type==="comp_leave_use"?"leave-source comp":"leave-source annual"}>{leaveDeductionLabel(request)}</span></td>
+                  <td data-label="차감 기준"><span className={isCompLeaveUsageRequest(request)?"leave-source comp":"leave-source annual"}>{leaveDeductionLabel(request)}</span></td>
                   <td data-label="상태"><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
                   <td data-label="사유">{request.reason??"-"}</td>
                 </tr>
@@ -3907,7 +3919,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         return {
           id:`leave-${request.id}-${date}`,
           employee_id:employee.id,
-          title:requestTypeLabels[request.request_type]??"연차",
+          title:leaveTypeDisplayLabel(request),
           event_type:"leave",
           start_date:date,
           end_date:date,
@@ -4388,7 +4400,6 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
           work_days:nextDays,
           work_start:timeMatchesOld?editStart:override.work_start,
           work_end:timeMatchesOld?editEnd:override.work_end,
-          updated_at:new Date().toISOString(),
         }).eq("id",override.id);
         return result.error?.message ?? "ok";
       }));
@@ -4407,7 +4418,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
     setMsg(""); if(!ovEmpId) return setMsg("직원을 선택해주세요.");
     const monday=new Date(ovWeek); monday.setDate(monday.getDate()-((monday.getDay()+6)%7));
     const weekStart=monday.toISOString().slice(0,10);
-    const payload={employee_id:ovEmpId,week_start:weekStart,work_days:ovDays,work_start:ovStart,work_end:ovEnd,note:ovNote,created_by:currentEmployee.id,updated_at:new Date().toISOString()};
+    const payload={employee_id:ovEmpId,week_start:weekStart,work_days:ovDays,work_start:ovStart,work_end:ovEnd,note:ovNote,created_by:currentEmployee.id};
     const {data:existing,error:findError}=await supabase.from("weekly_schedule_overrides").select("id").eq("employee_id",ovEmpId).eq("week_start",weekStart).maybeSingle();
     if(findError) return setMsg(`저장 실패: ${findError.message}`);
     const result=existing?.id
