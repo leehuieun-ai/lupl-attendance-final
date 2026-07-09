@@ -798,38 +798,39 @@ export default function App() {
     attendance:"출퇴근",
     leave:"휴가",
     overtime:"추가근무",
-    worktime:"근무시간 변경 요청",
-    "admin-dashboard":"직원 현황",
-    approvals:"승인 관리",
-    employees:"직원 관리",
+    worktime:"근무시간 변경",
+    "admin-dashboard":"오늘 관리",
+    approvals:"승인함",
+    employees:"직원",
     rnr:"업무 R&R",
-    workplaces:"근무지 관리",
-    schedule:"근무 일정",
-    payroll:"급여 계산",
-    reports:"근태 보고서",
-    consents:"직원 동의서",
-    improvements:"개선 요청함",
+    workplaces:"근무지",
+    schedule:"일정",
+    payroll:"급여",
+    reports:"리포트",
+    consents:"동의서",
+    improvements:"개선함",
   };
   const personalMenus:{id:Tab;label:string;icon:string}[]=[
     {id:"attendance",label:"출퇴근",icon:"ti-clock"},
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
-    {id:"worktime",label:"근무시간 변경 요청",icon:"ti-calendar-time"},
+    {id:"worktime",label:"근무시간 변경",icon:"ti-calendar-time"},
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
-    {id:"schedule",label:"근무 일정",icon:"ti-calendar-time"},
-    {id:"admin-dashboard",label:"직원 현황",icon:"ti-layout-dashboard",badge:pendingCount},
-    {id:"employees",label:"직원 관리",icon:"ti-users"},
-    {id:"workplaces",label:"근무지 관리",icon:"ti-map-pin"},
+    {id:"admin-dashboard",label:"오늘",icon:"ti-layout-dashboard"},
+    {id:"approvals",label:"승인함",icon:"ti-inbox",badge:pendingCount},
+    {id:"schedule",label:"일정",icon:"ti-calendar-time"},
+    {id:"employees",label:"직원",icon:"ti-users"},
+    {id:"workplaces",label:"근무지",icon:"ti-map-pin"},
   ];
   const reportMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
-    {id:"reports",label:"보고서",icon:"ti-chart-bar"},
-    {id:"consents",label:"직원 동의서",icon:"ti-file-certificate"},
+    {id:"reports",label:"근태 리포트",icon:"ti-chart-bar"},
+    {id:"payroll",label:"급여",icon:"ti-coin"},
+    {id:"consents",label:"동의서",icon:"ti-file-certificate"},
   ];
   const extraMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
-    {id:"payroll",label:"급여 계산",icon:"ti-coin"},
     {id:"rnr",label:"업무 R&R",icon:"ti-sitemap"},
-    {id:"improvements",label:"개선 요청함",icon:"ti-notes"},
+    {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const improvementMenuOptions=[...personalMenus,...adminMenus,...reportMenus,...extraMenus].map(item=>({id:item.id,label:item.label}));
   function go(next:Tab){setTab(next);setMobileNavOpen(false);}
@@ -848,7 +849,7 @@ export default function App() {
         <nav className="side-nav">
           <p className="side-nav-label">내 근무</p>
           {personalMenus.map(menuButton)}
-          {isAdmin&&<><p className="side-nav-label">관리자</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{reportMenus.map(menuButton)}<p className="side-nav-label">기타</p>{extraMenus.map(menuButton)}</>}
+          {isAdmin&&<><p className="side-nav-label">관리</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{reportMenus.map(menuButton)}<p className="side-nav-label">설정</p>{extraMenus.map(menuButton)}</>}
         </nav>
         <div className="sidebar-account">
           <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{employee.employee_no} · {isAdmin?"관리자":"직원"}</small></div></div>
@@ -861,7 +862,7 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-inner">
             <button className="mobile-menu-button" title="메뉴 열기" onClick={()=>setMobileNavOpen(true)}><i className="ti ti-menu-2" aria-hidden="true"></i></button>
-            <div className="page-heading"><span>{["reports","consents"].includes(tab)?"리포트":["payroll","rnr","improvements"].includes(tab)?"기타":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리자":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
+            <div className="page-heading"><span>{reportMenus.some(m=>m.id===tab)?"리포트":extraMenus.some(m=>m.id===tab)?"설정":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
             <div className="topbar-user"><span>{employee.name}</span><b>{employee.employee_no} · {isAdmin?"관리자":"직원"}</b></div>
           </div>
         </header>
@@ -870,10 +871,10 @@ export default function App() {
           {tab==="leave" && <LeavePage employee={employee} mode="leave" />}
           {tab==="overtime" && <LeavePage employee={employee} mode="overtime" />}
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
-          {tab==="admin-dashboard" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" />}
-          {tab==="approvals" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" />}
-          {tab==="employees" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="employees" />}
-          {tab==="rnr" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="rnr" />}
+          {tab==="admin-dashboard" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
+          {tab==="approvals" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
+          {tab==="employees" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
+          {tab==="rnr" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="rnr" onNavigate={go} />}
           {tab==="workplaces" && isAdmin && <WorkplacePage employee={employee} />}
           {tab==="schedule" && isAdmin && <SettingsPage currentEmployee={employee} section="schedule" />}
           {tab==="payroll" && isAdmin && <SettingsPage currentEmployee={employee} section="payroll" />}
@@ -2904,7 +2905,7 @@ function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmp
   );
 }
 
-function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEmployee: any; onChanged: () => void; view?:"dashboard"|"approvals"|"employees"|"rnr" }) {
+function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }: { currentEmployee: any; onChanged: () => void; view?:"dashboard"|"approvals"|"employees"|"rnr"; onNavigate?:(tab:Tab)=>void }) {
   const [employees,setEmployees]=useState<any[]>([]);
   const [empMap,setEmpMap]=useState<Record<string,any>>({});
   const [employeeFilter,setEmployeeFilter]=useState("active");
@@ -2928,6 +2929,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   const [rnrMsg,setRnrMsg]=useState("");
   const [message,setMessage]=useState("");
   const [settledCompIds,setSettledCompIds]=useState<Set<string>>(new Set());
+  const [selectedDetailEmployeeId,setSelectedDetailEmployeeId]=useState("");
+  const [hiddenRejectedIds,setHiddenRejectedIds]=useState<string[]>(()=>{
+    try { return JSON.parse(localStorage.getItem("lupl_hidden_rejected_archive")??"[]"); }
+    catch { return []; }
+  });
   const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,department:"",position:"",no_annual_leave:false,work_days:["mon","tue","wed","thu","fri"]});
   const [scheduleEmpId,setScheduleEmpId]=useState("");
   const [scheduleMsg,setScheduleMsg]=useState("");
@@ -3183,6 +3189,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   }
   const filtered=employees.filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?e.employment_status!=="active":e.employment_status==="active");
   const activeEmployees=employees.filter(e=>e.employment_status==="active"&&!isTestEmployee(e));
+  useEffect(()=>{
+    if(activeEmployees.length===0) { if(selectedDetailEmployeeId) setSelectedDetailEmployeeId(""); return; }
+    if(!selectedDetailEmployeeId || !activeEmployees.some((employee:any)=>employee.id===selectedDetailEmployeeId)) {
+      setSelectedDetailEmployeeId(activeEmployees[0].id);
+    }
+  },[employees,selectedDetailEmployeeId]);
   const leaveUsageRows=requests
     .filter((request:any)=>requestTypeLabels[request.request_type])
     .filter((request:any)=>!isTestEmployee(empMap[request.employee_id])&&String(request.reason??"").trim().toLowerCase()!=="test")
@@ -3223,6 +3235,52 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
     return !l.check_out_time || reviewStatuses.includes(l.status);
   });
   const pendingTotal=pW.length+pC.length+pT.length+pR.length+pD.length+pL.length;
+  const checkedInCount=dailyRows.filter(x=>x.log?.check_in_time).length;
+  const checkedOutCount=dailyRows.filter(x=>x.log?.check_out_time).length;
+  const openClockOutCount=dailyRows.filter(x=>x.log?.check_in_time&&!x.log?.check_out_time).length;
+  const attentionTotal=pW.length+pD.length+pL.length;
+  function isRejectedStatus(status:any){
+    const value=String(status??"").toLowerCase();
+    return value==="rejected"||value==="denied"||value.includes("반려")||value.includes("불인정");
+  }
+  function hideRejectedArchiveRow(key:string) {
+    const next=Array.from(new Set([...hiddenRejectedIds,key]));
+    setHiddenRejectedIds(next);
+    localStorage.setItem("lupl_hidden_rejected_archive",JSON.stringify(next));
+  }
+  function restoreRejectedArchiveRows() {
+    setHiddenRejectedIds([]);
+    localStorage.removeItem("lupl_hidden_rejected_archive");
+  }
+  const rejectedArchiveRows=[
+    ...requests.filter((r:any)=>isRejectedStatus(r.status)).map((r:any)=>({
+      key:`leave-${r.id}`,
+      type:"휴가",
+      employee:empName(r.employee_id),
+      title:leaveTypeDisplayLabel(r),
+      detail:`${r.start_date}${r.end_date!==r.start_date?`~${r.end_date}`:""}${r.start_time?` · ${r.start_time.slice(0,5)}~${r.end_time?.slice(0,5)}`:""} · ${r.reason||"사유 없음"}`,
+      createdAt:r.reviewed_at??r.created_at,
+      status:r.status,
+    })),
+    ...compRequests.filter((r:any)=>isRejectedStatus(r.status)).map((r:any)=>({
+      key:`comp-${r.id}`,
+      type:"추가근무",
+      employee:empName(r.employee_id),
+      title:r.work_date,
+      detail:`신청 ${r.start_time?.slice(0,5)??"-"}~${r.end_time?.slice(0,5)??"-"} · ${r.hours??0}시간 · ${r.reason||"사유 없음"}`,
+      createdAt:r.reviewed_at??r.created_at,
+      status:r.status,
+    })),
+    ...workTimeRequests.filter((r:any)=>isRejectedStatus(r.status)).map((r:any)=>({
+      key:`worktime-${r.id}`,
+      type:"근무시간",
+      employee:empName(r.employee_id),
+      title:workChangeKind(r),
+      detail:`${workChangePeriodLabel(r)} · ${workChangeConditionLabel(r)} · ${r.reason||"사유 없음"}`,
+      createdAt:r.reviewed_at??r.created_at,
+      status:r.status,
+    })),
+  ].filter((row:any)=>!hiddenRejectedIds.includes(row.key)).sort((a:any,b:any)=>String(b.createdAt??"").localeCompare(String(a.createdAt??"")));
   const unassignedRnrEntries=rnrEntries.filter((entry:any)=>!entry.assigned_employee_id);
   const rnrBoardColumns=[
     ...activeEmployees.map((employee:any)=>({
@@ -3246,19 +3304,64 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
   const visibleRnrStackGroups=rnrDepartmentFilter==="all"
     ? rnrStackGroups
     : rnrStackGroups.filter((group:any)=>group.department===rnrDepartmentFilter);
+  const selectedDetailEmployee=activeEmployees.find((employee:any)=>employee.id===selectedDetailEmployeeId)??activeEmployees[0]??null;
+  const selectedBreakStart=selectedDetailEmployee?.break_start??"12:00";
+  const selectedBreakEnd=selectedDetailEmployee?.break_end??"13:00";
+  const selectedDailyHours=selectedDetailEmployee?netDailyHours(selectedDetailEmployee.work_start??"09:00",selectedDetailEmployee.work_end??"18:00",selectedBreakStart,selectedBreakEnd):0;
+  const selectedWeeklyHours=selectedDetailEmployee?Math.round(selectedDailyHours*(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"]).length*10)/10:0;
+  const selectedMonthStats=selectedDetailEmployee?scheduledWorkStats(selectedDetailEmployee,payrollMonth.start,payrollMonth.end,overrides,approvedWorkTimeChanges):null;
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
-  const showsApprovals=view==="dashboard"||view==="approvals";
+  const showsApprovals=view==="approvals";
 
   return (
     <div className="grid">
       {message&&<div className="alert">{message}</div>}
 
+      {view==="dashboard"&&<section className="admin-command-center">
+        <div className="admin-command-head">
+          <div>
+            <span>관리자 홈</span>
+            <h2>오늘 처리할 일만 먼저 봅니다</h2>
+            <p>승인, 예외, 직원 계약, 일정, 리포트를 역할별 화면으로 나눴습니다. 급한 일은 아래 버튼에서 바로 들어가 처리하시면 됩니다.</p>
+          </div>
+          <button className="button secondary" onClick={()=>onNavigate?.("approvals")}><i className="ti ti-inbox" aria-hidden="true"></i>승인함 열기</button>
+        </div>
+        <div className="admin-command-metrics">
+          <div><span>출근</span><b>{checkedInCount}/{activeEmployees.length}</b><small>오늘 출근 기록</small></div>
+          <div><span>퇴근 미완료</span><b>{openClockOutCount}</b><small>강제 퇴근 확인 대상</small></div>
+          <div><span>승인 대기</span><b>{pendingTotal}</b><small>휴가·추가근무·기기·근무지</small></div>
+          <div><span>예외 확인</span><b>{attentionTotal}</b><small>위치·기기·미퇴근</small></div>
+        </div>
+        <div className="admin-flow-grid">
+          <button onClick={()=>onNavigate?.("approvals")}>
+            <i className="ti ti-inbox" aria-hidden="true"></i>
+            <b>승인함</b>
+            <span>{pendingTotal}건 대기 · 반려 기록은 따로 접어 정리</span>
+          </button>
+          <button onClick={()=>onNavigate?.("schedule")}>
+            <i className="ti ti-calendar-time" aria-hidden="true"></i>
+            <b>일정</b>
+            <span>직원별 근무시간, 휴가, 추가근무를 한 화면에서 확인</span>
+          </button>
+          <button onClick={()=>onNavigate?.("employees")}>
+            <i className="ti ti-users" aria-hidden="true"></i>
+            <b>직원</b>
+            <span>계약사항과 휴게 제외 실근무시간 기준 관리</span>
+          </button>
+          <button onClick={()=>onNavigate?.("reports")}>
+            <i className="ti ti-chart-bar" aria-hidden="true"></i>
+            <b>리포트</b>
+            <span>급여와 근태 자료는 보고서 흐름에서 확인</span>
+          </button>
+        </div>
+      </section>}
+
       {view==="dashboard"&&<section className="card dashboard-status-card">
-        <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>일일 직원 근무 현황</h2>
+        <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>오늘 직원 출퇴근</h2>
         <div className="grid four" style={{marginBottom:16}}>
           <div className="metric"><div className="metric-value">{activeEmployees.length}</div><div className="metric-label">재직 직원</div></div>
-          <div className="metric"><div className="metric-value">{dailyRows.filter(x=>x.log?.check_in_time).length}</div><div className="metric-label">오늘 출근</div></div>
-          <div className="metric"><div className="metric-value">{dailyRows.filter(x=>x.log?.check_out_time).length}</div><div className="metric-label">오늘 퇴근</div></div>
+          <div className="metric"><div className="metric-value">{checkedInCount}</div><div className="metric-label">오늘 출근</div></div>
+          <div className="metric"><div className="metric-value">{checkedOutCount}</div><div className="metric-label">오늘 퇴근</div></div>
           <div className="metric"><div className="metric-value">{pendingTotal}</div><div className="metric-label">확인 대기</div></div>
         </div>
         <div className="table-wrap">
@@ -3365,6 +3468,61 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard" }: { currentEm
           </div>
         </div>
       </CollapsibleSection>}
+
+      {view==="approvals"&&<section className="card rejected-archive-card">
+        <div className="section-head">
+          <div>
+            <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-archive" aria-hidden="true"></i>반려 기록 정리</h2>
+            <p className="subtle">근태 이력은 보존하고, 확인 끝난 반려 항목만 관리자 화면에서 숨깁니다.</p>
+          </div>
+          {hiddenRejectedIds.length>0&&<button className="button ghost" onClick={restoreRejectedArchiveRows}>숨김 초기화</button>}
+        </div>
+        <div className="rejected-archive-list">
+          {rejectedArchiveRows.slice(0,20).map((row:any)=>(
+            <div className="rejected-archive-row" key={row.key}>
+              <div>
+                <span>{row.type}</span>
+                <b>{row.employee} · {row.title}</b>
+                <small>{row.detail}</small>
+                <em>{formatDateTime(row.createdAt)}</em>
+              </div>
+              <button className="button ghost compact" onClick={()=>hideRejectedArchiveRow(row.key)}>숨기기</button>
+            </div>
+          ))}
+          {rejectedArchiveRows.length===0&&<p className="subtle">정리할 반려 기록이 없습니다.</p>}
+        </div>
+      </section>}
+
+      {view==="employees"&&selectedDetailEmployee&&<section className="employee-detail-panel">
+        <div className="employee-detail-head">
+          <div>
+            <span>직원 상세</span>
+            <h2>{selectedDetailEmployee.name}</h2>
+            <p>{selectedDetailEmployee.employee_no} · {[selectedDetailEmployee.department,selectedDetailEmployee.position].filter(Boolean).join(" · ")||"부서/직책 미지정"}</p>
+          </div>
+          <button className="button secondary" onClick={()=>onNavigate?.("schedule")}><i className="ti ti-calendar-time" aria-hidden="true"></i>일정에서 보기</button>
+        </div>
+        <div className="employee-detail-picker">
+          {activeEmployees.map((employee:any)=>(
+            <button key={employee.id} className={selectedDetailEmployee.id===employee.id?"active":""} onClick={()=>setSelectedDetailEmployeeId(employee.id)}>
+              <b>{employee.name}</b>
+              <span>{employee.employee_no}</span>
+            </button>
+          ))}
+        </div>
+        <div className="employee-contract-grid">
+          <div><span>계약 유형</span><b>{CONTRACT_LABELS[selectedDetailEmployee.contract_type??"daily"]??"일반"}</b><small>{selectedDetailEmployee.contract_end?`${employeeContractStart(selectedDetailEmployee)} ~ ${selectedDetailEmployee.contract_end}`:`${employeeContractStart(selectedDetailEmployee)}부터`}</small></div>
+          <div><span>근무 요일</span><b>{daysLabel(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"])}</b><small>일정·급여 계산에 반영</small></div>
+          <div><span>근무 시간</span><b>{timeRangeLabel(selectedDetailEmployee.work_start??"09:00",selectedDetailEmployee.work_end??"18:00")}</b><small>휴게 {timeRangeLabel(selectedBreakStart,selectedBreakEnd)}</small></div>
+          <div><span>1일 실근무</span><b>{formatHourValue(selectedDailyHours)}시간</b><small>휴게시간 제외</small></div>
+          <div><span>주 소정</span><b>{formatHourValue(selectedWeeklyHours)}시간</b><small>{(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"]).length}일 기준</small></div>
+          <div><span>이번 달 예정</span><b>{selectedMonthStats?`${selectedMonthStats.days}일 · ${formatHourValue(selectedMonthStats.hours)}시간`:"-"}</b><small>승인된 변경·개별 일정 반영</small></div>
+        </div>
+        <div className="employee-contract-note">
+          <i className="ti ti-info-circle" aria-hidden="true"></i>
+          <span>직원 상세의 계약사항은 근무 일정, 지각 기준, 급여 산정의 기준값으로 이어집니다. 휴게시간을 제외한 실근무시간을 먼저 확인하고 세부 예외는 일정 화면에서 조정합니다.</span>
+        </div>
+      </section>}
 
       {view==="employees"&&<ApprovedCompCard compRequests={compRequests} leaveRequests={requests} empMap={empMap} onChanged={load} />}
 
