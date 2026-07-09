@@ -2,3 +2,6 @@ node_modules/
 dist/
 .npm-cache/
 supabase/.temp/
+.env
+.env.*
+!.env.example
