@@ -5385,6 +5385,8 @@ function ReportsPage() {
   const [logs,setLogs]=useState<any[]>([]);
   const [employees,setEmployees]=useState<any[]>([]);
   const [compRequests,setCompRequests]=useState<any[]>([]);
+  const [reportMonth,setReportMonth]=useState(todayIso().slice(0,7));
+  const [calendarEmployeeId,setCalendarEmployeeId]=useState("");
 
   async function fetchAllAttendanceLogs(){
     const rows:any[]=[];
@@ -5417,14 +5419,29 @@ function ReportsPage() {
   }
   const employeeMap=Object.fromEntries(employees.map((employee:any)=>[employee.id,employee]));
   function employeeForLog(log:any) {
-    return employeeMap[log.employee_id] ?? log.employees ?? null;
+    return employeeMap[log.employee_id] ?? log.employees ?? {id:log.employee_id??`unknown-${log.id}`,name:"기록 보관 직원",employee_no:"퇴사/삭제 계정"};
+  }
+  function attendanceTypeLabelsForLog(log:any) {
+    const labels:string[]=[];
+    const status=String(log.status??"").trim();
+    const workplaceType=workplaceTypeLabels[log.workplaces?.type];
+    if(status) labels.push(status);
+    if(workplaceType&&!labels.includes(workplaceType)) labels.push(workplaceType);
+    if(!log.check_out_time&&!labels.includes("퇴근 미처리")) labels.push("퇴근 미처리");
+    return labels.length?labels:["미분류"];
   }
   const baseVisibleEmployees=employees.filter(reportEmployeeVisible);
   const visibleLogs=logs.filter((log:any)=>reportEmployeeVisible(employeeForLog(log)));
-  const extraLogEmployees=visibleLogs
-    .map((log:any)=>employeeForLog(log))
-    .filter((employee:any)=>employee?.id&&!baseVisibleEmployees.some((visible:any)=>visible.id===employee.id));
+  const extraLogEmployeeMap=new Map<string,any>();
+  visibleLogs.forEach((log:any)=>{
+    const logEmployee=employeeForLog(log);
+    if(logEmployee?.id&&!baseVisibleEmployees.some((visible:any)=>visible.id===logEmployee.id)&&!extraLogEmployeeMap.has(logEmployee.id)) extraLogEmployeeMap.set(logEmployee.id,logEmployee);
+  });
+  const extraLogEmployees=Array.from(extraLogEmployeeMap.values());
   const visibleEmployees=[...baseVisibleEmployees,...extraLogEmployees];
+  useEffect(()=>{
+    if(visibleEmployees.length&&!visibleEmployees.some((employee:any)=>employee.id===calendarEmployeeId)) setCalendarEmployeeId(visibleEmployees[0].id);
+  },[visibleEmployees.length,calendarEmployeeId]);
   const visibleEmployeeIds=new Set(visibleEmployees.map((employee:any)=>employee.id));
   const visibleCompRequests=compRequests.filter((request:any)=>visibleEmployeeIds.has(request.employee_id));
   const allLogRows = visibleLogs.map(l=>{
@@ -5434,6 +5451,7 @@ function ReportsPage() {
     사번:logEmployee?.employee_no??"-",
     근무지:l.workplaces?.name??"-",
     유형:workplaceTypeLabels[l.workplaces?.type]??"-",
+    근태유형:attendanceTypeLabelsForLog(l).join(", "),
     출근:formatDateTime(l.check_in_time),
     퇴근:formatDateTime(l.check_out_time),
     실제퇴근원본:formatDateTime(l.original_check_out_time),
@@ -5452,7 +5470,9 @@ function ReportsPage() {
   const statusChartRows=visibleEmployees.map((employee:any)=>{
     const employeeLogs=visibleLogs.filter((log:any)=>log.employee_id===employee.id);
     const counts={normal:0,late:0,field:0,remote:0,exception:0};
+    const typeCounts:Record<string,number>={};
     employeeLogs.forEach((log:any)=>{
+      attendanceTypeLabelsForLog(log).forEach(label=>{typeCounts[label]=(typeCounts[label]??0)+1;});
       const status=String(log.status??"");
       const type=log.workplaces?.type;
       if(status.includes("지각")) counts.late+=1;
@@ -5462,8 +5482,36 @@ function ReportsPage() {
       else counts.normal+=1;
     });
     const total=Math.max(1,employeeLogs.length);
-    return {employee,counts,total,shownTotal:employeeLogs.length};
+    const typeRows=Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
+    return {employee,counts,typeRows,total,shownTotal:employeeLogs.length};
   });
+  const calendarEmployee=visibleEmployees.find((employee:any)=>employee.id===calendarEmployeeId)??visibleEmployees[0]??null;
+  const calendarMonthStart=`${reportMonth}-01`;
+  const calendarDates=monthDates(calendarMonthStart);
+  const calendarOffset=(dateFromIso(calendarDates[0]??calendarMonthStart).getDay()+6)%7;
+  const calendarCells=Array.from({length:Math.ceil((calendarOffset+calendarDates.length)/7)*7},(_,index)=>calendarDates[index-calendarOffset]??null);
+  const calendarLogs=calendarEmployee?visibleLogs.filter((log:any)=>log.employee_id===calendarEmployee.id&&isoDate(new Date(log.check_in_time)).startsWith(reportMonth)):[];
+  const calendarLogMap=calendarLogs.reduce((map:Record<string,any[]>,log:any)=>{
+    const date=isoDate(new Date(log.check_in_time));
+    map[date]=[...(map[date]??[]),log];
+    return map;
+  },{});
+  const calendarWorkedMinutes=calendarLogs.reduce((sum:number,log:any)=>sum+(workedMinutes(log.check_in_time,log.check_out_time)??0),0);
+  const calendarWorkDays=Object.keys(calendarLogMap).length;
+  const calendarColor=calendarEmployee?employeeColorFromList(visibleEmployees,calendarEmployee.id):EMPLOYEE_COLORS[0];
+  function dayWorkLabel(dayLogs:any[]) {
+    if(!dayLogs.length) return "미출근";
+    const minutes=dayLogs.reduce((sum:number,log:any)=>sum+(workedMinutes(log.check_in_time,log.check_out_time)??0),0);
+    if(minutes>0) return `${formatHourValue(minutes/60)}시간`;
+    return dayLogs.some((log:any)=>!log.check_out_time)?"퇴근 미처리":"0시간";
+  }
+  function printMonthlyReport(){
+    document.body.classList.add("print-monthly-attendance");
+    const cleanup=()=>document.body.classList.remove("print-monthly-attendance");
+    window.addEventListener("afterprint",cleanup,{once:true});
+    window.print();
+    window.setTimeout(cleanup,1500);
+  }
 
   return (
     <div className="grid">
@@ -5477,6 +5525,48 @@ function ReportsPage() {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-download" aria-hidden="true"></i>보고서 다운로드</h2>
         <div className="actions"><button className="button" onClick={downloadAll}><i className="ti ti-file-spreadsheet" aria-hidden="true"></i>전체 근태 Excel</button></div>
+      </section>
+
+      <section className="card monthly-attendance-report">
+        <div className="monthly-report-head">
+          <div>
+            <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-calendar-month" aria-hidden="true"></i>직원 월별 근태 리포트</h2>
+            <p className="subtle" style={{margin:0}}>직원 한 명을 선택하면 월별 캘린더와 PDF 저장용 화면이 함께 보입니다.</p>
+          </div>
+          <div className="monthly-report-controls print-hide">
+            <input className="input" type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value||todayIso().slice(0,7))} />
+            <button className="button secondary" onClick={printMonthlyReport}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF 저장</button>
+          </div>
+        </div>
+        {calendarEmployee ? (
+          <div className="monthly-report-body">
+            <div className="monthly-report-people print-hide">
+              {visibleEmployees.map((employee:any)=>(
+                <button type="button" key={employee.id} className={calendarEmployee.id===employee.id?"active":""} onClick={()=>setCalendarEmployeeId(employee.id)} style={{"--employee-color":employeeColorFromList(visibleEmployees,employee.id)} as React.CSSProperties}>
+                  <i></i><b>{employee.name}</b><span>{employee.employee_no??"-"}</span>
+                </button>
+              ))}
+            </div>
+            <div className="monthly-report-panel">
+              <div className="monthly-report-summary" style={{"--employee-color":calendarColor} as React.CSSProperties}>
+                <i></i>
+                <div><b>{calendarEmployee.name}</b><span>{calendarEmployee.employee_no??"-"}</span></div>
+                <strong>{Number(reportMonth.slice(5))}월 / 근무일수 {calendarWorkDays}일 / 근무시간 {formatHourValue(calendarWorkedMinutes/60)}시간</strong>
+              </div>
+              <div className="monthly-calendar-grid" style={{"--employee-color":calendarColor} as React.CSSProperties}>
+                {["월","화","수","목","금","토","일"].map(day=><div className="monthly-calendar-head" key={day}>{day}</div>)}
+                {calendarCells.map((date,index)=>{
+                  const dayLogs=date?calendarLogMap[date]??[]:[];
+                  const isWorked=dayLogs.length>0;
+                  const typeLabel=dayLogs.flatMap(attendanceTypeLabelsForLog).filter((label:string,index:number,list:string[])=>list.indexOf(label)===index).slice(0,2).join(" · ");
+                  return <div className={`monthly-calendar-cell ${date?"":"empty"} ${isWorked?"worked":"off"}`} key={date??`empty-${index}`}>
+                    {date&&<><b>{Number(date.slice(8))}</b><span>{dayWorkLabel(dayLogs)}</span><small>{isWorked?typeLabel:"기록 없음"}</small></>}
+                  </div>;
+                })}
+              </div>
+            </div>
+          </div>
+        ) : <p className="subtle">표시할 직원이 없습니다.</p>}
       </section>
 
       <section className="card">
@@ -5494,7 +5584,7 @@ function ReportsPage() {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-chart-bar" aria-hidden="true"></i>직원별 근태 유형</h2>
         <div className="attendance-status-chart">
-          {statusChartRows.map(({employee,counts,total,shownTotal}:any)=>(
+          {statusChartRows.map(({employee,counts,typeRows,total,shownTotal}:any)=>(
             <div className="attendance-status-row" key={employee.id}>
               <div className="attendance-status-name"><b>{employee.name}</b><span>{shownTotal}건</span></div>
               <div className="attendance-status-detail">
@@ -5516,6 +5606,9 @@ function ReportsPage() {
                   <span>외근 {counts.field}건</span>
                   <span>재택 {counts.remote}건</span>
                   <span>예외 {counts.exception}건</span>
+                </div>
+                <div className="attendance-type-counts">
+                  {typeRows.length===0 ? <span>저장된 유형 없음</span> : typeRows.map(([label,count]:any)=><span key={label}><b>{label}</b>{count}건</span>)}
                 </div>
               </div>
             </div>
