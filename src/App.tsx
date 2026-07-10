@@ -5384,11 +5384,13 @@ function ConsentReportPage() {
 function ReportsPage() {
   const [logs,setLogs]=useState<any[]>([]);
   const [employees,setEmployees]=useState<any[]>([]);
+  const [workplaces,setWorkplaces]=useState<any[]>([]);
   const [compRequests,setCompRequests]=useState<any[]>([]);
   const [overrides,setOverrides]=useState<any[]>([]);
   const [workTimeChanges,setWorkTimeChanges]=useState<any[]>([]);
   const [scheduleEvents,setScheduleEvents]=useState<any[]>([]);
   const [leaveRequests,setLeaveRequests]=useState<any[]>([]);
+  const [reportError,setReportError]=useState("");
   const [reportMonth,setReportMonth]=useState(todayIso().slice(0,7));
   const [calendarEmployeeId,setCalendarEmployeeId]=useState("");
 
@@ -5396,30 +5398,40 @@ function ReportsPage() {
     const rows:any[]=[];
     const pageSize=1000;
     for(let from=0;;from+=pageSize){
-      const {data,error}=await supabase.from("attendance_logs").select("*, employees(name, employee_no), workplaces(name,type)").order("check_in_time",{ascending:false}).range(from,from+pageSize-1);
-      if(error) break;
+      const {data,error}=await supabase.from("attendance_logs").select("*").order("check_in_time",{ascending:false}).range(from,from+pageSize-1);
+      if(error) throw error;
       rows.push(...(data??[]));
       if(!data||data.length<pageSize) break;
     }
     return rows;
   }
   async function load(){
-    const [l,e,c,ov,wt,se,lr]=await Promise.all([
-      fetchAllAttendanceLogs(),
-      supabase.from("employees").select("id, name, employee_no, role, employment_status, is_active, joined_at, created_at, work_days, work_start, work_end, work_start_date, contract_type, contract_start, contract_end, department, position").order("created_at",{ascending:false}).limit(1000),
-      supabase.from("comp_time_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(1000),
-      supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(1000),
-      supabase.from("work_time_change_requests").select("*").order("created_at",{ascending:false}).limit(1000),
-      supabase.from("employee_schedule_events").select("*").order("start_date",{ascending:true}).limit(1000),
-      supabase.from("attendance_requests").select("*").eq("status","approved").order("created_at",{ascending:false}).limit(1000),
-    ]);
-    setLogs(l??[]);
-    setEmployees(e.data??[]);
-    setCompRequests(c.data??[]);
-    setOverrides(ov.data??[]);
-    setWorkTimeChanges(wt.data??[]);
-    setScheduleEvents(se.data??[]);
-    setLeaveRequests(lr.data??[]);
+    setReportError("");
+    try {
+      const [l,e,w,c,ov,wt,se,lr]=await Promise.all([
+        fetchAllAttendanceLogs(),
+        supabase.from("employees").select("id, name, employee_no, role, employment_status, is_active, joined_at, created_at, work_days, work_start, work_end, work_start_date, contract_type, contract_start, contract_end, department, position").order("created_at",{ascending:false}).limit(1000),
+        supabase.from("workplaces").select("id,name,type").limit(1000),
+        supabase.from("comp_time_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(1000),
+        supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(1000),
+        supabase.from("work_time_change_requests").select("*").order("created_at",{ascending:false}).limit(1000),
+        supabase.from("employee_schedule_events").select("*").order("start_date",{ascending:true}).limit(1000),
+        supabase.from("attendance_requests").select("*").eq("status","approved").order("created_at",{ascending:false}).limit(1000),
+      ]);
+      const errors=[e,w,c,ov,wt,se,lr].map((result:any)=>result.error?.message).filter(Boolean);
+      if(errors.length) setReportError(`일부 리포트 데이터를 불러오지 못했습니다.\n${errors.join("\n")}`);
+      setLogs(l??[]);
+      setEmployees(e.data??[]);
+      setWorkplaces(w.data??[]);
+      setCompRequests(c.data??[]);
+      setOverrides(ov.data??[]);
+      setWorkTimeChanges(wt.data??[]);
+      setScheduleEvents(se.data??[]);
+      setLeaveRequests(lr.data??[]);
+    } catch(error:any) {
+      setReportError(`전체 근태 기록을 불러오지 못했습니다.\n${error?.message??error}`);
+      setLogs([]);
+    }
   }
 
   useEffect(()=>{load();},[]);
@@ -5430,6 +5442,8 @@ function ReportsPage() {
     return name!=="test"&&!no.startsWith("test");
   }
   const employeeMap=Object.fromEntries(employees.map((employee:any)=>[employee.id,employee]));
+  const workplaceMap=Object.fromEntries(workplaces.map((workplace:any)=>[workplace.id,workplace]));
+  const logsWithRefs=logs.map((log:any)=>({...log,employees:log.employees??employeeMap[log.employee_id],workplaces:log.workplaces??workplaceMap[log.workplace_id]}));
   function employeeForLog(log:any) {
     return employeeMap[log.employee_id] ?? log.employees ?? {id:log.employee_id??`unknown-${log.id}`,name:"기록 보관 직원",employee_no:"퇴사/삭제 계정"};
   }
@@ -5443,7 +5457,7 @@ function ReportsPage() {
     return labels.length?labels:["미분류"];
   }
   const baseVisibleEmployees=employees.filter(reportEmployeeVisible);
-  const visibleLogs=logs.filter((log:any)=>reportEmployeeVisible(employeeForLog(log)));
+  const visibleLogs=logsWithRefs.filter((log:any)=>reportEmployeeVisible(employeeForLog(log)));
   const extraLogEmployeeMap=new Map<string,any>();
   visibleLogs.forEach((log:any)=>{
     const logEmployee=employeeForLog(log);
@@ -5559,6 +5573,7 @@ function ReportsPage() {
 
   return (
     <div className="grid">
+      {reportError&&<div className="alert error" style={{whiteSpace:"pre-wrap"}}>{reportError}</div>}
       <section className="grid four">
         <div className="metric"><div className="metric-value">{visibleLogs.length}</div><div className="metric-label">전체 근태</div></div>
         <div className="metric"><div className="metric-value">{visibleEmployees.length}</div><div className="metric-label">전체 직원</div></div>
