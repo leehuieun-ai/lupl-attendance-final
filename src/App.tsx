@@ -5385,6 +5385,10 @@ function ReportsPage() {
   const [logs,setLogs]=useState<any[]>([]);
   const [employees,setEmployees]=useState<any[]>([]);
   const [compRequests,setCompRequests]=useState<any[]>([]);
+  const [overrides,setOverrides]=useState<any[]>([]);
+  const [workTimeChanges,setWorkTimeChanges]=useState<any[]>([]);
+  const [scheduleEvents,setScheduleEvents]=useState<any[]>([]);
+  const [leaveRequests,setLeaveRequests]=useState<any[]>([]);
   const [reportMonth,setReportMonth]=useState(todayIso().slice(0,7));
   const [calendarEmployeeId,setCalendarEmployeeId]=useState("");
 
@@ -5400,14 +5404,22 @@ function ReportsPage() {
     return rows;
   }
   async function load(){
-    const [l,e,c]=await Promise.all([
+    const [l,e,c,ov,wt,se,lr]=await Promise.all([
       fetchAllAttendanceLogs(),
-      supabase.from("employees").select("id, name, employee_no, role, employment_status, is_active, joined_at, created_at").order("created_at",{ascending:false}).limit(1000),
-      supabase.from("comp_time_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(1000)
+      supabase.from("employees").select("id, name, employee_no, role, employment_status, is_active, joined_at, created_at, work_days, work_start, work_end, work_start_date, contract_type, contract_start, contract_end, department, position").order("created_at",{ascending:false}).limit(1000),
+      supabase.from("comp_time_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(1000),
+      supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(1000),
+      supabase.from("work_time_change_requests").select("*").order("created_at",{ascending:false}).limit(1000),
+      supabase.from("employee_schedule_events").select("*").order("start_date",{ascending:true}).limit(1000),
+      supabase.from("attendance_requests").select("*").eq("status","approved").order("created_at",{ascending:false}).limit(1000),
     ]);
     setLogs(l??[]);
     setEmployees(e.data??[]);
     setCompRequests(c.data??[]);
+    setOverrides(ov.data??[]);
+    setWorkTimeChanges(wt.data??[]);
+    setScheduleEvents(se.data??[]);
+    setLeaveRequests(lr.data??[]);
   }
 
   useEffect(()=>{load();},[]);
@@ -5490,20 +5502,46 @@ function ReportsPage() {
   const calendarDates=monthDates(calendarMonthStart);
   const calendarOffset=(dateFromIso(calendarDates[0]??calendarMonthStart).getDay()+6)%7;
   const calendarCells=Array.from({length:Math.ceil((calendarOffset+calendarDates.length)/7)*7},(_,index)=>calendarDates[index-calendarOffset]??null);
-  const calendarLogs=calendarEmployee?visibleLogs.filter((log:any)=>log.employee_id===calendarEmployee.id&&isoDate(new Date(log.check_in_time)).startsWith(reportMonth)):[];
+  const calendarLogs=calendarEmployee?visibleLogs.filter((log:any)=>log.employee_id===calendarEmployee.id&&localDateStr(log.check_in_time).startsWith(reportMonth)):[];
   const calendarLogMap=calendarLogs.reduce((map:Record<string,any[]>,log:any)=>{
-    const date=isoDate(new Date(log.check_in_time));
+    const date=localDateStr(log.check_in_time);
     map[date]=[...(map[date]??[]),log];
     return map;
   },{});
   const calendarWorkedMinutes=calendarLogs.reduce((sum:number,log:any)=>sum+(workedMinutes(log.check_in_time,log.check_out_time)??0),0);
   const calendarWorkDays=Object.keys(calendarLogMap).length;
   const calendarColor=calendarEmployee?employeeColorFromList(visibleEmployees,calendarEmployee.id):EMPLOYEE_COLORS[0];
-  function dayWorkLabel(dayLogs:any[]) {
+  function reportScheduleEventForDate(employee:any,date:string){
+    const isNoWorkEvent=(event:any)=>/출근\s*안|근무\s*안|출근\s*불가|근무\s*불가|휴무|쉬는|쉼/.test(`${event.title??""} ${event.note??""}`);
+    const priority=(event:any)=>event.event_type==="hidden"&&isNoWorkEvent(event)?60:event.event_type==="unavailable"?50:event.event_type==="work"?40:["am_only","pm_only"].includes(event.event_type)?30:event.event_type==="hidden"?20:0;
+    const event=scheduleEvents
+      .filter((item:any)=>item.employee_id===employee?.id&&date>=item.start_date&&date<=item.end_date&&["hidden","unavailable","work","am_only","pm_only"].includes(item.event_type))
+      .sort((a:any,b:any)=>priority(b)-priority(a)||countDaysInclusive(a.start_date,a.end_date)-countDaysInclusive(b.start_date,b.end_date)||String(b.updated_at??b.created_at??"").localeCompare(String(a.updated_at??a.created_at??"")))[0];
+    return event?.event_type==="hidden"&&isNoWorkEvent(event) ? {...event,event_type:"unavailable",title:event.title||"출근 안 함",start_time:event.start_time??"09:00",end_time:event.end_time??"19:00"} : event;
+  }
+  function reportScheduleInfoForDate(employee:any,date:string){
+    const schedule=getScheduleForDate(employee,date,overrides,workTimeChanges);
+    const event=reportScheduleEventForDate(employee,date);
+    const eventIsWork=["work","am_only","pm_only"].includes(event?.event_type);
+    const workday=event ? eventIsWork : (schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
+    const start=event?.start_time??schedule.work_start;
+    const end=event?.end_time??schedule.work_end;
+    const hours=workday?netDailyHours(start,end,schedule.break_start??"12:00",schedule.break_end??"13:00"):0;
+    const leave=leaveRequests.find((request:any)=>request.employee_id===employee?.id&&date>=request.start_date&&date<=request.end_date);
+    return {workday,start,end,hours,event,leave};
+  }
+  const calendarScheduleMap=calendarEmployee?Object.fromEntries(calendarDates.map(date=>[date,reportScheduleInfoForDate(calendarEmployee,date)])):{};
+  const calendarScheduledDays=Object.values(calendarScheduleMap).filter((info:any)=>info.workday).length;
+  function dayWorkLabel(dayLogs:any[],info:any,date:string) {
     if(!dayLogs.length) return "미출근";
     const minutes=dayLogs.reduce((sum:number,log:any)=>sum+(workedMinutes(log.check_in_time,log.check_out_time)??0),0);
     if(minutes>0) return `${formatHourValue(minutes/60)}시간`;
     return dayLogs.some((log:any)=>!log.check_out_time)?"퇴근 미처리":"0시간";
+  }
+  function dayPlanLabel(info:any,date:string){
+    if(info?.leave) return leaveTypeDisplayLabel(info.leave);
+    if(info?.workday) return date>todayIso()?`예정 ${formatHourValue(info.hours)}시간`:"미출근";
+    return info?.event?.title || "근무 없음";
   }
   function printMonthlyReport(){
     document.body.classList.add("print-monthly-attendance");
@@ -5551,16 +5589,17 @@ function ReportsPage() {
               <div className="monthly-report-summary" style={{"--employee-color":calendarColor} as React.CSSProperties}>
                 <i></i>
                 <div><b>{calendarEmployee.name}</b><span>{calendarEmployee.employee_no??"-"}</span></div>
-                <strong>{Number(reportMonth.slice(5))}월 / 근무일수 {calendarWorkDays}일 / 근무시간 {formatHourValue(calendarWorkedMinutes/60)}시간</strong>
+                <strong>{Number(reportMonth.slice(5))}월 / 출근 {calendarWorkDays}일 / 실근무 {formatHourValue(calendarWorkedMinutes/60)}시간 / 예정 {calendarScheduledDays}일</strong>
               </div>
               <div className="monthly-calendar-grid" style={{"--employee-color":calendarColor} as React.CSSProperties}>
                 {["월","화","수","목","금","토","일"].map(day=><div className="monthly-calendar-head" key={day}>{day}</div>)}
                 {calendarCells.map((date,index)=>{
                   const dayLogs=date?calendarLogMap[date]??[]:[];
+                  const info=date?(calendarScheduleMap as any)[date]:null;
                   const isWorked=dayLogs.length>0;
                   const typeLabel=dayLogs.flatMap(attendanceTypeLabelsForLog).filter((label:string,index:number,list:string[])=>list.indexOf(label)===index).slice(0,2).join(" · ");
-                  return <div className={`monthly-calendar-cell ${date?"":"empty"} ${isWorked?"worked":"off"}`} key={date??`empty-${index}`}>
-                    {date&&<><b>{Number(date.slice(8))}</b><span>{dayWorkLabel(dayLogs)}</span><small>{isWorked?typeLabel:"기록 없음"}</small></>}
+                  return <div className={`monthly-calendar-cell ${date?"":"empty"} ${isWorked?"worked":info?.workday?"scheduled":"off"}`} key={date??`empty-${index}`}>
+                    {date&&<><b>{Number(date.slice(8))}</b><span>{isWorked?dayWorkLabel(dayLogs,info,date):dayPlanLabel(info,date)}</span><small>{isWorked?typeLabel:info?.workday?`${timeLabel(info.start)}~${timeLabel(info.end)}`:"일정 없음"}</small></>}
                   </div>;
                 })}
               </div>

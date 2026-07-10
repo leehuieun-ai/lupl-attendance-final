@@ -967,6 +967,7 @@ body { overflow-x: hidden; }
 .monthly-calendar-cell { min-height: 78px; display: grid; align-content: start; gap: 4px; border: 1px solid #e3e9f3; border-radius: 8px; background: #f8fafc; padding: 9px; color: #98a2b3; }
 .monthly-calendar-cell.empty { visibility: hidden; }
 .monthly-calendar-cell.worked { border-color: color-mix(in srgb,var(--employee-color) 30%,#d7e6ff); background: color-mix(in srgb,var(--employee-color) 12%,white); color: var(--employee-color); }
+.monthly-calendar-cell.scheduled { border-style: dashed; background: #fbfcfe; color: #667085; }
 .monthly-calendar-cell.off { filter: grayscale(1); }
 .monthly-calendar-cell b { color: #182235; font-size: 13px; }
 .monthly-calendar-cell span { color: inherit; font-size: 13px; font-weight: 850; }
