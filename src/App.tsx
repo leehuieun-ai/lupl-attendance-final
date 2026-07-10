@@ -534,6 +534,11 @@ function weeklyStatsForDate(emp:any, dateIso=todayIso(), overrides:any[]=[], wor
   const start=weekStartIso(dateIso);
   return scheduledWorkStats(emp,start,addIsoDays(start,6),overrides,workTimeChanges);
 }
+function monthlyPaidHours(weeklyDays:number, dailyHours:number) {
+  const weeklyWorkHours=weeklyDays*dailyHours;
+  const weeklyHolidayHours=weeklyWorkHours>=15 ? Math.min(8,dailyHours) : 0;
+  return Math.round((weeklyWorkHours+weeklyHolidayHours)*4.345);
+}
 function countUnpaidAbsenceWorkdays(emp:any, absences:any[], startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
   let count=0;
   absences.filter((a:any)=>a.employee_id===emp?.id && a.unpaid).forEach((a:any)=>{
@@ -2031,7 +2036,7 @@ function isNoWorkChange(request:any) {
   return (request?.new_work_days??[]).length===0 || (Number(request?.total_work_days||0)===0 && Number(request?.weekly_work_hours||0)===0);
 }
 function workChangeKind(request:any) {
-  if(isNoWorkChange(request)) return "근무 안 함";
+  if(isNoWorkChange(request)) return "출근 안 함";
   const dayChanged=!sameDays(request?.old_work_days??[], request?.new_work_days??[]);
   const timeChanged=timeLabel(request?.old_work_start)!==timeLabel(request?.new_work_start) || timeLabel(request?.old_work_end)!==timeLabel(request?.new_work_end);
   if(dayChanged&&timeChanged) return "근무요일·시간 변경";
@@ -2506,11 +2511,6 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
             </div>
             <p className="subtle schedule-command-help">날짜와 시간을 한 줄로 적으면 아래 확인 내용에 자동 반영됩니다. 여러 기간은 쉼표로 이어 적을 수 있습니다.</p>
 
-            <div className="work-change-preview">
-              <b>{WORK_TIME_CHANGE_MODE_LABELS[displayChangeMode]??"근무조건 변경"}</b>
-              <span>{changePreview}</span>
-            </div>
-
             <button className="collapsible-btn work-old-toggle" type="button" onClick={()=>setShowOldConditions(v=>!v)}>
               <span>기존 근무조건</span>
               <small>{daysLabel(oldDays)} · {timeRangeLabel(oldStart,oldEnd)} · 휴게 12:00 ~ 13:00</small>
@@ -2553,7 +2553,7 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
                   <div className="list-row work-change-history-row" key={r.id}>
                     <div>
                       <b>{(r.periods??[]).map((p:any)=>p.start_date===p.end_date?p.start_date:`${p.start_date}~${p.end_date}`).join(" / ") || "-"}</b>
-                      <div className="subtle">{daysLabel(r.new_work_days??[])} · {timeRangeLabel(r.new_work_start,r.new_work_end)} · 주 {Number(r.weekly_work_hours||0).toFixed(1)}시간</div>
+                      <div className="subtle">{workChangeKind(r)}</div>
                     </div>
                     <span className={`badge ${badgeClass(r.status)}`}>{r.status==="pending"?"승인 대기":r.status==="approved"?"승인":"반려"}</span>
                   </div>
@@ -2712,8 +2712,9 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
     if(new Date().getTime()>=startAt.getTime()) return setMessage("추가근무 신청은 신청 시작 시간 전에만 가능합니다.");
     const duplicate=compRequests.find(r=>r.work_date===compForm.work_date&&r.start_time===compForm.start_time&&r.end_time===compForm.end_time&&["pending","approved"].includes(r.status));
     if(duplicate) return setMessage("이미 신청한 시간입니다. 관리자의 승인을 기다려주세요.");
+    const normalHours=Math.round((compBaseline.shiftMinutes/60)*10)/10;
     const basis=compBaseline.hasCheckIn
-      ? `실제 출근 ${timeOnly(compBaseline.checkInTime)} + 정상 근무 ${Math.round(compBaseline.shiftMinutes/6)/10}시간 = 정상 퇴근 ${compBaseline.expectedEndHHMM}`
+      ? `실제 출근 ${timeOnly(compBaseline.checkInTime)} · 근무시간 ${formatHourValue(normalHours)}시간 · 휴게시간 1시간 · 정상 퇴근 ${compBaseline.expectedEndHHMM}`
       : `출근 전이므로 등록 스케줄 기준 정상 퇴근 ${compBaseline.expectedEndHHMM}`;
     if(!window.confirm(`${basis}\n${compBaseline.expectedEndHHMM} 이후부터 추가근무로 인정됩니다.\n\n추가근무를 신청하시겠습니까?\n신청 후 수정이 불가능합니다.`)) return;
     const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:compForm.work_date,start_time:compForm.start_time,end_time:compForm.end_time,hours:compForm.hours,converted_days:Number((compForm.hours/8).toFixed(2)),reason:compForm.reason,status:"pending"});
@@ -2801,7 +2802,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
           {compBaseline&&<div className="alert overtime-baseline-alert">
             <b>추가근무 인정 시작: {compBaseline.expectedEndHHMM} 이후</b>
             <span>{compBaseline.hasCheckIn
-              ? `${timeOnly(compBaseline.checkInTime)} 출근 · 정상 근무 ${Math.round(compBaseline.shiftMinutes/6)/10}시간 · 정상 퇴근 ${compBaseline.expectedEndHHMM}`
+              ? `${timeOnly(compBaseline.checkInTime)} 출근 · 근무시간 ${formatHourValue(Math.round((compBaseline.shiftMinutes/60)*10)/10)}시간 · 휴게시간 1시간 · 정상 퇴근 ${compBaseline.expectedEndHHMM}`
               : "아직 출근기록이 없어 등록된 출근 스케줄 기준으로 계산했습니다."}</span>
           </div>}
           <div className="form-row"><label className="label">추가근무일</label><input className="input" type="date" value={compForm.work_date} onChange={e=>setCompForm({...compForm,work_date:e.target.value})} /></div>
@@ -3599,7 +3600,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       const weeklyDays=(next.work_days??[]).length;
       derived.weekly_work_days=weeklyDays;
       derived.daily_work_hours=dailyHours;
-      derived.monthly_standard_hours=Math.round(weeklyDays*dailyHours*4.345*10)/10;
+      derived.monthly_standard_hours=monthlyPaidHours(weeklyDays,dailyHours);
     }
     await updateEmployee(emp.id,{...patch,...derived});
   }
@@ -4370,7 +4371,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
     const nextEnd=parsedTime?.end??String(employee.work_end??"18:00").slice(0,5);
     const dailyHours=netDailyHours(nextStart,nextEnd,"12:00","13:00");
     const weeklyWorkDays=nextDays.length;
-    const monthlyStandardHours=Math.round(weeklyWorkDays*dailyHours*4.345*10)/10;
+    const monthlyStandardHours=monthlyPaidHours(weeklyWorkDays,dailyHours);
     const preview=[
       `${employee.name} 직원의 기본 근무일정을 변경합니다.`,
       `기존: ${daysLabel(oldDays)} · ${timeRangeLabel(employee.work_start??"09:00",employee.work_end??"18:00")}`,
@@ -4849,7 +4850,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
   function recalc(next:any, source:string) {
     const weeklyDays=numberValue(next.weeklyDays);
     const dailyHours=numberValue(next.dailyHours);
-    const calculatedMonthlyHours=weeklyDays>0&&dailyHours>0?Math.round(weeklyDays*dailyHours*4.345*10)/10:0;
+    const calculatedMonthlyHours=weeklyDays>0&&dailyHours>0?monthlyPaidHours(weeklyDays,dailyHours):0;
     const monthlyHours=source==="monthlyHours"?numberValue(next.monthlyHours):(calculatedMonthlyHours||numberValue(next.monthlyHours));
     let monthly=numberValue(next.monthly);
     let hourly=numberValue(next.hourly);
@@ -4881,7 +4882,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
     if(emp){
       const weeklyDays=Number(emp.weekly_work_days||emp.work_days?.length||5);
       const dailyHours=Number(emp.daily_work_hours||scheduleHours(emp.work_start,emp.work_end)||8);
-      const monthlyHours=Number(emp.monthly_standard_hours||Math.round(weeklyDays*dailyHours*4.345*10)/10);
+      const monthlyHours=Math.max(Number(emp.monthly_standard_hours||0),monthlyPaidHours(weeklyDays,dailyHours));
       const monthly=Number(emp.monthly_salary||0);
       const hourly=Number(emp.hourly_wage||(monthly&&monthlyHours?Math.round(monthly/monthlyHours):0));
       const annual=Number(emp.annual_salary||(monthly?monthly*12:0));
@@ -4946,10 +4947,11 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
     const week=weeklyStatsForDate(employee,todayIso(),overrides,approvedWorkTimeChanges);
     const monthStats=scheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges);
     const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
-    const monthlyStandardHours=savedMonthlyHours||monthStats.hours;
+    const weeklyDailyHours=week.days>0?week.hours/week.days:Number(employee.daily_work_hours||scheduleHours(employee.work_start,employee.work_end)||8);
+    const monthlyStandardHours=Math.max(savedMonthlyHours,monthlyPaidHours(week.days,weeklyDailyHours));
     const monthlySalary=Number(employee.monthly_salary||0);
     const hourlyWage=Number(employee.hourly_wage||(monthlySalary&&monthlyStandardHours?Math.round(monthlySalary/monthlyStandardHours):0));
-    const estimatedPay=hourlyWage?Math.round(hourlyWage*monthStats.hours):monthlySalary;
+    const estimatedPay=monthlySalary || (hourlyWage?Math.round(hourlyWage*monthStats.hours):0);
     return {employee,week,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay};
   });
   const payrollEstimatedTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.estimatedPay||0),0);
@@ -4958,7 +4960,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
       <div className="section-head payroll-head">
         <div>
           <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산</h2>
-          <p className="subtle" style={{margin:0}}>시급, 월급, 연봉, 주 근무일, 일 근무시간, 월 소정근로시간 중 값을 바꾸면 나머지 기준값이 자동 계산됩니다. 4대보험은 정기분 추정치입니다.</p>
+          <p className="subtle" style={{margin:0}}>시급, 월급, 연봉, 주 근무일, 일 근무시간, 월 급여기준시간 중 값을 바꾸면 나머지 기준값이 자동 계산됩니다. 주 15시간 이상은 주휴시간을 포함하며, 주 5일 8시간은 월 209시간 기준입니다.</p>
         </div>
         <div className="payroll-month-picker">
           <label className="label">월별 보기</label>
@@ -4979,7 +4981,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
       <div className="grid three">
         <div className="form-row"><label className="label">시급 (원)</label><input className="input" value={pay.hourly} onChange={e=>setPayField("hourly",e.target.value)} placeholder="예: 11,000" /></div>
         <div className="form-row"><label className="label">연봉 (원)</label><input className="input" value={pay.annual} onChange={e=>setPayField("annual",e.target.value)} placeholder="예: 30,000,000" /></div>
-        <div className="form-row"><label className="label">월 소정근로시간</label><input className="input" value={pay.monthlyHours} onChange={e=>setPayField("monthlyHours",e.target.value)} placeholder="예: 209" /></div>
+        <div className="form-row"><label className="label">월 급여기준시간</label><input className="input" value={pay.monthlyHours} onChange={e=>setPayField("monthlyHours",e.target.value)} placeholder="예: 209" /></div>
       </div>
       <div className="grid two">
         <div className="form-row"><label className="label">주 근무일</label><input className="input" value={pay.weeklyDays} onChange={e=>setPayField("weeklyDays",e.target.value)} placeholder="예: 5" /></div>
@@ -4987,8 +4989,8 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
       </div>
       <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
       <div className="payroll-summary-list">
-        <div className="payroll-summary-head">직원별 급여·근무 기준 <span>{payrollMonthLabel} 승인된 근무시간 변경을 반영합니다</span></div>
-        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>주 근무시간</span><span>월 근무시간</span><span>예상 급여</span><small>{payrollMonthLabel} 기준</small></div>
+        <div className="payroll-summary-head">직원별 급여·근무 기준 <span>{payrollMonthLabel} 승인된 근무시간 변경을 반영합니다. 월급 환산은 주휴 포함 기준입니다.</span></div>
+        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>주 근무시간</span><span>월 급여기준</span><span>예상 급여</span><small>{payrollMonthLabel} 기준</small></div>
         {payrollSummaryRows.map(({employee,week,month,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay}:any)=>(
           <div className={`payroll-summary-row ${empId===employee.id?"active":""}`} key={employee.id}>
             <button type="button" className="payroll-employee-cell payroll-employee-button" onClick={()=>setEmpId(employee.id)}><b>{employee.name}</b><small>사번 {employee.employee_no||"-"} · {employee.role==="admin"?"관리자":"직원"}</small></button>
@@ -5003,7 +5005,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
         <div className="payroll-summary-row payroll-summary-total"><b>총 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollEstimatedTotal)}</span><small>직원별 예상 급여 합계</small></div>
       </div>
       {empId&&emp&&<div className="payroll-selected-detail"><b>{emp.name} 급여 세부내역</b><span>{payrollMonthLabel} 기준으로 아래 공제와 예상 실수령액을 계산합니다.</span></div>}
-      {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 소정근로시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)}</div>}
+      {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 급여기준시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)} · 주휴 포함</div>}
       {empId&&monthly>0&&(
         <div className="table-wrap" style={{marginTop:8}}>
           <table>
@@ -5052,7 +5054,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
     const oldEnd=scheduleEmp?.work_end??"18:00";
     const dailyHours=netDailyHours(editStart,editEnd,"12:00","13:00");
     const weeklyWorkDays=editDays.length;
-    const monthlyStandardHours=Math.round(weeklyWorkDays*dailyHours*4.345*10)/10;
+    const monthlyStandardHours=monthlyPaidHours(weeklyWorkDays,dailyHours);
     const {error}=await supabase.from("employees").update({
       work_days:editDays,
       work_start:editStart,
@@ -5283,7 +5285,7 @@ function ConsentReportPage() {
     {message&&<div className="alert error">{message}</div>}
     <section className="card">
       <div className="schedule-board-toolbar">
-        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원 서명 리포트</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근무시간 변경 안내, 근무시간 변경 요청, 출퇴근 기록 정정 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원별 필수 서명 리포트</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근무시간 변경 안내, 근무시간 변경 요청, 출퇴근 기록 정정 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
         <span className="badge good">서명 {totalSigned}건</span>
       </div>
       <div className="table-wrap" style={{marginTop:18}}>
@@ -5318,15 +5320,14 @@ function ConsentReportPage() {
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>직원</th><th>적용기간</th><th>변경 내용</th><th>요약</th><th>변경 요청 사유</th><th>상태</th><th>서명 일시</th><th>관리</th></tr></thead>
+          <thead><tr><th>직원</th><th>적용기간</th><th>변경 내용</th><th>변경 요청 사유</th><th>상태</th><th>서명 일시</th><th>관리</th></tr></thead>
           <tbody>{filteredWorkTimeRequests.map(request=>{
             const employee=employeeMap[request.employee_id]??{name:"알 수 없음",employee_no:"-"};
             const periods=(request.periods??[]).map((p:any)=>`${p.start_date}~${p.end_date}`).join(" / ")||"-";
             return <tr key={request.id}>
               <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
               <td>{periods}</td>
-              <td>{daysLabel(request.new_work_days??[])}<br/><span className="subtle">{timeRangeLabel(request.new_work_start,request.new_work_end)} · 휴게 {timeRangeLabel(request.new_break_start,request.new_break_end)}</span></td>
-              <td>{workChangeSummaryLine(employee,request)}<br/><span className="subtle">{workChangePreviousLabel(request)}</span></td>
+              <td><span className="work-change-kind">{workChangeKind(request)}</span></td>
               <td>{request.reason||request.review_note||request.note||"-"}</td>
               <td><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
               <td>{formatDateTime(request.created_at)}</td>
@@ -5412,7 +5413,7 @@ function ReportsPage() {
         fetchAllAttendanceLogs(),
         supabase.from("employees").select("id, name, employee_no, role, employment_status, is_active, joined_at, created_at, work_days, work_start, work_end, work_start_date, contract_type, contract_start, contract_end, department, position").order("created_at",{ascending:false}).limit(1000),
         supabase.from("workplaces").select("id,name,type").limit(1000),
-        supabase.from("comp_time_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(1000),
+        supabase.from("comp_time_requests").select("*").order("created_at",{ascending:false}).limit(1000),
         supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(1000),
         supabase.from("work_time_change_requests").select("*").order("created_at",{ascending:false}).limit(1000),
         supabase.from("employee_schedule_events").select("*").order("start_date",{ascending:true}).limit(1000),
@@ -5514,8 +5515,6 @@ function ReportsPage() {
   const calendarEmployee=visibleEmployees.find((employee:any)=>employee.id===calendarEmployeeId)??visibleEmployees[0]??null;
   const calendarMonthStart=`${reportMonth}-01`;
   const calendarDates=monthDates(calendarMonthStart);
-  const calendarOffset=(dateFromIso(calendarDates[0]??calendarMonthStart).getDay()+6)%7;
-  const calendarCells=Array.from({length:Math.ceil((calendarOffset+calendarDates.length)/7)*7},(_,index)=>calendarDates[index-calendarOffset]??null);
   const calendarLogs=calendarEmployee?visibleLogs.filter((log:any)=>log.employee_id===calendarEmployee.id&&localDateStr(log.check_in_time).startsWith(reportMonth)):[];
   const calendarLogMap=calendarLogs.reduce((map:Record<string,any[]>,log:any)=>{
     const date=localDateStr(log.check_in_time);
@@ -5545,6 +5544,15 @@ function ReportsPage() {
     return {workday,start,end,hours,event,leave};
   }
   const calendarScheduleMap=calendarEmployee?Object.fromEntries(calendarDates.map(date=>[date,reportScheduleInfoForDate(calendarEmployee,date)])):{};
+  const hasWeekendActivity=calendarDates.some(date=>{
+    const day=dayKeyFromDate(dateFromIso(date));
+    const info=(calendarScheduleMap as any)[date];
+    return ["sat","sun"].includes(day)&&((calendarLogMap as any)[date]?.length>0||info?.workday||info?.leave);
+  });
+  const calendarDayKeys=hasWeekendActivity?ALL_DAYS:ALL_DAYS.slice(0,5);
+  const calendarVisibleDates=hasWeekendActivity?calendarDates:calendarDates.filter(date=>!["sat","sun"].includes(dayKeyFromDate(dateFromIso(date))));
+  const calendarOffset=Math.max(0,calendarDayKeys.indexOf(dayKeyFromDate(dateFromIso(calendarVisibleDates[0]??calendarMonthStart))));
+  const calendarCells=Array.from({length:Math.ceil((calendarOffset+calendarVisibleDates.length)/calendarDayKeys.length)*calendarDayKeys.length},(_,index)=>calendarVisibleDates[index-calendarOffset]??null);
   const calendarToday=todayIso();
   const calendarLoggedDates=new Set(Object.keys(calendarLogMap));
   const calendarAutoWorkedEntries=Object.entries(calendarScheduleMap).filter(([date,info]:any)=>date<=calendarToday&&info.workday&&!info.leave&&!calendarLoggedDates.has(date));
@@ -5583,7 +5591,7 @@ function ReportsPage() {
 
       <section className="card">
         <h2 className="card-title"><i className="ti ti-download" aria-hidden="true"></i>보고서 다운로드</h2>
-        <div className="actions"><button className="button" onClick={downloadAll}><i className="ti ti-file-spreadsheet" aria-hidden="true"></i>전체 근태 Excel</button></div>
+        <div className="actions"><button className="button" disabled={!allLogRows.length} onClick={downloadAll}><i className="ti ti-file-spreadsheet" aria-hidden="true"></i>전체 근태 Excel</button>{!allLogRows.length&&<span className="subtle">내보낼 근태 기록이 없습니다.</span>}</div>
       </section>
 
       <section className="card monthly-attendance-report">
@@ -5612,8 +5620,8 @@ function ReportsPage() {
                 <div><b>{calendarEmployee.name}</b><span>{calendarEmployee.employee_no??"-"}</span></div>
                 <strong>{Number(reportMonth.slice(5))}월 / 출근 {calendarReportWorkDays}일 / 근무시간 {formatHourValue(calendarReportHours)}시간 / 예정 {calendarFutureScheduledDays}일</strong>
               </div>
-              <div className="monthly-calendar-grid" style={{"--employee-color":calendarColor} as React.CSSProperties}>
-                {["월","화","수","목","금","토","일"].map(day=><div className="monthly-calendar-head" key={day}>{day}</div>)}
+              <div className="monthly-calendar-grid" style={{"--employee-color":calendarColor,"--calendar-days":calendarDayKeys.length} as React.CSSProperties}>
+                {calendarDayKeys.map(day=><div className="monthly-calendar-head" key={day}>{DAY_LABELS[day]}</div>)}
                 {calendarCells.map((date,index)=>{
                   const dayLogs=date?calendarLogMap[date]??[]:[];
                   const info=date?(calendarScheduleMap as any)[date]:null;
@@ -5627,18 +5635,6 @@ function ReportsPage() {
             </div>
           </div>
         ) : <p className="subtle">표시할 직원이 없습니다.</p>}
-      </section>
-
-      <section className="card">
-        <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>직원 목록</h2>
-        <DataTable rows={visibleEmployees.map(e=>({
-          이름:e.name,
-          사번:e.employee_no,
-          권한:e.role==="admin"?"관리자":"직원",
-          상태:e.is_active&&e.employment_status==="active"?"활성":"비활성",
-          입사일:e.joined_at??"-",
-          등록일:formatDateTime(e.created_at)
-        }))} />
       </section>
 
       <section className="card">
