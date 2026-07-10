@@ -163,6 +163,10 @@ function formatDateTime(v?: string | null) {
   if (!v) return "-";
   return new Intl.DateTimeFormat("ko-KR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Seoul" }).format(new Date(v));
 }
+function formatDateOnly(v?: string | null) {
+  if (!v) return "-";
+  return localDateStr(v);
+}
 function timeOnly(v?: string | Date | null) {
   if (!v) return "-";
   return new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Seoul" }).format(new Date(v));
@@ -255,6 +259,9 @@ function fmtMin(m: number | null) {
   if (m == null) return "-";
   const h = Math.floor(m/60), mm = m%60;
   return `${h}시간${mm>0?" "+mm+"분":""}`;
+}
+function fmtHoursFromMinutes(m: number | null) {
+  return m == null ? "-" : `${formatHourValue(m/60)}시간`;
 }
 function timeDiffHours(start: string, end: string) {
   const [sh,sm] = start.split(":").map(Number);
@@ -3719,7 +3726,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
 
       {showsApprovals&&<section className="card">
         <h2 className="card-title"><i className="ti ti-inbox" aria-hidden="true"></i>승인 대기{pendingTotal>0&&<span className="count-badge">{pendingTotal}</span>}</h2>
-        <div className="grid two">
+        <div className="grid two approval-glass-grid">
           <div>
             <h3 className="approval-section-title">근무지 {pW.length>0&&<span className="count-badge">{pW.length}</span>}</h3>
             {pW.length===0&&<p className="subtle">없음</p>}
@@ -5297,7 +5304,7 @@ function ConsentReportPage() {
     {message&&<div className="alert error">{message}</div>}
     <section className="card">
       <div className="schedule-board-toolbar">
-        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원별 필수 서명 리포트</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근무시간 변경 안내, 근무시간 변경 요청, 출퇴근 기록 정정 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원별 필수 서명</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근무시간 변경 안내, 근무시간 변경 요청, 출퇴근 기록 정정 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
         <span className="badge good">서명 {totalSigned}건</span>
       </div>
       <div className="table-wrap" style={{marginTop:18}}>
@@ -5330,19 +5337,19 @@ function ConsentReportPage() {
           </button>
         ))}
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap consent-worktime-table">
         <table>
           <thead><tr><th>직원</th><th>적용기간</th><th>변경 내용</th><th>변경 요청 사유</th><th>상태</th><th>서명 일시</th><th>관리</th></tr></thead>
           <tbody>{filteredWorkTimeRequests.map(request=>{
             const employee=employeeMap[request.employee_id]??{name:"알 수 없음",employee_no:"-"};
-            const periods=(request.periods??[]).map((p:any)=>`${p.start_date}~${p.end_date}`).join(" / ")||"-";
+            const periods=request.periods??[];
             return <tr key={request.id}>
-              <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
-              <td>{periods}</td>
+              <td className="nowrap-cell"><b>{employee.name}</b><span>{employee.employee_no}</span></td>
+              <td>{periods.length?periods.map((p:any,index:number)=><div className="date-range-cell" key={`${p.start_date}-${index}`}><span>{p.start_date}</span><span>~ {p.end_date}</span></div>):"-"}</td>
               <td><span className="work-change-kind">{workChangeKind(request)}</span></td>
-              <td>{request.reason||request.review_note||request.note||"-"}</td>
+              <td className="clamp-two">{request.reason||request.review_note||request.note||"-"}</td>
               <td><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
-              <td>{formatDateTime(request.created_at)}</td>
+              <td className="nowrap-cell"><b>{formatDateOnly(request.created_at)}</b><span>{timeOnly(request.created_at)}</span></td>
               <td><div className="actions"><button className="button secondary compact" disabled={!request.signature_data} onClick={()=>setSelected({employee,record:request,kind:"workTimeRequest"})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!request.signature_data} onClick={()=>printSignedRecord(employee,request,"workTimeRequest")}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button></div></td>
             </tr>;
           })}</tbody>
@@ -5406,6 +5413,8 @@ function ReportsPage() {
   const [reportError,setReportError]=useState("");
   const [reportMonth,setReportMonth]=useState(todayIso().slice(0,7));
   const [calendarEmployeeId,setCalendarEmployeeId]=useState("");
+  const [recordEmployeeFilter,setRecordEmployeeFilter]=useState("all");
+  const [recordDateFilter,setRecordDateFilter]=useState("all");
 
   async function fetchAllAttendanceLogs(){
     const rows:any[]=[];
@@ -5469,6 +5478,16 @@ function ReportsPage() {
     if(!log.check_out_time&&!labels.includes("퇴근 미처리")) labels.push("퇴근 미처리");
     return labels.length?labels:["미분류"];
   }
+  function reportWorkedMinutes(log:any) {
+    const raw=workedMinutes(log.check_in_time,log.check_out_time);
+    if(raw==null) return null;
+    const employee=employeeForLog(log);
+    const date=localDateStr(log.check_in_time);
+    const schedule=getScheduleForDate(employee,date,overrides,workTimeChanges.filter((request:any)=>request.status==="approved"));
+    const workday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
+    const scheduledMinutes=workday ? Math.round(netDailyHours(schedule.work_start,schedule.work_end,schedule.break_start??"12:00",schedule.break_end??"13:00")*60) : 0;
+    return scheduledMinutes>0 ? Math.min(raw,scheduledMinutes) : raw;
+  }
   const baseVisibleEmployees=employees.filter(reportEmployeeVisible);
   const visibleLogs=logsWithRefs.filter((log:any)=>reportEmployeeVisible(employeeForLog(log)));
   const extraLogEmployeeMap=new Map<string,any>();
@@ -5483,7 +5502,13 @@ function ReportsPage() {
   },[visibleEmployees.length,calendarEmployeeId]);
   const visibleEmployeeIds=new Set(visibleEmployees.map((employee:any)=>employee.id));
   const visibleCompRequests=compRequests.filter((request:any)=>visibleEmployeeIds.has(request.employee_id));
-  const allLogRows = visibleLogs.map(l=>{
+  const recordDateOptions=Array.from(new Set(visibleLogs.map((log:any)=>localDateStr(log.check_in_time)))).sort().reverse();
+  const recordFilteredLogs=visibleLogs.filter((log:any)=>{
+    const employeeOk=recordEmployeeFilter==="all"||log.employee_id===recordEmployeeFilter;
+    const dateOk=recordDateFilter==="all"||localDateStr(log.check_in_time)===recordDateFilter;
+    return employeeOk&&dateOk;
+  });
+  const allLogRows = recordFilteredLogs.map(l=>{
     const logEmployee=employeeForLog(l);
     return {
     직원:logEmployee?.name??"-",
@@ -5494,7 +5519,8 @@ function ReportsPage() {
     출근:formatDateTime(l.check_in_time),
     퇴근:formatDateTime(l.check_out_time),
     실제퇴근원본:formatDateTime(l.original_check_out_time),
-    실근무:fmtMin(workedMinutes(l.check_in_time,l.check_out_time)),
+    인정근무:fmtMin(reportWorkedMinutes(l)),
+    실제기록시간:fmtMin(workedMinutes(l.check_in_time,l.check_out_time)),
     상태:l.status,
     초과근무심사:l.overtime_review_status==="approved"?"승인":l.overtime_review_status==="rejected"?"미인정":"-",
     기기:l.device_status??"-"
@@ -5522,7 +5548,12 @@ function ReportsPage() {
     });
     const total=Math.max(1,employeeLogs.length);
     const typeRows=Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
-    return {employee,counts,typeRows,total,shownTotal:employeeLogs.length};
+    const typeDetails=typeRows.map(([label,count])=>({
+      label,
+      count,
+      logs:employeeLogs.filter((log:any)=>attendanceTypeLabelsForLog(log).includes(label)).slice(0,20),
+    }));
+    return {employee,counts,typeRows,typeDetails,total,shownTotal:employeeLogs.length};
   });
   const calendarEmployee=visibleEmployees.find((employee:any)=>employee.id===calendarEmployeeId)??visibleEmployees[0]??null;
   const calendarMonthStart=`${reportMonth}-01`;
@@ -5533,7 +5564,7 @@ function ReportsPage() {
     map[date]=[...(map[date]??[]),log];
     return map;
   },{});
-  const calendarWorkedMinutes=calendarLogs.reduce((sum:number,log:any)=>sum+(workedMinutes(log.check_in_time,log.check_out_time)??0),0);
+  const calendarWorkedMinutes=calendarLogs.reduce((sum:number,log:any)=>sum+(reportWorkedMinutes(log)??0),0);
   const calendarWorkDays=Object.keys(calendarLogMap).length;
   const calendarColor=calendarEmployee?employeeColorFromList(visibleEmployees,calendarEmployee.id):EMPLOYEE_COLORS[0];
   function reportScheduleEventForDate(employee:any,date:string){
@@ -5574,7 +5605,7 @@ function ReportsPage() {
   function dayWorkLabel(dayLogs:any[],info:any,date:string) {
     if(!dayLogs.length&&info?.workday&&date<=calendarToday&&!info?.leave) return `${formatHourValue(info.hours)}시간`;
     if(!dayLogs.length) return "미출근";
-    const minutes=dayLogs.reduce((sum:number,log:any)=>sum+(workedMinutes(log.check_in_time,log.check_out_time)??0),0);
+    const minutes=dayLogs.reduce((sum:number,log:any)=>sum+(reportWorkedMinutes(log)??0),0);
     if(minutes>0) return `${formatHourValue(minutes/60)}시간`;
     return dayLogs.some((log:any)=>!log.check_out_time)?"퇴근 미처리":"0시간";
   }
@@ -5603,6 +5634,10 @@ function ReportsPage() {
 
       <section className="card">
         <h2 className="card-title"><i className="ti ti-download" aria-hidden="true"></i>보고서 다운로드</h2>
+        <div className="report-filter-bar">
+          <div className="form-row"><label className="label">직원별 보기</label><select className="select" value={recordEmployeeFilter} onChange={e=>setRecordEmployeeFilter(e.target.value)}><option value="all">전체 직원</option>{visibleEmployees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></div>
+          <div className="form-row"><label className="label">날짜별 보기</label><select className="select" value={recordDateFilter} onChange={e=>setRecordDateFilter(e.target.value)}><option value="all">전체 날짜</option>{recordDateOptions.map(date=><option key={date} value={date}>{date}</option>)}</select></div>
+        </div>
         <div className="actions"><button className="button" disabled={!allLogRows.length} onClick={downloadAll}><i className="ti ti-file-spreadsheet" aria-hidden="true"></i>전체 근태 Excel</button>{!allLogRows.length&&<span className="subtle">내보낼 근태 기록이 없습니다.</span>}</div>
       </section>
 
@@ -5652,7 +5687,7 @@ function ReportsPage() {
       <section className="card">
         <h2 className="card-title"><i className="ti ti-chart-bar" aria-hidden="true"></i>직원별 근태 유형</h2>
         <div className="attendance-status-chart">
-          {statusChartRows.map(({employee,counts,typeRows,total,shownTotal}:any)=>(
+          {statusChartRows.map(({employee,counts,typeRows,typeDetails,total,shownTotal}:any)=>(
             <div className="attendance-status-row" key={employee.id}>
               <div className="attendance-status-name"><b>{employee.name}</b><span>{shownTotal}건</span></div>
               <div className="attendance-status-detail">
@@ -5676,7 +5711,7 @@ function ReportsPage() {
                   <span>예외 {counts.exception}건</span>
                 </div>
                 <div className="attendance-type-counts">
-                  {typeRows.length===0 ? <span>저장된 유형 없음</span> : typeRows.map(([label,count]:any)=><span key={label}><b>{label}</b>{count}건</span>)}
+                  {typeRows.length===0 ? <span>저장된 유형 없음</span> : typeDetails.map(({label,count,logs}:any)=><details className="attendance-type-detail" key={label}><summary><b>{label}</b>{count}건</summary><div>{logs.map((log:any)=><p key={log.id}>{formatDateOnly(log.check_in_time)} · {log.workplaces?.name??"-"} · {fmtHoursFromMinutes(reportWorkedMinutes(log))}</p>)}</div></details>)}
                 </div>
               </div>
             </div>
