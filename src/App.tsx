@@ -28,10 +28,16 @@ const EDITABLE_SCHEDULE_TYPES = ["info","work","am_only","pm_only","unavailable"
 const EMPLOYEE_COLORS = ["#2563eb","#059669","#ea580c","#dc2626","#7c3aed","#0891b2","#b45309","#4f46e5","#65a30d","#be185d"];
 const WORK_TIME_CHANGE_CONSENT_VERSION = "2026-07-work-time-change-process";
 const WORK_TIME_LEGAL_NOTICE_VERSION = "2026-07";
-const OVERTIME_COMP_CONSENT_CHECK_TEXT = "추가근무는 사전 신청 또는 회사 확인 후 건별 승인된 경우에만 인정되며, 승인된 시간은 앱에서 대체휴가 적립·사용 내역으로 관리될 수 있다는 설명을 확인했습니다.";
-const OVERTIME_COMP_DETAIL_MAIN_TEXT = "추가근무는 근무자 신청 또는 회사 확인 후 건별로 승인된 시간만 인정됩니다. 이 항목은 앱의 대체휴가 적립·사용 관리 방식에 대한 안내입니다.";
+const OVERTIME_COMP_CONSENT_CHECK_TEXT = "추가근무는 사전 신청 및 회사 승인 후 진행하는 것을 원칙으로 하며, 실제 근로 제공 여부가 회사 확인을 통해 인정되는 경우 법정 기준에 따라 추가근무로 처리된다는 설명을 확인했습니다.";
+const OVERTIME_COMP_DETAIL_MAIN_TEXT = [
+  "추가근무는 사전 신청 및 회사 승인 후 진행하는 것을 원칙으로 합니다.",
+  "다만 실제 근로 제공 여부가 회사 확인을 통해 인정되는 경우, 해당 시간은 법정 기준에 따라 추가근무로 처리됩니다.",
+  "",
+  "승인 또는 확인된 추가근무 시간은 앱에서 보상휴가 적립·사용 내역으로 관리됩니다.",
+  "보상휴가제는 근로기준법 제57조에 따른 서면합의 기준에 따라 운영되며, 연장·야간·휴일근로에 해당하는 경우 법정 가산 기준을 반영합니다.",
+].join("\n");
 const OVERTIME_COMP_DETAIL_LEGAL_TEXT = "(관계 법령 근로기준법 제53조, 제56조, 제57조)";
-const OVERTIME_COMP_DETAIL_SIGN_TEXT = "이 서명은 향후 모든 연장근로·야간근로·휴일근로에 대한 사전 포괄 동의가 아니며, 실제 추가근무는 건별 신청·승인 기록에 따라 처리됩니다.";
+const OVERTIME_COMP_DETAIL_SIGN_TEXT = "이 서명은 향후 모든 연장근로·야간근로·휴일근로에 대한 사전 포괄 동의가 아니며, 실제 추가근무는 건별 신청·승인 또는 회사 확인 기록에 따라 처리됩니다.";
 const OVERTIME_COMP_DETAIL_TEXT = `${OVERTIME_COMP_DETAIL_MAIN_TEXT}\n${OVERTIME_COMP_DETAIL_LEGAL_TEXT}\n${OVERTIME_COMP_DETAIL_SIGN_TEXT}`;
 const WORK_TIME_CONSENT_TEXT = "앞으로 근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 서명해 주세요. 변경 내용은 직원 요청과 회사 승인 후 적용되며, 서명한 기록은 자동으로 저장됩니다.";
 const WORK_TIME_DETAIL_MAIN_TEXT = "근무요일, 근무시간, 휴게시간은 근로조건에 해당할 수 있어 변경 내용을 명확히 남겨야 합니다.";
@@ -86,10 +92,10 @@ const IMPROVEMENT_TYPES = [
 const IMPROVEMENT_STATUS_LABELS:Record<string,string>={open:"대기",reviewing:"검토",planned:"수정 예정",done:"개선완료",dismissed:"보류"};
 const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
   attendance:["오늘의 할일","출근하기","퇴근하기","내 기기","최근 기록","브라우저 알림"],
-  leave:["휴가 신청","연차 현황","신청 내역","대체휴가 시간 사용"],
-  overtime:["추가근무 신청","추가근무 내역","대체휴가 적립"],
+  leave:["휴가 신청","연차 현황","신청 내역","보상휴가 시간 사용"],
+  overtime:["추가근무 신청","추가근무 내역","보상휴가 적립"],
   worktime:["한 문장 입력","기존 근무조건","변경 사유","상세 설명","서명","요청 내역"],
-  "admin-dashboard":["승인 대기","일일 직원 근무 현황","강제 퇴근","확인 완료"],
+  "admin-dashboard":["승인 대기","일일 직원 근무 현황","기록 마감","확인 완료"],
   employees:["추가근무 적립 내역","근무시간 변경 요청","근무시간 변경 기록","직원 연차 소진내용","직원 연차 현황","직원 계정 생성","직원 관리"],
   workplaces:["근무지 등록","승인된 근무지","근무지 승인"],
   schedule:["직원별 주간 캘린더","일정 한 줄 변경","주간 스케줄 변경","특정 기간 미출근 설정"],
@@ -101,7 +107,7 @@ const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
 };
 
 const workplaceTypeLabels: Record<string,string> = { office:"사무실", special_school:"특수학교", external_education:"외부 교육장", remote:"재택", other_field:"기타 외근지" };
-const requestTypeLabels: Record<string,string> = { annual:"연차", half_am:"오전 반차", half_pm:"오후 반차", hourly:"시간차", sick:"병가", official:"공가", remote:"재택", field:"외근", special:"특별휴가", substitute:"대체휴가", compensatory:"보상휴가", time_fix:"근무시간 수정", comp_leave_use:"대체휴가 시간 사용" };
+const requestTypeLabels: Record<string,string> = { annual:"연차", half_am:"오전 반차", half_pm:"오후 반차", hourly:"시간차", sick:"병가", official:"공가", remote:"재택", field:"외근", special:"특별휴가", substitute:"대체휴가", compensatory:"보상휴가", time_fix:"근무시간 수정", comp_leave_use:"보상휴가 시간 사용" };
 const REQUEST_TYPES_UI = ["annual","half_am","half_pm","hourly","sick","official","special","substitute","compensatory"];
 const SINGLE_DAY_TYPES = ["half_am","half_pm","hourly","comp_leave_use"];
 const LOGIN_EMAIL_ALIASES: Record<string,string[]> = {
@@ -207,7 +213,7 @@ function uniqueCompRequests(list:any[]) {
 function badgeClass(s?: string | null) {
   if (!s) return "";
   if (["approved","정상출근","시차출근","외근","재택","active"].includes(s)) return "good";
-  if (["rejected","반려","inactive","지각","결근"].includes(s)) return "bad";
+  if (["rejected","반려","inactive","지각","결근","지각 확인 필요","결근 확인 필요"].includes(s)) return "bad";
   return "warn";
 }
 function statusLabel(status?: string | null) {
@@ -505,8 +511,9 @@ function attendanceDisplay(emp:any,log:any,overrides:any[],workTimeChanges:any[]
   const workplaceType=log.workplaces?.type;
   const workType=workplaceType==="remote"||log.status==="재택"?"재택":["special_school","external_education","other_field"].includes(workplaceType)||log.status==="외근"?"외근":null;
   const thresholdText=minutesToTime(lateThreshold);
-  if(reviewStatuses.includes(log.status)||["지각","결근"].includes(log.status)) return {primary:log.status,primaryClass:badgeClass(log.status),workType,lateMinutes,scheduleStart:thresholdText};
-  return {primary:lateMinutes>=1?"지각":"정상출근",primaryClass:lateMinutes>=1?"bad":"good",workType,lateMinutes,scheduleStart:thresholdText};
+  const statusText=log.status==="관리자 강제퇴근"?"관리자 마감":log.status==="지각"?"지각 확인 필요":log.status==="결근"?"결근 확인 필요":log.status;
+  if(reviewStatuses.includes(log.status)||["지각","결근"].includes(log.status)) return {primary:statusText,primaryClass:badgeClass(statusText),workType,lateMinutes,scheduleStart:thresholdText};
+  return {primary:lateMinutes>=1?"지각 확인 필요":"정상출근",primaryClass:lateMinutes>=1?"bad":"good",workType,lateMinutes,scheduleStart:thresholdText};
 }
 function countScheduledWorkdays(emp:any, startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
   let count=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
@@ -659,9 +666,8 @@ function ApprovedCompCard({ compRequests, leaveRequests, empMap, onChanged }: { 
       }),{monthHours:0,totalHours:0,usedHours:0});
   const shown=filterEmpId?approved.filter(r=>r.employee_id===filterEmpId):approved;
   const shownHours=shown.reduce((sum,r)=>sum+Number(r.hours||0),0);
-  const shownDays=shown.reduce((sum,r)=>sum+Number(r.converted_days||0),0);
   async function deleteComp(id:string) {
-    if(!window.confirm("이 추가근무 적립을 삭제할까요? 해당 직원의 대체휴가 잔여가 줄어듭니다.")) return;
+    if(!window.confirm("이 추가근무 적립을 삭제할까요? 해당 직원의 보상휴가 잔여시간이 줄어듭니다.")) return;
     await supabase.from("leave_adjustments").delete().eq("source_type","comp_time_requests").eq("source_id",id);
     const {error}=await supabase.from("comp_time_requests").delete().eq("id",id);
     if(error) setMsg(error.message); else onChanged();
@@ -688,15 +694,14 @@ function ApprovedCompCard({ compRequests, leaveRequests, empMap, onChanged }: { 
       {approved.length>0&&filterEmpId&&<CollapsibleSection title={`상세 적립 내역 ${shown.length}건`} icon="ti-list-details" defaultOpen={false}>
         <div className="table-wrap">
           <table>
-            <caption className="table-summary">합계 {shownHours.toFixed(1)}시간 · {shownDays.toFixed(2)}일</caption>
-            <thead><tr><th>직원</th><th>날짜</th><th>시간</th><th>적립일수</th><th>사유</th><th></th></tr></thead>
+            <caption className="table-summary">합계 {shownHours.toFixed(1)}시간</caption>
+            <thead><tr><th>직원</th><th>날짜</th><th>승인 시간</th><th>사유</th><th></th></tr></thead>
             <tbody>
               {shown.map(r=>(
                 <tr key={r.id}>
                   <td><b>{empMap[r.employee_id]?.name??"-"}</b></td>
                   <td>{r.work_date}</td>
                   <td>{r.hours}시간</td>
-                  <td>{r.converted_days}일</td>
                   <td className="subtle">{r.reason??"-"}</td>
                   <td><button className="button danger" onClick={()=>deleteComp(r.id)}>삭제</button></td>
                 </tr>
@@ -1052,7 +1057,7 @@ function ImprovementQuickCapture({ employee, currentTab, currentPageTitle, menuO
             <div className="form-row"><label className="label">메뉴</label><select className="select" value={menuId} onChange={e=>{setMenuId(e.target.value as Tab);setSubmenu("");}}>{menuOptions.map(menu=><option key={menu.id} value={menu.id}>{menu.label}</option>)}</select></div>
           </div>
           <div className="form-row"><label className="label">하위 항목</label><select className="select" value={submenu} onChange={e=>setSubmenu(e.target.value)}><option value="">선택 안 함</option>{submenuOptions.map(option=><option key={option} value={option}>{option}</option>)}</select></div>
-          <div className="form-row"><label className="label">메모</label><textarea className="textarea compact-textarea" value={note} onChange={e=>setNote(e.target.value)} placeholder="예: 직원 현황에서 강제퇴근 버튼이 너무 안 보여서 바로 처리하기 어렵다." /></div>
+          <div className="form-row"><label className="label">메모</label><textarea className="textarea compact-textarea" value={note} onChange={e=>setNote(e.target.value)} placeholder="예: 직원 현황에서 기록 마감 버튼이 너무 안 보여서 바로 처리하기 어렵다." /></div>
           <p className="subtle">현재 화면: {currentPageTitle} · 단축키 Ctrl+Shift+M</p>
           {msg&&<div className={`alert ${msg.includes("저장")?"success":"error"}`}>{msg}</div>}
           <div className="actions" style={{justifyContent:"flex-end"}}>
@@ -1287,7 +1292,7 @@ function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () 
     <div className="container"><section className="card" style={{maxWidth:760,margin:"28px auto"}}>
       <h1 className="card-title" style={{display:"block"}}>개인정보 수집·이용 및 위치정보 동의서</h1>
       <p className="subtle">주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.</p>
-      <div className="alert" style={{marginTop:16}}>위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.</div>
+      <div className="alert" style={{marginTop:16}}>위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다. 수집 정보는 근태 확인 목적과 회사 보존 기준에 따라 관리됩니다.</div>
       {msg&&<div className="alert error">{msg}</div>}
       <label className="checkbox"><input type="checkbox" checked={agree1} onChange={e=>setAgree1(e.target.checked)} /> 개인정보 및 위치정보 수집·이용에 동의합니다.</label>
       <label className="checkbox"><input type="checkbox" checked={agree2} onChange={e=>setAgree2(e.target.checked)} /> 위치·기기 정보는 근태 확인 목적 외로 사용하지 않는다는 설명을 확인했습니다.</label>
@@ -1299,11 +1304,13 @@ function ConsentGate({ employee, onDone, signOut }: { employee: any; onDone: () 
             출퇴근 처리와 근태 확인을 위해 직원 정보, 기기 정보, 출근·퇴근 시점의 위치정보를 수집·이용합니다.
             <br />
             위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 수집되며, 실시간 위치 추적에는 사용하지 않습니다.
+            <br />
+            수집 정보는 근태 확인, 임금·휴가 정산, 분쟁 대응 등 필요한 범위에서 보관되고, 보유기간 경과 또는 목적 달성 후 관련 법령과 회사 보존 기준에 따라 파기됩니다.
           </div>
         </ConsentDetailToggle>
-        <ConsentDetailToggle title="추가근무·대체휴가 상세 설명" open={showOvertimeDetail} onToggle={()=>setShowOvertimeDetail(v=>!v)}>
+        <ConsentDetailToggle title="추가근무·보상휴가 상세 설명" open={showOvertimeDetail} onToggle={()=>setShowOvertimeDetail(v=>!v)}>
           <div className="type-desc work-time-detail work-time-detail-space">
-            {OVERTIME_COMP_DETAIL_MAIN_TEXT}
+            <span style={{whiteSpace:"pre-line"}}>{OVERTIME_COMP_DETAIL_MAIN_TEXT}</span>
             <br />
             <span className="work-time-legal">{OVERTIME_COMP_DETAIL_LEGAL_TEXT}</span>
             <br />
@@ -1729,7 +1736,7 @@ function HomePage({ employee }: { employee: any }) {
       const {data,error}=await supabase.rpc("check_out",{p_lat:p.lat,p_lng:p.lng,p_accuracy_m:p.accuracy,p_ip_address:ip,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo});
       if(error) throw error; setMessage(`퇴근 처리 결과: ${data?.attendance_status??"저장 완료"}`);
       await load();
-      // 주말 근무 → 대체휴가 적립 여부 묻기
+      // 주말 근무 → 보상휴가 적립 여부 묻기
       const ci = todayLog?.check_in_time;
       if (isWeekendDate(ci)) {
         const mins = workedMinutes(ci, new Date().toISOString());
@@ -1740,8 +1747,8 @@ function HomePage({ employee }: { employee: any }) {
   }
   async function grantWeekendComp() {
     if(!weekendAsk) return;
-    const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:weekendAsk.work_date,start_time:null,end_time:null,hours:weekendAsk.hours,converted_days:Number((weekendAsk.hours/8).toFixed(2)),reason:"주말 근무 대체휴가",status:"pending"});
-    if(error) setMessage(error.message); else setMessage("주말 근무 대체휴가 신청이 저장되었습니다. 관리자 승인 후 적립됩니다.");
+    const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:weekendAsk.work_date,start_time:null,end_time:null,hours:weekendAsk.hours,converted_days:Number((weekendAsk.hours/8).toFixed(2)),reason:"주말 근무 보상휴가",status:"pending"});
+    if(error) setMessage(error.message); else setMessage("주말 근무 보상휴가 신청이 저장되었습니다. 관리자 승인 후 적립됩니다.");
     setWeekendAsk(null);
   }
 
@@ -1875,7 +1882,7 @@ function HomePage({ employee }: { employee: any }) {
           </div>
         )}
         {flexNote&&<p className="subtle" style={{marginTop:8,textAlign:"center",color:"#0b9b6a"}}>{flexNote}</p>}
-        <p className="subtle" style={{marginTop:6,textAlign:"center"}}>휴게 12:00–13:00 자동 · 10시까지 자유 시차출근</p>
+        <p className="subtle" style={{marginTop:6,textAlign:"center"}}>기본 휴게 12:00–13:00 · 실제 휴게가 다르면 정정 요청 · 10시까지 자유 시차출근</p>
         <WorkTypeToggle employee={employee} todayLog={todayLog} onChanged={load} />
         {message&&<div className="alert" style={{marginTop:14}}>{message}</div>}
 
@@ -1901,8 +1908,8 @@ function HomePage({ employee }: { employee: any }) {
 
         {weekendAsk&&(
           <div className="card" style={{marginTop:14,boxShadow:"none",background:"#eef3fe"}}>
-            <h3 style={{marginTop:0}}>주말 근무 대체휴가</h3>
-            <p className="body-text">오늘 주말 근무 {weekendAsk.hours}시간이 기록되었습니다. 근무시간만큼 대체휴가를 적립하시겠습니까?</p>
+            <h3 style={{marginTop:0}}>주말 근무 보상휴가</h3>
+            <p className="body-text">오늘 주말 근무 {weekendAsk.hours}시간이 기록되었습니다. 회사 확인 후 보상휴가 적립 대상으로 등록하시겠습니까?</p>
             <div className="actions" style={{marginTop:10}}>
               <button className="button" onClick={grantWeekendComp}>네, 적립 신청</button>
               <button className="button ghost" onClick={()=>setWeekendAsk(null)}>아니요</button>
@@ -1937,7 +1944,7 @@ function HomePage({ employee }: { employee: any }) {
 
         {recheckAsk&&(<ConfirmModal title="이미 출근 처리된 기록이 있습니다" confirmText="재출근" cancelText="취소" busy={busy} onCancel={()=>setRecheckAsk(null)} onConfirm={confirmRecheck}>
           <p style={{margin:"0 0 8px"}}>오늘 <b>{timeOnly(recheckAsk.check_in_time)}</b>에 이미 출근 처리되었습니다.</p>
-          <p style={{margin:0}}>재출근하면 현재 시각으로 출근 시간이 갱신되며, 지각 등 근태 상태가 다시 판정될 수 있습니다.</p>
+          <p style={{margin:0}}>재출근하면 현재 시각으로 출근 시간이 갱신되며, 지각 확인 필요 등 근태 상태가 다시 판정될 수 있습니다.</p>
         </ConfirmModal>)}
         {earlyCheckoutAsk&&(<ConfirmModal title="아직 퇴근 시간이 아닙니다" confirmText="퇴근 처리" cancelText="취소" busy={busy} onCancel={()=>setEarlyCheckoutAsk(null)} onConfirm={confirmEarlyCheckout}>
           <p style={{margin:"0 0 8px"}}>오늘 퇴근 기준 시각은 <b>{timeOnly(earlyCheckoutAsk.targetTime)}</b>입니다.</p>
@@ -2085,7 +2092,7 @@ function isCompLeaveUsageRequest(request:any) {
   return ["comp_leave_use","hourly"].includes(request?.request_type) && Number((request?.amount_hours??0)||0)>0;
 }
 function leaveTypeDisplayLabel(request:any) {
-  if(isCompLeaveUsageRequest(request)) return "대체휴가 시간 사용";
+  if(isCompLeaveUsageRequest(request)) return "보상휴가 시간 사용";
   return requestTypeLabels[request?.request_type]??request?.request_type??"-";
 }
 function leaveDeductionLabel(request:any) {
@@ -2665,7 +2672,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
     // 잔여 검증 — 휴가 차감형 전체 (연차/반차/시간차/특별/대체/보상)
     if (isHourly && (!requestedHours || requestedHours<=0)) return setMessage("시간차 사용 시간을 입력해주세요.");
     if (effectiveRequestType==="comp_leave_use") {
-      if(requestedHours>compRemainHours+1e-9) return setMessage(`대체휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
+      if(requestedHours>compRemainHours+1e-9) return setMessage(`보상휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
     } else if (m?.usesLeave) {
       if (requestedDays > expectedRemaining + 1e-9) return setMessage(`잔여 휴가(${expectedRemaining.toFixed(1)}일)가 부족하여 신청할 수 없습니다.`);
     }
@@ -2680,15 +2687,15 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       amount_hours:amountHours, amount_days: m?.fixedDays ?? (amountHours?amountHours/8:null),
       reason:form.reason, status:"pending",
     });
-    if(error) setMessage(error.message); else{setMessage(effectiveRequestType==="comp_leave_use"?"대체휴가 시간 사용 신청이 저장되었습니다.":"휴가 신청이 저장되었습니다.");await load();}
+    if(error) setMessage(error.message); else{setMessage(effectiveRequestType==="comp_leave_use"?"보상휴가 시간 사용 신청이 저장되었습니다.":"휴가 신청이 저장되었습니다.");await load();}
   }
 
   async function useCompLeave() {
     setMessage(""); const hours=Number(form.amount_hours||0);
     if(!hours||hours<=0) return setMessage("사용할 시간을 입력해주세요.");
-    if(hours>compRemainHours+1e-9) return setMessage(`대체휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
-    const {error}=await supabase.from("attendance_requests").insert({employee_id:employee.id,request_type:"comp_leave_use",start_date:form.start_date,end_date:form.start_date,amount_hours:hours,amount_days:hours/8,reason:form.reason||"대체휴가 시간 사용",status:"pending"});
-    if(error) setMessage(error.message); else{setMessage("대체휴가 시간 사용 신청이 저장되었습니다.");await load();}
+    if(hours>compRemainHours+1e-9) return setMessage(`보상휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
+    const {error}=await supabase.from("attendance_requests").insert({employee_id:employee.id,request_type:"comp_leave_use",start_date:form.start_date,end_date:form.start_date,amount_hours:hours,amount_days:hours/8,reason:form.reason||"보상휴가 시간 사용",status:"pending"});
+    if(error) setMessage(error.message); else{setMessage("보상휴가 시간 사용 신청이 저장되었습니다.");await load();}
   }
 
   function handleCompTimeChange(field:"start_time"|"end_time",val:string){
@@ -2699,13 +2706,13 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   async function submitCompTime() {
     setMessage("");
     if(!compForm.hours||compForm.hours<=0) return setMessage("추가 근무 시간을 입력해주세요.");
-    if(!compBaseline) return setMessage("정상 퇴근 기준을 계산 중입니다. 잠시 후 다시 신청해주세요.");
+    if(!compBaseline) return setMessage("소정근로 종료 기준을 계산 중입니다. 잠시 후 다시 신청해주세요.");
     const requestedStart=timeToMinutes(compForm.start_time)??0;
     const overtimeStart=timeToMinutes(compBaseline.expectedEndHHMM)??0;
     if(requestedStart<overtimeStart){
       const basis=compBaseline.hasCheckIn
-        ? `${timeOnly(compBaseline.checkInTime)} 출근 기준 정상 퇴근은 ${compBaseline.expectedEndHHMM}입니다.`
-        : `출근기록이 없어 등록된 스케줄 기준 정상 퇴근은 ${compBaseline.expectedEndHHMM}입니다.`;
+        ? `${timeOnly(compBaseline.checkInTime)} 출근 기준 소정근로 종료 시각은 ${compBaseline.expectedEndHHMM}입니다.`
+        : `출근기록이 없어 등록된 스케줄 기준 소정근로 종료 시각은 ${compBaseline.expectedEndHHMM}입니다.`;
       return setMessage(`${basis} ${compBaseline.expectedEndHHMM} 이후 시간만 추가근무로 신청할 수 있습니다.`);
     }
     const startAt=new Date(`${compForm.work_date}T${compForm.start_time}:00`);
@@ -2714,11 +2721,11 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
     if(duplicate) return setMessage("이미 신청한 시간입니다. 관리자의 승인을 기다려주세요.");
     const normalHours=Math.round((compBaseline.shiftMinutes/60)*10)/10;
     const basis=compBaseline.hasCheckIn
-      ? `실제 출근 ${timeOnly(compBaseline.checkInTime)} · 근무시간 ${formatHourValue(normalHours)}시간 · 휴게시간 1시간 · 정상 퇴근 ${compBaseline.expectedEndHHMM}`
-      : `출근 전이므로 등록 스케줄 기준 정상 퇴근 ${compBaseline.expectedEndHHMM}`;
+      ? `실제 출근 ${timeOnly(compBaseline.checkInTime)} · 소정근로 ${formatHourValue(normalHours)}시간 · 기본 휴게 1시간 · 기준 종료 ${compBaseline.expectedEndHHMM}`
+      : `출근 전이므로 등록 스케줄 기준 종료 ${compBaseline.expectedEndHHMM}`;
     if(!window.confirm(`${basis}\n${compBaseline.expectedEndHHMM} 이후부터 추가근무로 인정됩니다.\n\n추가근무를 신청하시겠습니까?\n신청 후 수정이 불가능합니다.`)) return;
     const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:compForm.work_date,start_time:compForm.start_time,end_time:compForm.end_time,hours:compForm.hours,converted_days:Number((compForm.hours/8).toFixed(2)),reason:compForm.reason,status:"pending"});
-    if(error) setMessage(error.message); else{setMessage("추가근무 신청이 저장되었습니다. 관리자 승인 후 대체휴가로 적립됩니다.");await load();}
+    if(error) setMessage(error.message); else{setMessage("추가근무 신청이 저장되었습니다. 관리자 승인 후 보상휴가로 적립됩니다.");await load();}
   }
 
   async function cancelCompRequest(id:string) {
@@ -2747,9 +2754,9 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
               <div className="leave-chip"><span>조정</span><b>{adj>=0?"+":""}{adj.toFixed(1)}일</b></div>
               <div className="leave-chip"><span>사용(승인)</span><b>{approvedUsed.toFixed(1)}일</b></div>
               <div className="leave-chip"><span>잔여(예상)</span><b>{expectedRemaining.toFixed(1)}일</b></div>
-              <div className="leave-chip leave-chip-highlight"><span>대체휴가 적립</span><b>{compEarned.toFixed(1)}일 ({compRemainHours}시간)</b></div>
+              <div className="leave-chip leave-chip-highlight"><span>보상휴가 잔여</span><b>{compRemainHours}시간</b></div>
             </div>
-            <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {automaticAnnual>0?ent.description:"자동 연차 미발생"}<br />{automaticAnnual>0?`산정기간 ${ent.periodStart??"-"} ~ ${ent.periodEnd??"-"} (근로기준법 제60조)`:isAnnualLeaveDisabled(employee)?ANNUAL_LEAVE_LEGAL_NOTE:"관리자가 별도로 부여한 특별·대체휴가는 사용할 수 있습니다."}</p>
+            <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {automaticAnnual>0?ent.description:"자동 연차 미발생"}<br />{automaticAnnual>0?`산정기간 ${ent.periodStart??"-"} ~ ${ent.periodEnd??"-"} (근로기준법 제60조)`:isAnnualLeaveDisabled(employee)?ANNUAL_LEAVE_LEGAL_NOTE:"관리자가 별도로 부여한 특별·대체·보상휴가는 사용할 수 있습니다."}</p>
           </div>
         </div>
       </section>}
@@ -2766,7 +2773,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
 
           {isHourly&&compRemainHours>0&&(
             <div className="alert">
-              시간차 휴가는 승인된 추가근무 대체휴가 잔여시간 {compRemainHours}시간에서 자동 차감됩니다.
+              시간차 휴가는 승인된 추가근무 보상휴가 잔여시간 {compRemainHours}시간에서 자동 차감됩니다.
             </div>
           )}
 
@@ -2793,16 +2800,19 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
         {showOvertime&&<section className="card">
           <h2 className="card-title"><i className="ti ti-clock-plus" aria-hidden="true"></i>추가근무 신청</h2>
           <div className="grid three" style={{marginBottom:14}}>
-            <div className="metric"><div className="metric-value">{compEarned.toFixed(1)}일</div><div className="metric-label">승인 적립</div></div>
+            <div className="metric"><div className="metric-value">{compEarnedHours}시간</div><div className="metric-label">승인 적립시간</div></div>
             <div className="metric"><div className="metric-value">{compRemainHours}시간</div><div className="metric-label">사용 가능</div></div>
             <div className="metric"><div className="metric-value">{compRequests.filter(r=>r.status==="pending").length}건</div><div className="metric-label">승인 대기</div></div>
           </div>
-          <p className="body-text" style={{marginBottom:14}}>추가근무는 신청 또는 회사 확인 후 건별 승인된 시간만 인정됩니다. 승인된 시간은 앱에서 대체휴가 적립·사용 내역으로 관리됩니다 (8시간 = 1일).</p>
+          <div className="body-text" style={{marginBottom:14}}>
+            <p>추가근무는 사전 신청 및 회사 승인 후 진행하는 것을 원칙으로 합니다.<br/>다만 실제 근로 제공 여부가 회사 확인을 통해 인정되는 경우, 해당 시간은 법정 기준에 따라 추가근무로 처리됩니다.</p>
+            <p>승인 또는 확인된 추가근무 시간은 앱에서 보상휴가 적립·사용 내역으로 관리됩니다.<br/>보상휴가제는 근로기준법 제57조에 따른 서면합의 기준에 따라 운영되며, 연장·야간·휴일근로에 해당하는 경우 법정 가산 기준을 반영합니다.</p>
+          </div>
           <div className="alert">※ 추가근무는 시작 시간 전에만 신청할 수 있습니다.<br/>※ 한 번 신청하면 수정이 불가능합니다. 수정이 필요하면 승인 전 취소 후 다시 신청해주세요.</div>
           {compBaseline&&<div className="alert overtime-baseline-alert">
             <b>추가근무 인정 시작: {compBaseline.expectedEndHHMM} 이후</b>
             <span>{compBaseline.hasCheckIn
-              ? `${timeOnly(compBaseline.checkInTime)} 출근 · 근무시간 ${formatHourValue(Math.round((compBaseline.shiftMinutes/60)*10)/10)}시간 · 휴게시간 1시간 · 정상 퇴근 ${compBaseline.expectedEndHHMM}`
+              ? `${timeOnly(compBaseline.checkInTime)} 출근 · 소정근로 ${formatHourValue(Math.round((compBaseline.shiftMinutes/60)*10)/10)}시간 · 기본 휴게 1시간 · 기준 종료 ${compBaseline.expectedEndHHMM}`
               : "아직 출근기록이 없어 등록된 출근 스케줄 기준으로 계산했습니다."}</span>
           </div>}
           <div className="form-row"><label className="label">추가근무일</label><input className="input" type="date" value={compForm.work_date} onChange={e=>setCompForm({...compForm,work_date:e.target.value})} /></div>
@@ -2822,7 +2832,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
           <div className="grid">
             {compRequests.map(r=>(
               <div className="list-row" key={r.id}>
-                <div><b>{r.work_date} {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)}</b><div className="subtle">{r.hours}시간 → {r.converted_days}일 · {r.reason??"-"}</div></div>
+                <div><b>{r.work_date} {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)}</b><div className="subtle">신청 시간 {r.hours}시간 · {r.reason??"-"}</div></div>
                 <div className="actions"><span className={`badge ${badgeClass(r.status)}`}>{statusLabel(r.status)}</span>{r.status==="pending"&&<button className="button ghost" onClick={()=>cancelCompRequest(r.id)}>취소</button>}</div>
               </div>
             ))}
@@ -2866,11 +2876,11 @@ function AdminCompGrantCard({currentEmployee,onChanged}:{currentEmployee:any;onC
       p_reason:form.reason.trim(),
     });
     if(error) setMessage(`추가근무 등록 실패: ${error.message}`);
-    else{setMessage(`${empName(form.employee_id)} 직원의 추가근무를 승인 등록하고 대체휴가를 적립했습니다.`);setForm({...form,reason:""});onChanged?.();}
+    else{setMessage(`${empName(form.employee_id)} 직원의 추가근무를 승인 등록하고 보상휴가 적립 내역에 반영했습니다.`);setForm({...form,reason:""});onChanged?.();}
   }
   return <section className="card">
     <h2 className="card-title"><i className="ti ti-user-plus" aria-hidden="true"></i>직원 추가근무 직접 등록</h2>
-    <p className="subtle" style={{marginBottom:14}}>대표 또는 관리자가 사후 확인한 추가근무를 직원별로 직접 등록합니다. 저장 즉시 승인되며 대체휴가가 함께 적립됩니다.</p>
+    <p className="subtle" style={{marginBottom:14}}>대표 또는 관리자가 사후 확인한 추가근무를 직원별로 직접 등록합니다. 저장 즉시 승인되며 보상휴가 적립 내역에 반영됩니다.</p>
     {message&&<div className={`alert ${message.includes("실패")?"error":"success"}`}>{message}</div>}
     <div className="grid four">
       <div className="form-row"><label className="label">직원</label><select className="select" value={form.employee_id} onChange={e=>setForm({...form,employee_id:e.target.value})}><option value="">직원 선택</option>{employees.map(e=><option key={e.id} value={e.id}>{e.name} · {e.employee_no}</option>)}</select></div>
@@ -2880,7 +2890,7 @@ function AdminCompGrantCard({currentEmployee,onChanged}:{currentEmployee:any;onC
     </div>
     <div className="grid two">
       <div className="form-row"><label className="label">시간</label><input className="input" type="number" min="0.5" step="0.5" value={form.hours} onChange={e=>setForm({...form,hours:Number(e.target.value)})} /></div>
-      <div className="form-row"><label className="label">대체휴가 환산</label><div className="readonly-field">{(form.hours/8).toFixed(2)}일</div></div>
+      <div className="form-row"><label className="label">보상휴가 관리시간</label><div className="readonly-field">{form.hours || 0}시간</div></div>
     </div>
     <div className="form-row"><label className="label">등록 사유</label><textarea className="textarea" value={form.reason} onChange={e=>setForm({...form,reason:e.target.value})} placeholder="예: 행사 종료 후 정리, 사후 확인된 연장근무" /></div>
     <button className="button" onClick={grant}><i className="ti ti-check" aria-hidden="true"></i>승인 등록</button>
@@ -3373,7 +3383,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           status,
           reviewed_by:currentEmployee.id,
           reviewed_at:new Date().toISOString(),
-          review_note:status==="approved"?"퇴근 전 추가근무 사전 승인":"추가근무 불인정",
+          review_note:status==="approved"?"퇴근 전 추가근무 사전 승인":"추가근무 반려",
         }).eq("id",request.id);
     if(result.error) setMessage(result.error.message);
     else{
@@ -3383,8 +3393,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         return next;
       });
       setMessage(status==="approved"
-        ? completedLog?"실제 초과근무가 승인되어 대체휴가로 적립되었습니다.":"추가근무를 사전 승인했습니다. 승인 종료시간까지 퇴근 기준이 연장됩니다."
-        : completedLog?"초과근무를 불인정하고 예정 퇴근시간으로 근태를 마감했습니다.":"추가근무를 불인정했습니다.");
+        ? completedLog?"실제 초과근무가 승인되어 보상휴가로 적립되었습니다.":"추가근무를 사전 승인했습니다. 승인 종료시간까지 퇴근 기준이 연장됩니다."
+        : completedLog?"초과근무를 반려하고 예정 퇴근시간으로 근태를 마감했습니다.":"추가근무를 반려했습니다.");
       await load();
       onChanged();
     }
@@ -3392,7 +3402,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   async function reviewWorkTimeRequest(id:string,status:string){const {error}=await supabase.rpc("review_work_time_change_request",{p_request_id:id,p_status:status,p_review_note:""});if(error)setMessage(error.message);else{setMessage(status==="approved"?"근무시간 변경 요청을 승인했습니다.":"근무시간 변경 요청을 반려했습니다.");await load();onChanged();}}
   async function reviewDevice(id:string,status:string){const {error}=await supabase.from("registered_devices").update({status}).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function confirmAttendanceLog(id:string){const {error}=await supabase.rpc("confirm_attendance_log",{p_log_id:id,p_status:"확인 완료"});if(error)setMessage(error.message);else{setMessage("근태 기록을 확인 완료 처리했습니다.");await load();onChanged();}}
-  async function forceClockOut(id:string){if(!window.confirm("이 기록을 현재 시각으로 강제 퇴근 처리할까요?")) return; const {error}=await supabase.rpc("close_attendance_log",{p_log_id:id,p_status:"관리자 강제퇴근",p_device_fingerprint_hash:null,p_device_info:{}});if(error)setMessage(error.message);else{setMessage("강제 퇴근 처리했습니다.");await load();onChanged();}}
+  async function forceClockOut(id:string){if(!window.confirm("이 미퇴근 기록을 현재 시각 기준으로 마감할까요?")) return; const {error}=await supabase.rpc("close_attendance_log",{p_log_id:id,p_status:"관리자 강제퇴근",p_device_fingerprint_hash:null,p_device_info:{}});if(error)setMessage(error.message);else{setMessage("미퇴근 기록을 마감했습니다.");await load();onChanged();}}
   function openAttendanceCorrection(employee:any, log:any|null) {
     const workDate=log?.check_in_time ? localDateStr(log.check_in_time) : todayIso();
     const schedule=getScheduleForDate(employee,workDate,overrides,workTimeRequests.filter((r:any)=>r.status==="approved"));
@@ -3649,7 +3659,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         </div>
         <div className="admin-command-metrics">
           <div><span>출근</span><b>{checkedInCount}/{activeEmployees.length}</b><small>오늘 출근 기록</small></div>
-          <div><span>퇴근 미완료</span><b>{openClockOutCount}</b><small>강제 퇴근 확인 대상</small></div>
+          <div><span>퇴근 미완료</span><b>{openClockOutCount}</b><small>미퇴근 기록 확인 대상</small></div>
           <div><span>승인 대기</span><b>{pendingTotal}</b><small>휴가·추가근무·기기·근무지</small></div>
           <div><span>예외 확인</span><b>{attentionTotal}</b><small>위치·기기·미퇴근</small></div>
         </div>
@@ -3697,8 +3707,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   <td>{log?.workplaces?.name ?? "-"}</td>
                   <td>{log ? formatDateTime(log.check_in_time) : "-"}</td>
                   <td>{log?.check_out_time ? formatDateTime(log.check_out_time) : "-"}</td>
-                  <td><div className="status-badges"><span className={`badge ${display.primaryClass}`}>{display.primary}</span>{display.workType&&<span className="badge work-type">{display.workType}</span>}</div>{display.primary==="지각"&&<span className="late-detail">{display.lateMinutes}분 지각 · 기준 {String(display.scheduleStart).slice(0,5)}</span>}</td>
-                  <td><div className="actions">{log&&!log.check_out_time&&<button className="button danger compact" onClick={()=>forceClockOut(log.id)}>강제 퇴근</button>}<button className="button secondary compact" onClick={()=>openAttendanceCorrection(e,log)}>{log?"기록 정정":"출근 정정"}</button></div></td>
+                  <td><div className="status-badges"><span className={`badge ${display.primaryClass}`}>{display.primary}</span>{display.workType&&<span className="badge work-type">{display.workType}</span>}</div>{display.primary.includes("지각")&&<span className="late-detail">{display.lateMinutes}분 지각 · 기준 {String(display.scheduleStart).slice(0,5)}</span>}</td>
+                  <td><div className="actions">{log&&!log.check_out_time&&<button className="button danger compact" onClick={()=>forceClockOut(log.id)}>기록 마감</button>}<button className="button secondary compact" onClick={()=>openAttendanceCorrection(e,log)}>{log?"기록 정정":"출근 정정"}</button></div></td>
                 </tr>
                 );
               })}
@@ -3735,7 +3745,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   <span className={`badge ${!l.check_out_time?"warn":""}`}>{!l.check_out_time?"미퇴근":"확인 필요"}</span>
                 </div>
                 <div className="type-desc" style={{marginTop:8}}>상세: 출근 {formatDateTime(l.check_in_time)} / 퇴근 {formatDateTime(l.check_out_time)} / 상태 {l.status??"-"}</div>
-                <div className="actions"><button className="button secondary" onClick={()=>confirmAttendanceLog(l.id)}>확인 완료</button><button className="button ghost" onClick={()=>openAttendanceCorrection(empMap[l.employee_id],l)}>기록 정정</button>{!l.check_out_time&&<button className="button danger" onClick={()=>forceClockOut(l.id)}>강제 퇴근</button>}</div>
+                <div className="actions"><button className="button secondary" onClick={()=>confirmAttendanceLog(l.id)}>확인 완료</button><button className="button ghost" onClick={()=>openAttendanceCorrection(empMap[l.employee_id],l)}>기록 정정</button>{!l.check_out_time&&<button className="button danger" onClick={()=>forceClockOut(l.id)}>기록 마감</button>}</div>
               </div>
             ))}
           </div>
@@ -3755,7 +3765,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 </div>
                 <div className="actions">
                   <button className="button secondary" onClick={()=>reviewCompRequest(r,"approved")}>{log?.check_out_time?"실제시간 정산":"초과근무 승인"}</button>
-                  <button className="button danger" onClick={()=>reviewCompRequest(r,"rejected")}>{usesActualCheckout?"불인정":"반려"}</button>
+                  <button className="button danger" onClick={()=>reviewCompRequest(r,"rejected")}>반려</button>
                 </div>
               </div>;
             })}
@@ -3910,7 +3920,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
 
       {view==="employees"&&<section className="card">
         <h2 className="card-title"><i className="ti ti-calendar-check" aria-hidden="true"></i>직원 연차 소진내용</h2>
-        <p className="subtle" style={{marginBottom:12}}>반차·연차는 연차 차감으로, 대체휴가 시간 사용은 추가근무 적립분 차감으로 구분해서 표시합니다.</p>
+        <p className="subtle" style={{marginBottom:12}}>반차·연차는 연차 차감으로, 보상휴가 시간 사용은 추가근무 적립분 차감으로 구분해서 표시합니다.</p>
         <div className="comp-employee-filter leave-usage-filter">
           <button className={leaveUsageEmpId==="all"?"active":""} onClick={()=>setLeaveUsageEmpId("all")}>
             <b>전체</b>
@@ -3920,7 +3930,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             const lv=leaveForEmployee(employee.id);
             return <button key={employee.id} className={leaveUsageEmpId===employee.id?"active":""} onClick={()=>setLeaveUsageEmpId(employee.id)}>
               <b>{employee.name}</b>
-              <span>연차 사용 {lv?.used.toFixed(1)??"0.0"}일 · 대체휴가 사용 {formatHourValue(lv?.compUsedH||0)}시간</span>
+              <span>연차 사용 {lv?.used.toFixed(1)??"0.0"}일 · 보상휴가 사용 {formatHourValue(lv?.compUsedH||0)}시간</span>
             </button>;
           })}
         </div>
@@ -3948,11 +3958,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         <h2 className="card-title"><i className="ti ti-chart-pie" aria-hidden="true"></i>직원 연차 현황</h2>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>직원</th><th>총 부여</th><th>사용</th><th>잔여</th><th>대체휴가</th><th>관리</th></tr></thead>
+            <thead><tr><th>직원</th><th>총 부여</th><th>사용</th><th>잔여</th><th>보상휴가</th><th>관리</th></tr></thead>
             <tbody>
               {employees.filter(e=>e.employment_status==="active").map(e=>{
                 const lv=leaveForEmployee(e.id); if(!lv) return null;
-                return (<tr key={e.id}><td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span>{e.no_annual_leave&&<><br/><span className="badge warn">연차 없음</span></>}</td><td>{lv.total.toFixed(1)}일</td><td>{lv.used.toFixed(1)}일</td><td><b style={{color:lv.remain<3?"var(--red)":"inherit"}}>{lv.remain.toFixed(1)}일</b></td><td>{lv.compEarned.toFixed(1)}일 ({lv.compRemainH}h)</td><td><button className="button secondary" onClick={()=>setLeaveModalEmp(e)}>연차 관리</button></td></tr>);
+                return (<tr key={e.id}><td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span>{e.no_annual_leave&&<><br/><span className="badge warn">연차 없음</span></>}</td><td>{lv.total.toFixed(1)}일</td><td>{lv.used.toFixed(1)}일</td><td><b style={{color:lv.remain<3?"var(--red)":"inherit"}}>{lv.remain.toFixed(1)}일</b></td><td>{formatHourValue(lv.compRemainH)}시간</td><td><button className="button secondary" onClick={()=>setLeaveModalEmp(e)}>연차 관리</button></td></tr>);
               })}
             </tbody>
           </table>
@@ -4796,7 +4806,7 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
   { employees:any[]; empMap:Record<string,any>; allLogs:any[]; compRequests:any[]; currentEmployee:any; onChanged:()=>void }) {
   const [sel,setSel]=useState<Record<string,boolean>>({});
   const [msg,setMsg]=useState("");
-  // 주말 + 퇴근 있는 로그 중, 아직 대체휴가 신청 안 된 것
+  // 주말 + 퇴근 있는 로그 중, 아직 보상휴가 신청 안 된 것
   const grantedDates=new Set(compRequests.map(c=>`${c.employee_id}|${c.work_date}`));
   const weekendLogs=allLogs.filter(l=>{
     if(!l.check_in_time||!l.check_out_time) return false;
@@ -4811,16 +4821,16 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
       const mins=workedMinutes(l.check_in_time,l.check_out_time);
       const hours=mins?Math.round(mins/6)/10:0;
       const wd=localDateStr(new Date(l.check_in_time));
-      const {data:ins,error}=await supabase.from("comp_time_requests").insert({employee_id:l.employee_id,work_date:wd,hours,converted_days:Number((hours/8).toFixed(2)),reason:"주말 근무 대체휴가(관리자 일괄)",status:"pending"}).select().single();
+      const {data:ins,error}=await supabase.from("comp_time_requests").insert({employee_id:l.employee_id,work_date:wd,hours,converted_days:Number((hours/8).toFixed(2)),reason:"주말 근무 보상휴가(관리자 일괄)",status:"pending"}).select().single();
       if(!error&&ins) await supabase.rpc("review_comp_time_request",{p_request_id:ins.id,p_status:"approved",p_review_note:"관리자 일괄 부여"});
     }
-    setMsg(`${picked.length}건 대체휴가를 부여했습니다.`); setSel({}); onChanged();
+    setMsg(`${picked.length}건 보상휴가를 부여했습니다.`); setSel({}); onChanged();
   }
   if(weekendLogs.length===0) return null;
   return (
     <section className="card">
-      <h2 className="card-title"><i className="ti ti-calendar-plus" aria-hidden="true"></i>주말 근무 대체휴가 일괄 부여</h2>
-      <p className="subtle" style={{marginBottom:12}}>아직 대체휴가가 적립되지 않은 주말 근무 기록입니다. 선택 후 일괄 부여하면 즉시 적립됩니다.</p>
+      <h2 className="card-title"><i className="ti ti-calendar-plus" aria-hidden="true"></i>주말 근무 보상휴가 일괄 부여</h2>
+      <p className="subtle" style={{marginBottom:12}}>아직 보상휴가가 적립되지 않은 주말 근무 기록입니다. 선택 후 일괄 부여하면 즉시 적립 내역에 반영됩니다.</p>
       {msg&&<div className={`alert ${msg.includes("부여")?"success":""}`}>{msg}</div>}
       {weekendLogs.map(l=>{
         const mins=workedMinutes(l.check_in_time,l.check_out_time); const hours=mins?Math.round(mins/6)/10:0;
@@ -4830,7 +4840,7 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
               <input type="checkbox" checked={!!sel[l.id]} onChange={e=>setSel({...sel,[l.id]:e.target.checked})} style={{width:18,height:18,accentColor:"#3a6df0"}} />
               <div><b>{empMap[l.employee_id]?.name??"-"}</b><div className="subtle">{localDateStr(l.check_in_time)} · {hours}시간</div></div>
             </div>
-            <span className="badge">{hours}시간 → {(hours/8).toFixed(1)}일</span>
+            <span className="badge">{hours}시간</span>
           </label>
         );
       })}
@@ -4961,6 +4971,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
         <div>
           <h2 className="card-title"><i className="ti ti-coin" aria-hidden="true"></i>급여 계산</h2>
           <p className="subtle" style={{margin:0}}>시급, 월급, 연봉, 주 근무일, 일 근무시간, 월 급여기준시간 중 값을 바꾸면 나머지 기준값이 자동 계산됩니다. 주 15시간 이상은 주휴시간을 포함하며, 주 5일 8시간은 월 209시간 기준입니다.</p>
+          <p className="subtle" style={{margin:"6px 0 0"}}>표시 금액은 근태·휴가·공제 확인 전 예상액이며, 최종 임금은 회사 확인 및 임금명세서 기준으로 확정됩니다.</p>
         </div>
         <div className="payroll-month-picker">
           <label className="label">월별 보기</label>
@@ -5002,9 +5013,9 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
             <small>{payrollMonthLabel} 예정 {month.days}일 · 실제 기준 {formatHourValue(month.hours)}시간</small>
           </div>
         ))}
-        <div className="payroll-summary-row payroll-summary-total"><b>총 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollEstimatedTotal)}</span><small>직원별 예상 급여 합계</small></div>
+        <div className="payroll-summary-row payroll-summary-total"><b>예상 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollEstimatedTotal)}</span><small>최종 임금 확정 전 예상 급여 합계</small></div>
       </div>
-      {empId&&emp&&<div className="payroll-selected-detail"><b>{emp.name} 급여 세부내역</b><span>{payrollMonthLabel} 기준으로 아래 공제와 예상 실수령액을 계산합니다.</span></div>}
+      {empId&&emp&&<div className="payroll-selected-detail"><b>{emp.name} 급여 세부내역</b><span>{payrollMonthLabel} 기준으로 아래 공제와 예상 실수령액을 계산합니다. 최종 지급액은 회사 확인 후 확정됩니다.</span></div>}
       {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 급여기준시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)} · 주휴 포함</div>}
       {empId&&monthly>0&&(
         <div className="table-wrap" style={{marginTop:8}}>
@@ -5242,6 +5253,7 @@ function ConsentReportPage() {
       const body=[
         "주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.",
         "위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.",
+        "수집 정보는 근태 확인, 임금·휴가 정산, 분쟁 대응 등 필요한 범위에서 보관되고, 보유기간 경과 또는 목적 달성 후 관련 법령과 회사 보존 기준에 따라 파기됩니다.",
         ...CONSENT_TERMS,
       ];
       if(record.consent_version===PRIVACY_CONSENT_VERSION) body.push(OVERTIME_COMP_DETAIL_TEXT, WORK_TIME_CONSENT_TEXT, WORK_TIME_DETAIL_TEXT);
@@ -5586,7 +5598,7 @@ function ReportsPage() {
         <div className="metric"><div className="metric-value">{visibleLogs.length}</div><div className="metric-label">전체 근태</div></div>
         <div className="metric"><div className="metric-value">{visibleEmployees.length}</div><div className="metric-label">전체 직원</div></div>
         <div className="metric"><div className="metric-value">{exceptions.length}</div><div className="metric-label">예외</div></div>
-        <div className="metric"><div className="metric-value">{visibleCompRequests.filter(r=>r.status==="approved").reduce((s,r)=>s+Number(r.converted_days||0),0).toFixed(1)}</div><div className="metric-label">대체휴가 적립</div></div>
+        <div className="metric"><div className="metric-value">{formatHourValue(visibleCompRequests.filter(r=>r.status==="approved").reduce((s,r)=>s+Number(r.hours||0),0))}</div><div className="metric-label">보상휴가 적립시간</div></div>
       </section>
 
       <section className="card">

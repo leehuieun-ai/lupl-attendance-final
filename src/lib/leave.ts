@@ -17,7 +17,7 @@ export const LEAVE_TYPE_META: Record<string, LeaveTypeMeta> = {
   annual:      { label: "연차",       desc: "법정 연차 유급휴가입니다. 잔여 연차에서 차감됩니다.", usesLeave: true },
   half_am:     { label: "오전 반차",   time: "09:00 ~ 14:00", desc: "오전 근무를 쉽니다. 연차 0.5일이 차감됩니다.", usesLeave: true, fixedDays: 0.5 },
   half_pm:     { label: "오후 반차",   time: "14:00 ~ 18:00", desc: "오후 근무를 쉽니다. 연차 0.5일이 차감됩니다.", usesLeave: true, fixedDays: 0.5 },
-  hourly:      { label: "시간차",     desc: "시간 단위로 사용하는 휴가입니다. 8시간 = 1일로 환산해 차감됩니다.", usesLeave: true },
+  hourly:      { label: "시간차",     desc: "시간 단위로 사용하는 휴가입니다. 회사 휴가 기준에 따라 차감됩니다.", usesLeave: true },
   sick:        { label: "병가",       desc: "질병·부상으로 인한 휴가입니다. 회사 규정에 따릅니다(연차 미차감).", usesLeave: false },
   official:    { label: "공가",       desc: "예비군·법정 의무 등 공적 사유 휴가입니다(연차 미차감).", usesLeave: false },
   remote:      { label: "재택",       desc: "재택근무로 처리됩니다(휴가 아님, 연차 미차감).", usesLeave: false },
