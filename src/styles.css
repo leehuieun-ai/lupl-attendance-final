@@ -241,7 +241,7 @@ tr:last-child td { border-bottom: 0; }
 h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 10px; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(20,26,40,.35); backdrop-filter: blur(6px); display: grid; place-items: center; padding: 16px; }
-.modal-box { background: #fff; border-radius: 22px; padding: 24px; width: 100%; max-width: 400px; box-shadow: 0 24px 64px rgba(20,26,40,.18); }
+.modal-box { background: #fff; border-radius: 22px; padding: 24px; width: 100%; max-width: 400px; max-height: calc(100dvh - 32px); overflow-y: auto; box-shadow: 0 24px 64px rgba(20,26,40,.18); }
 .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .modal-close { border: 0; background: #f0f2f6; border-radius: 10px; width: 32px; height: 32px; font-size: 14px; color: #8b94a6; display: grid; place-items: center; }
 .modal-close:hover { background: #e4e7ee; color: var(--ink); }
@@ -529,6 +529,18 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .popup-mark { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; background: #e9f0fe; color: var(--blue-dark); font-size: 22px; font-weight: 800; margin-bottom: 13px; }
 .work-consent-modal { max-width: 430px; }
 .work-consent-modal .signature-pad { height: 132px; }
+.attendance-correction-modal { padding: 20px; }
+.attendance-correction-modal .popup-mark { width: 36px; height: 36px; border-radius: 12px; font-size: 19px; margin-bottom: 10px; }
+.attendance-correction-modal .card-title { font-size: 17px; }
+.attendance-correction-modal .body-text { font-size: 14px; line-height: 1.5; }
+.attendance-correction-modal .alert { padding: 10px 12px; font-size: 13px; line-height: 1.45; }
+.attendance-correction-modal .consent-preview { margin-top: 10px !important; }
+.attendance-correction-modal .consent-preview dl { gap: 6px; }
+.attendance-correction-modal .type-desc { margin-bottom: 10px; padding: 10px 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.attendance-correction-note { margin-bottom: 10px; }
+.attendance-correction-note .compact-textarea { min-height: 58px; }
+.attendance-correction-signature .signature-pad { height: 112px; }
+.attendance-correction-actions { display: grid; grid-template-columns: minmax(0,1fr); gap: 8px; }
 
 .work-change-card { max-width: 1040px; margin: 0 auto; }
 .work-change-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }

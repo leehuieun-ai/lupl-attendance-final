@@ -1372,7 +1372,7 @@ function WorkTimeConsentModal({ employee, onDone }: { employee:any; onDone:()=>v
 
 function AttendanceCorrectionSignModal({ employee, request, onDone }: { employee:any; request:any; onDone:()=>void }) {
   const canvasRef=useRef<HTMLCanvasElement|null>(null);
-  const [showDetail,setShowDetail]=useState(true);
+  const [showDetail,setShowDetail]=useState(false);
   const [note,setNote]=useState("");
   const [msg,setMsg]=useState("");
   const [busy,setBusy]=useState(false);
@@ -1414,7 +1414,7 @@ function AttendanceCorrectionSignModal({ employee, request, onDone }: { employee
   }
   return (
     <div className="modal-backdrop">
-      <div className="modal-box work-consent-modal" onClick={e=>e.stopPropagation()}>
+      <div className="modal-box work-consent-modal attendance-correction-modal" onClick={e=>e.stopPropagation()}>
         <div className="popup-mark"><i className="ti ti-pencil-check" aria-hidden="true"></i></div>
         <h2 className="card-title" style={{display:"block",marginBottom:8}}>출퇴근 기록 정정 확인</h2>
         <p className="body-text">관리자가 출퇴근 버튼 누락 또는 오입력으로 판단한 기록 정정을 요청했습니다. 실제 근로시간과 맞는지 확인한 뒤 서명해주세요.</p>
@@ -1432,13 +1432,13 @@ function AttendanceCorrectionSignModal({ employee, request, onDone }: { employee
           <i className={`ti ${showDetail?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
         </button>
         {showDetail&&<div className="type-desc work-time-detail work-time-detail-space" style={{whiteSpace:"pre-wrap"}}>{ATTENDANCE_CORRECTION_DETAIL_TEXT}</div>}
-        <div className="form-row" style={{marginTop:14}}>
+        <div className="form-row attendance-correction-note" style={{marginTop:14}}>
           <label className="label">메모</label>
           <textarea className="textarea compact-textarea" value={note} onChange={e=>setNote(e.target.value)} placeholder="필요하면 확인 메모를 적어주세요." />
         </div>
-        <div style={{marginTop:14}}><label className="label">서명</label><SignaturePad canvasRef={canvasRef} /></div>
+        <div className="attendance-correction-signature" style={{marginTop:14}}><label className="label">서명</label><SignaturePad canvasRef={canvasRef} /></div>
         {msg&&<div className="alert error" style={{marginTop:12}}>{msg}</div>}
-        <div className="actions" style={{marginTop:14}}>
+        <div className="actions attendance-correction-actions" style={{marginTop:14}}>
           <button className="button full" disabled={busy} onClick={submit}>확인하고 서명하기</button>
           <button className="button ghost full" disabled={busy} onClick={()=>clearSignature(canvasRef)}>서명 다시 쓰기</button>
           <button className="button danger full" disabled={busy} onClick={objectRequest}>이의제기</button>
@@ -5531,8 +5531,14 @@ function ReportsPage() {
     return {workday,start,end,hours,event,leave};
   }
   const calendarScheduleMap=calendarEmployee?Object.fromEntries(calendarDates.map(date=>[date,reportScheduleInfoForDate(calendarEmployee,date)])):{};
-  const calendarScheduledDays=Object.values(calendarScheduleMap).filter((info:any)=>info.workday).length;
+  const calendarToday=todayIso();
+  const calendarLoggedDates=new Set(Object.keys(calendarLogMap));
+  const calendarAutoWorkedEntries=Object.entries(calendarScheduleMap).filter(([date,info]:any)=>date<=calendarToday&&info.workday&&!info.leave&&!calendarLoggedDates.has(date));
+  const calendarFutureScheduledDays=Object.entries(calendarScheduleMap).filter(([date,info]:any)=>date>calendarToday&&info.workday&&!info.leave).length;
+  const calendarReportWorkDays=calendarLoggedDates.size+calendarAutoWorkedEntries.length;
+  const calendarReportHours=calendarWorkedMinutes/60+calendarAutoWorkedEntries.reduce((sum:number,[,info]:any)=>sum+Number(info.hours||0),0);
   function dayWorkLabel(dayLogs:any[],info:any,date:string) {
+    if(!dayLogs.length&&info?.workday&&date<=calendarToday&&!info?.leave) return `${formatHourValue(info.hours)}시간`;
     if(!dayLogs.length) return "미출근";
     const minutes=dayLogs.reduce((sum:number,log:any)=>sum+(workedMinutes(log.check_in_time,log.check_out_time)??0),0);
     if(minutes>0) return `${formatHourValue(minutes/60)}시간`;
@@ -5540,7 +5546,7 @@ function ReportsPage() {
   }
   function dayPlanLabel(info:any,date:string){
     if(info?.leave) return leaveTypeDisplayLabel(info.leave);
-    if(info?.workday) return date>todayIso()?`예정 ${formatHourValue(info.hours)}시간`:"미출근";
+    if(info?.workday) return date>calendarToday?`예정 ${formatHourValue(info.hours)}시간`:`${formatHourValue(info.hours)}시간`;
     return info?.event?.title || "근무 없음";
   }
   function printMonthlyReport(){
@@ -5589,17 +5595,17 @@ function ReportsPage() {
               <div className="monthly-report-summary" style={{"--employee-color":calendarColor} as React.CSSProperties}>
                 <i></i>
                 <div><b>{calendarEmployee.name}</b><span>{calendarEmployee.employee_no??"-"}</span></div>
-                <strong>{Number(reportMonth.slice(5))}월 / 출근 {calendarWorkDays}일 / 실근무 {formatHourValue(calendarWorkedMinutes/60)}시간 / 예정 {calendarScheduledDays}일</strong>
+                <strong>{Number(reportMonth.slice(5))}월 / 출근 {calendarReportWorkDays}일 / 근무시간 {formatHourValue(calendarReportHours)}시간 / 예정 {calendarFutureScheduledDays}일</strong>
               </div>
               <div className="monthly-calendar-grid" style={{"--employee-color":calendarColor} as React.CSSProperties}>
                 {["월","화","수","목","금","토","일"].map(day=><div className="monthly-calendar-head" key={day}>{day}</div>)}
                 {calendarCells.map((date,index)=>{
                   const dayLogs=date?calendarLogMap[date]??[]:[];
                   const info=date?(calendarScheduleMap as any)[date]:null;
-                  const isWorked=dayLogs.length>0;
+                  const isWorked=dayLogs.length>0||!!(date&&info?.workday&&date<=calendarToday&&!info?.leave);
                   const typeLabel=dayLogs.flatMap(attendanceTypeLabelsForLog).filter((label:string,index:number,list:string[])=>list.indexOf(label)===index).slice(0,2).join(" · ");
                   return <div className={`monthly-calendar-cell ${date?"":"empty"} ${isWorked?"worked":info?.workday?"scheduled":"off"}`} key={date??`empty-${index}`}>
-                    {date&&<><b>{Number(date.slice(8))}</b><span>{isWorked?dayWorkLabel(dayLogs,info,date):dayPlanLabel(info,date)}</span><small>{isWorked?typeLabel:info?.workday?`${timeLabel(info.start)}~${timeLabel(info.end)}`:"일정 없음"}</small></>}
+                    {date&&<><b>{Number(date.slice(8))}</b><span>{isWorked?dayWorkLabel(dayLogs,info,date):dayPlanLabel(info,date)}</span><small>{dayLogs.length?typeLabel:info?.workday?`${timeLabel(info.start)}~${timeLabel(info.end)}`:"일정 없음"}</small></>}
                   </div>;
                 })}
               </div>
