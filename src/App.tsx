@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements";
 type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection";
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
@@ -119,6 +119,7 @@ const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
   leave:["휴가 신청","연차 현황","신청 내역","보상휴가 시간 사용"],
   overtime:["추가근무 신청","추가근무 내역","보상휴가 적립"],
   worktime:["한 문장 입력","기존 근무조건","변경 사유","상세 설명","서명","요청 내역"],
+  "team-schedule":["직원별 주간 캘린더","캘린더 요약"],
   "admin-dashboard":["승인 대기","일일 직원 근무 현황","기록 마감","확인 완료"],
   employees:["추가근무 적립 내역","근무시간 변경 요청","근무시간 변경 기록","직원 연차 소진내용","직원 연차 현황","직원 계정 생성","직원 관리"],
   workplaces:["근무지 등록","승인된 근무지","근무지 승인"],
@@ -910,6 +911,7 @@ export default function App() {
     leave:"휴가",
     overtime:"추가근무",
     worktime:"근무시간 변경",
+    "team-schedule":"팀 일정",
     "admin-dashboard":"오늘 관리",
     approvals:"승인함",
     employees:"직원",
@@ -926,7 +928,9 @@ export default function App() {
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"worktime",label:"근무시간 변경",icon:"ti-calendar-time"},
-    ...(isAdmin?[{id:"improvements" as Tab,label:"개선함",icon:"ti-notes"}]:[{id:"schedule" as Tab,label:"직원 일정",icon:"ti-calendar-week"}]),
+    ...(isAdmin
+      ? [{id:"improvements" as Tab,label:"개선함",icon:"ti-notes"}]
+      : [{id:"team-schedule" as Tab,label:"팀 일정",icon:"ti-calendar-week"},{id:"improvements" as Tab,label:"개선함",icon:"ti-notes"}]),
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
     {id:"admin-dashboard",label:"오늘",icon:"ti-layout-dashboard"},
@@ -984,6 +988,7 @@ export default function App() {
           {tab==="leave" && <LeavePage employee={employee} mode="leave" />}
           {tab==="overtime" && <LeavePage employee={employee} mode="overtime" />}
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
+          {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
           {tab==="admin-dashboard" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
           {tab==="approvals" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
           {tab==="employees" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
@@ -993,10 +998,10 @@ export default function App() {
           {tab==="payroll" && isAdmin && <SettingsPage currentEmployee={employee} section="payroll" />}
           {tab==="reports" && isAdmin && <ReportsPage />}
           {tab==="consents" && isAdmin && <ConsentReportPage />}
-          {tab==="improvements" && isAdmin && <ImprovementRequestsPage currentEmployee={employee} menuOptions={improvementMenuOptions} />}
+          {tab==="improvements" && <ImprovementRequestsPage currentEmployee={employee} menuOptions={improvementMenuOptions} />}
         </main>
       </div>
-      {isAdmin&&<ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={pageTitles[tab]} menuOptions={improvementMenuOptions} />}
+      <ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={pageTitles[tab]} menuOptions={improvementMenuOptions} />
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
       {validPrivacyConsent && !validWorkTimeConsent && validPrivacyConsent.consent_version !== PRIVACY_CONSENT_VERSION && <WorkTimeConsentModal employee={employee} onDone={load} />}
       {!validAdminPledgeConsent && <AdminConfidentialityModal employee={employee} onDone={load} />}
@@ -1183,7 +1188,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     }
   }
   async function createGithubIssue() {
-    if(!isAdmin) return;
+    if(!isAdmin) return setMsg("GitHub Issue 전송은 관리자 승인이 필요합니다.");
     const target=visible.filter(row=>!["done","dismissed"].includes(row.status));
     if(target.length===0) return setMsg("GitHub Issue로 보낼 개선 요청이 없습니다.");
     setMsg(""); setGithubBusy(true); setGithubIssue(null);
@@ -1225,9 +1230,9 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     <section className="card improvement-page">
       <div className="section-head">
         <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>{isAdmin?"앱에서 바로 남긴 개선 메모가 쌓입니다. 처리한 항목은 개선완료로 정리합니다.":"내가 남긴 개선 요청과 처리 상태를 확인합니다."}</p></div>
-        {isAdmin&&<div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={githubBusy||visible.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button><button className="button ghost" onClick={markActiveDone} disabled={rows.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button></div>}
+        <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button>{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={rows.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
       </div>
-      {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")?"success":"error"}`}>{msg}</div>}
+      {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("관리자 승인")?"success":"error"}`}>{msg}</div>}
       {githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
       <div className="improvement-summary-line">대기 {openCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
       <div className="grid two">
