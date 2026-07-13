@@ -10,6 +10,7 @@ import {
 import { exportRowsToExcel } from "./lib/exportExcel";
 
 type Tab = "attendance" | "leave" | "overtime" | "worktime" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements";
+type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection";
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
 const ALL_DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
@@ -52,6 +53,16 @@ const ATTENDANCE_CORRECTION_DETAIL_TEXT = [
   "기재된 시각이 실제 근로시간과 다르면 이의제기할 수 있으며, 회사는 객관 자료 확인 후 다시 정정합니다.",
 ].join("\n");
 const PRIVACY_CONSENT_VERSION = "2026-07";
+const ADMIN_CONFIDENTIALITY_CONSENT_VERSION = "2026-07-admin-confidentiality";
+const ADMIN_CONFIDENTIALITY_NOTICE_TEXT = "관리자 비밀유지 및 정보보호 서약서";
+const ADMIN_CONFIDENTIALITY_DETAIL_TEXT = [
+  "본인은 관리자 권한으로 접근하거나 업무상 알게 된 회사의 비공개 정보를 승인 없이 제3자에게 공개, 제공, 복제, 전송, 게시 또는 사적으로 이용하지 않겠습니다.",
+  "비공개 정보에는 고객·직원 개인정보, 거래처 정보, 계약·정산·재무자료, 교육자료, 운영 매뉴얼, 소스코드, 계정·접근권한, 사업계획, 마케팅 자료, 내부 대화 및 회의 내용 등 공개되지 않은 모든 업무자료가 포함됩니다.",
+  "포트폴리오, 이력서, 발표자료, SNS, 블로그, 외부 제안서 등에 회사 업무 산출물이나 내부 정보를 사용할 때에는 사전에 회사의 명시적 승인을 받겠습니다.",
+  "본 서약은 서명일 현재 본인이 보유하거나 알고 있는 비공개 정보 및 서명일 이후 새로 취득하는 비공개 정보에 적용되며, 퇴직 후에도 유효합니다.",
+  "퇴직, 권한 변경 또는 회사 요청 시 회사 자료와 계정, 저장매체, 출력물, 사본을 즉시 반환·삭제하고, 개인 기기나 개인 클라우드에 보관하지 않겠습니다.",
+  "위반 시 회사의 손해배상 청구, 접근권한 회수, 징계 및 관련 법령상 책임이 발생할 수 있음을 확인합니다. 본 서약은 임금, 휴가, 근로시간 등 근로조건의 포기나 위약벌 약정이 아닙니다.",
+].join("\n");
 const WORK_TIME_CONSENT_CHECK_TEXT = "근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 전자서명할 수 있으며, 실제 변경은 건별 요청 및 회사 승인 후 적용된다는 설명을 확인했습니다.";
 const ANNUAL_LEAVE_LEGAL_NOTE = "파트타임이라는 이유만으로 연차가 항상 없는 것은 아닙니다. 4주 평균 1주 소정근로시간이 15시간 미만이면 연차 규정 적용 제외가 가능하고, 15시간 이상 단시간근로자는 연차가 발생할 수 있습니다.";
 const RNR_BASELINE_ROLES = [
@@ -798,6 +809,7 @@ export default function App() {
   const [employee, setEmployee] = useState<any | null>(null);
   const [consent, setConsent] = useState<any | null>(null);
   const [workTimeConsent, setWorkTimeConsent] = useState<any | null>(null);
+  const [adminPledgeConsent, setAdminPledgeConsent] = useState<any | null>(null);
   const [tab, setTab] = useState<Tab>("attendance");
   const [loading, setLoading] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
@@ -814,13 +826,17 @@ export default function App() {
       setSession(r.session);
       setEmployee(r.employee);
       if (r.employee) {
-        const [privacyResult, workTimeConsentResult] = await Promise.all([
+        const [privacyResult, workTimeConsentResult, adminPledgeResult] = await Promise.all([
           supabase.from("privacy_consents").select("*").eq("employee_id", r.employee.id).eq("is_active", true).order("created_at",{ascending:false}).limit(1),
           supabase.from("work_time_change_consents").select("*").eq("employee_id", r.employee.id).eq("consent_version", WORK_TIME_CHANGE_CONSENT_VERSION).maybeSingle(),
+          r.employee.role==="admin"
+            ? supabase.from("work_time_change_consents").select("*").eq("employee_id", r.employee.id).eq("consent_version", ADMIN_CONFIDENTIALITY_CONSENT_VERSION).maybeSingle()
+            : Promise.resolve({data:null,error:null}),
         ]);
         if(seq!==loadSeqRef.current) return;
         setConsent(privacyResult.data?.[0]??null);
         setWorkTimeConsent(workTimeConsentResult.data??null);
+        setAdminPledgeConsent(adminPledgeResult.data??null);
         if (r.employee.role === "admin") {
           const [w, rq, c, d, lg, wt] = await Promise.all([
             supabase.from("workplaces").select("id, approval_status"),
@@ -847,6 +863,7 @@ export default function App() {
       } else {
         setConsent(null);
         setWorkTimeConsent(null);
+        setAdminPledgeConsent(null);
         setPendingCount(0);
       }
     } finally {
@@ -860,7 +877,7 @@ export default function App() {
     return () => data.subscription.unsubscribe();
   }, []);
 
-  async function signOut() { await supabase.auth.signOut(); setSession(null); setEmployee(null); setConsent(null); setWorkTimeConsent(null); }
+  async function signOut() { await supabase.auth.signOut(); setSession(null); setEmployee(null); setConsent(null); setWorkTimeConsent(null); setAdminPledgeConsent(null); }
 
   if (loading) return <div className="container" style={{ paddingTop: 48, textAlign: "center", color: "#8b94a6" }}>불러오는 중…</div>;
   if (!session) return <LoginPage />;
@@ -871,6 +888,7 @@ export default function App() {
   const shouldShowCombinedConsent = !validPrivacyConsent || (validPrivacyConsent?.consent_version === PRIVACY_CONSENT_VERSION && !validWorkTimeConsent);
   if (shouldShowCombinedConsent) return <ConsentGate employee={employee} onDone={load} signOut={signOut} />;
   const isAdmin = employee.role === "admin";
+  const validAdminPledgeConsent = isAdmin && consentAppliesToCurrentEmployment(adminPledgeConsent, employee) ? adminPledgeConsent : null;
   const pageTitles:Record<Tab,string>={
     attendance:"출퇴근",
     leave:"휴가",
@@ -965,6 +983,7 @@ export default function App() {
       {isAdmin&&<ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={pageTitles[tab]} menuOptions={improvementMenuOptions} />}
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
       {validPrivacyConsent && !validWorkTimeConsent && validPrivacyConsent.consent_version !== PRIVACY_CONSENT_VERSION && <WorkTimeConsentModal employee={employee} onDone={load} />}
+      {isAdmin && !validAdminPledgeConsent && <AdminConfidentialityModal employee={employee} onDone={load} />}
     </div>
   );
 }
@@ -1376,6 +1395,54 @@ function WorkTimeConsentModal({ employee, onDone }: { employee:any; onDone:()=>v
           <i className={`ti ${showDetail?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
         </button>
         {showDetail&&<WorkTimeDetailBlock className="work-time-detail-space" />}
+        <div style={{marginTop:14}}>
+          <label className="label">서명</label>
+          <SignaturePad canvasRef={canvasRef} />
+        </div>
+        {msg&&<div className="alert error" style={{marginTop:12}}>{msg}</div>}
+        <div className="actions" style={{marginTop:14}}>
+          <button className="button full" disabled={busy} onClick={submit}>확인하고 서명하기</button>
+          <button className="button ghost full" disabled={busy} onClick={()=>clearSignature(canvasRef)}>서명 다시 쓰기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminConfidentialityModal({ employee, onDone }: { employee:any; onDone:()=>void }) {
+  const canvasRef = useRef<HTMLCanvasElement|null>(null);
+  const [confirmDate,setConfirmDate]=useState(todayIso());
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState(false);
+  async function submit() {
+    setMsg("");
+    const signature=signatureData(canvasRef);
+    if(!signature||signature.length<1200) return setMsg("서명을 입력해주세요.");
+    setBusy(true);
+    const {fingerprintHash,deviceInfo}=await getDeviceFingerprint();
+    const {error}=await supabase.from("work_time_change_consents").upsert({
+      employee_id:employee.id,
+      consent_version:ADMIN_CONFIDENTIALITY_CONSENT_VERSION,
+      notice_text:ADMIN_CONFIDENTIALITY_NOTICE_TEXT,
+      detail_text:`확인일시: ${confirmDate}\n\n${ADMIN_CONFIDENTIALITY_DETAIL_TEXT}`,
+      signature_data:signature,
+      device_fingerprint_hash:fingerprintHash,
+      device_info:deviceInfo,
+    },{onConflict:"employee_id,consent_version"});
+    setBusy(false);
+    if(error) setMsg(friendlySignatureDbError(error)); else onDone();
+  }
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-box work-consent-modal" onClick={e=>e.stopPropagation()}>
+        <div className="popup-mark"><i className="ti ti-shield-lock" aria-hidden="true"></i></div>
+        <h2 className="card-title" style={{display:"block",marginBottom:8}}>관리자 비밀유지 서약</h2>
+        <p className="body-text">관리자 권한으로 접근하는 회사·직원·고객·운영 정보를 보호하기 위한 관리자 전용 필수 서약입니다.</p>
+        <div className="form-row" style={{marginTop:14}}>
+          <label className="label">확인일시</label>
+          <input className="input" type="date" value={confirmDate} onChange={e=>setConfirmDate(e.target.value||todayIso())} />
+        </div>
+        <div className="type-desc work-time-detail work-time-detail-space" style={{whiteSpace:"pre-wrap"}}>{ADMIN_CONFIDENTIALITY_DETAIL_TEXT}</div>
         <div style={{marginTop:14}}>
           <label className="label">서명</label>
           <SignaturePad canvasRef={canvasRef} />
@@ -5233,14 +5300,14 @@ function ConsentReportPage() {
   const [workTimeConsents,setWorkTimeConsents]=useState<any[]>([]);
   const [workTimeRequests,setWorkTimeRequests]=useState<any[]>([]);
   const [attendanceCorrections,setAttendanceCorrections]=useState<any[]>([]);
-  const [selected,setSelected]=useState<{employee:any;record:any;kind:"privacy"|"workTimeConsent"|"workTimeRequest"|"attendanceCorrection"}|null>(null);
+  const [selected,setSelected]=useState<{employee:any;record:any;kind:SignedRecordKind}|null>(null);
   const [workRequestFilter,setWorkRequestFilter]=useState("all");
   const [correctionFilter,setCorrectionFilter]=useState("all");
   const [message,setMessage]=useState("");
 
   async function load(){
     const [employeeResult,consentResult,workConsentResult,workRequestResult,correctionResult]=await Promise.all([
-      supabase.from("employees").select("id,name,employee_no,employment_status,is_active").order("employee_no",{ascending:true}),
+      supabase.from("employees").select("id,name,employee_no,role,employment_status,is_active").order("employee_no",{ascending:true}),
       supabase.from("privacy_consents").select("*").order("created_at",{ascending:false}),
       supabase.from("work_time_change_consents").select("*").order("created_at",{ascending:false}),
       supabase.from("work_time_change_requests").select("*").order("created_at",{ascending:false}),
@@ -5260,7 +5327,9 @@ function ConsentReportPage() {
   const latestByEmployee:Record<string,any>={};
   consents.forEach(consent=>{if(!latestByEmployee[consent.employee_id]) latestByEmployee[consent.employee_id]=consent;});
   const latestWorkConsentByEmployee:Record<string,any>={};
-  workTimeConsents.forEach(consent=>{if(!latestWorkConsentByEmployee[consent.employee_id]) latestWorkConsentByEmployee[consent.employee_id]=consent;});
+  workTimeConsents.filter(consent=>consent.consent_version===WORK_TIME_CHANGE_CONSENT_VERSION).forEach(consent=>{if(!latestWorkConsentByEmployee[consent.employee_id]) latestWorkConsentByEmployee[consent.employee_id]=consent;});
+  const latestAdminPledgeByEmployee:Record<string,any>={};
+  workTimeConsents.filter(consent=>consent.consent_version===ADMIN_CONFIDENTIALITY_CONSENT_VERSION).forEach(consent=>{if(!latestAdminPledgeByEmployee[consent.employee_id]) latestAdminPledgeByEmployee[consent.employee_id]=consent;});
   const employeeMap:Record<string,any>={};
   employees.forEach(employee=>{employeeMap[employee.id]=employee;});
   const signedWorkTimeRequests=workTimeRequests.filter(request=>request.signature_data);
@@ -5286,13 +5355,14 @@ function ConsentReportPage() {
   ];
   const filteredAttendanceCorrections=correctionFilter==="all"?attendanceCorrections:attendanceCorrections.filter((request:any)=>request.status===correctionFilter);
 
-  function signedTitle(kind:"privacy"|"workTimeConsent"|"workTimeRequest"|"attendanceCorrection"){
+  function signedTitle(kind:SignedRecordKind){
     if(kind==="privacy") return "개인정보 수집·이용 및 위치정보 동의서";
     if(kind==="workTimeConsent") return "근무시간 변경 안내 확인서";
+    if(kind==="adminConfidentiality") return ADMIN_CONFIDENTIALITY_NOTICE_TEXT;
     if(kind==="attendanceCorrection") return "출퇴근 기록 정정 확인서";
     return "근로시간 변경 요청 및 합의서";
   }
-  function signedBody(kind:"privacy"|"workTimeConsent"|"workTimeRequest"|"attendanceCorrection",record:any){
+  function signedBody(kind:SignedRecordKind,record:any){
     if(kind==="privacy") {
       const body=[
         "주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.",
@@ -5304,10 +5374,11 @@ function ConsentReportPage() {
       return body;
     }
     if(kind==="workTimeConsent") return [record.notice_text??WORK_TIME_CONSENT_TEXT, record.detail_text??WORK_TIME_DETAIL_TEXT];
+    if(kind==="adminConfidentiality") return [record.notice_text??ADMIN_CONFIDENTIALITY_NOTICE_TEXT, record.detail_text??ADMIN_CONFIDENTIALITY_DETAIL_TEXT];
     if(kind==="attendanceCorrection") return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
     return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
   }
-  function printSignedRecord(employee:any,record:any,kind:"privacy"|"workTimeConsent"|"workTimeRequest"|"attendanceCorrection"){
+  function printSignedRecord(employee:any,record:any,kind:SignedRecordKind){
     const popup=window.open("","_blank","width=860,height=1000");
     if(!popup) return setMessage("인쇄 창이 차단되었습니다. 브라우저의 팝업 차단을 해제해주세요.");
     popup.opener=null;
@@ -5354,17 +5425,21 @@ function ConsentReportPage() {
       <div className="table-wrap" style={{marginTop:18}}>
         <table>
           <caption className="table-summary">직원별 최신 필수 동의서</caption>
-          <thead><tr><th>직원</th><th>개인정보 동의</th><th>근무시간 변경 안내</th><th>관리</th></tr></thead>
+          <thead><tr><th>직원</th><th>개인정보 동의</th><th>근무시간 변경 안내</th><th>관리자 비밀유지</th><th>관리</th></tr></thead>
           <tbody>{employees.map(employee=>{
             const consent=latestByEmployee[employee.id];
             const workConsent=latestWorkConsentByEmployee[employee.id];
+            const adminPledge=latestAdminPledgeByEmployee[employee.id];
+            const isAdminEmployee=employee.role==="admin";
             return <tr key={employee.id}>
               <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
               <td><span className={`badge ${consent?"good":"warn"}`}>{consent?"완료":"미동의"}</span><SignedAt value={consent?.created_at} /></td>
               <td><span className={`badge ${workConsent?"good":"warn"}`}>{workConsent?"완료":"미서명"}</span><SignedAt value={workConsent?.created_at} /></td>
+              <td><span className={`badge ${!isAdminEmployee||adminPledge?"good":"warn"}`}>{isAdminEmployee?(adminPledge?"완료":"미서명"):"대상 아님"}</span><SignedAt value={adminPledge?.created_at} /></td>
               <td><div className="actions">
                 <button className="button secondary compact" disabled={!consent} onClick={()=>consent&&setSelected({employee,record:consent,kind:"privacy"})}><i className="ti ti-eye" aria-hidden="true"></i>개인정보</button>
                 <button className="button secondary compact" disabled={!workConsent} onClick={()=>workConsent&&setSelected({employee,record:workConsent,kind:"workTimeConsent"})}><i className="ti ti-clock-edit" aria-hidden="true"></i>근무시간</button>
+                <button className="button secondary compact" disabled={!adminPledge} onClick={()=>adminPledge&&setSelected({employee,record:adminPledge,kind:"adminConfidentiality"})}><i className="ti ti-shield-lock" aria-hidden="true"></i>비밀유지</button>
               </div></td>
             </tr>;
           })}</tbody>
