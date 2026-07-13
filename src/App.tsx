@@ -1432,6 +1432,7 @@ function AdminConfidentialityModal({ employee, onDone }: { employee:any; onDone:
   const [confirmDate,setConfirmDate]=useState(todayIso());
   const [msg,setMsg]=useState("");
   const [busy,setBusy]=useState(false);
+  const roleLabel=employee.role==="admin"?"관리자":"직원";
   async function submit() {
     setMsg("");
     const signature=signatureData(canvasRef);
@@ -1442,7 +1443,7 @@ function AdminConfidentialityModal({ employee, onDone }: { employee:any; onDone:
       employee_id:employee.id,
       consent_version:ADMIN_CONFIDENTIALITY_CONSENT_VERSION,
       notice_text:ADMIN_CONFIDENTIALITY_NOTICE_TEXT,
-      detail_text:`확인일시: ${confirmDate}\n\n${ADMIN_CONFIDENTIALITY_DETAIL_TEXT}`,
+      detail_text:`성명: ${employee.name}\n사번: ${employee.employee_no}\n권한: ${roleLabel}\n확인일시: ${confirmDate}\n\n${ADMIN_CONFIDENTIALITY_DETAIL_TEXT}`,
       signature_data:signature,
       device_fingerprint_hash:fingerprintHash,
       device_info:deviceInfo,
@@ -1456,12 +1457,12 @@ function AdminConfidentialityModal({ employee, onDone }: { employee:any; onDone:
         <div className="popup-mark"><i className="ti ti-shield-lock" aria-hidden="true"></i></div>
         <h2 className="card-title" style={{display:"block",marginBottom:8}}>{ADMIN_CONFIDENTIALITY_NOTICE_TEXT}</h2>
         <p className="body-text">관리자 권한으로 접근하는 회사 정보와 개인정보를 보호하기 위한 필수 서약입니다.</p>
-        <div className="consent-preview" style={{marginTop:14}}>
+        <div className="consent-preview admin-pledge-preview" style={{marginTop:14}}>
           <dl>
             <div><dt>성명</dt><dd>{employee.name}</dd></div>
             <div><dt>사번</dt><dd>{employee.employee_no}</dd></div>
-            <div><dt>권한</dt><dd>관리자</dd></div>
-            <div><dt>확인일시</dt><dd><input className="input" type="date" value={confirmDate} onChange={e=>setConfirmDate(e.target.value||todayIso())} /></dd></div>
+            <div><dt>권한</dt><dd>{roleLabel}</dd></div>
+            <div className="admin-pledge-date"><dt>확인일시</dt><dd><input className="input" type="date" value={confirmDate} onChange={e=>setConfirmDate(e.target.value||todayIso())} /></dd></div>
           </dl>
         </div>
         <div className="type-desc work-time-detail work-time-detail-space" style={{whiteSpace:"pre-wrap"}}>{ADMIN_CONFIDENTIALITY_DETAIL_TEXT}</div>
