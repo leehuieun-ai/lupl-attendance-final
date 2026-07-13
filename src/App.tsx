@@ -63,16 +63,11 @@ const RNR_BASELINE_ROLES = [
   {department:"디자인부서", position:"매니저", keywords:["디자인","브랜드","UI","이미지","콘텐츠","시안"], duties:["브랜드/콘텐츠 디자인","UI 화면 정리","홍보 이미지 제작","시안 관리"]},
 ];
 const RNR_CATEGORY_RULES = [
-  {label:"회계", keywords:["회계","정산","입금","출금","매출","비용","영수증","청구","결제"]},
-  {label:"세무", keywords:["세무","세금","부가세","원천세","신고","세무사","증빙"]},
-  {label:"서류", keywords:["서류","문서","계약서","제출","양식","파일","자료","공문"]},
-  {label:"인사", keywords:["인사","채용","직원","근로계약","급여","근태","휴가"]},
-  {label:"운영", keywords:["운영","일정","비품","재고","교육장","학교","준비","체크"]},
-  {label:"홍보", keywords:["홍보","마케팅","광고","SNS","콘텐츠","블로그","인스타"]},
-  {label:"고객응대", keywords:["문의","전화","응대","상담","고객","학부모","안내"]},
-  {label:"개발", keywords:["개발","버그","앱","시스템","배포","기능"]},
-  {label:"디자인", keywords:["디자인","시안","이미지","카드뉴스","브랜드"]},
-  {label:"AI", keywords:["AI","자동화","프롬프트","데이터","모델"]},
+  {label:"문서·행정", keywords:["서류","문서","계약서","제출","양식","파일","자료","공문","인사","채용","근로계약","근태","휴가"]},
+  {label:"회계·정산", keywords:["회계","세무","세금","정산","입금","출금","매출","비용","영수증","청구","결제","부가세","원천세","신고","세무사","증빙"]},
+  {label:"고객·수업운영", keywords:["운영","일정","비품","재고","교육장","학교","수업","교육","준비","체크","문의","전화","응대","상담","고객","학부모","안내"]},
+  {label:"콘텐츠·홍보", keywords:["홍보","마케팅","광고","SNS","콘텐츠","블로그","인스타","디자인","시안","이미지","카드뉴스","브랜드"]},
+  {label:"시스템·자동화", keywords:["개발","버그","앱","시스템","배포","기능","AI","자동화","프롬프트","데이터","모델"]},
 ];
 const RNR_CATEGORY_OPTIONS = ["", ...RNR_CATEGORY_RULES.map(rule=>rule.label), "기타"];
 const DEPARTMENT_OPTIONS = ["", ...Array.from(new Set(RNR_BASELINE_ROLES.map(role=>role.department)))];
@@ -2616,7 +2611,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       const dayStart=new Date(`${date}T00:00:00+09:00`).toISOString();
       const dayEnd=new Date(`${date}T23:59:59.999+09:00`).toISOString();
       const [logResult,overrideResult]=await Promise.all([
-        supabase.from("attendance_logs").select("check_in_time").eq("employee_id",employee.id).gte("check_in_time",dayStart).lte("check_in_time",dayEnd).order("check_in_time",{ascending:false}).limit(1).maybeSingle(),
+        supabase.from("attendance_logs").select("check_in_time,check_out_time").eq("employee_id",employee.id).gte("check_in_time",dayStart).lte("check_in_time",dayEnd).order("check_in_time",{ascending:false}).limit(1).maybeSingle(),
         supabase.from("weekly_schedule_overrides").select("*").eq("employee_id",employee.id).eq("week_start",weekStartIso(date)).maybeSingle(),
       ]);
       const workStart=overrideResult.data?.work_start??employee.work_start??"09:00";
@@ -2625,12 +2620,17 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       const endMin=timeToMinutes(workEnd)??18*60;
       const shiftMinutes=endMin>startMin?endMin-startMin:(24*60-startMin)+endMin;
       const checkIn=logResult.data?.check_in_time?new Date(logResult.data.check_in_time):null;
+      const checkOut=logResult.data?.check_out_time?new Date(logResult.data.check_out_time):null;
       const expectedEnd=checkIn?addMinutes(checkIn,shiftMinutes):kstDateTime(date,workEnd);
       if(cancelled) return;
       const expectedEndHHMM=new Intl.DateTimeFormat("ko-KR",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Seoul"}).format(expectedEnd);
-      setCompBaseline({hasCheckIn:!!checkIn,checkInTime:checkIn?.toISOString()??null,expectedEndTime:expectedEnd.toISOString(),expectedEndHHMM,shiftMinutes});
+      const actualCheckoutHHMM=checkOut?new Intl.DateTimeFormat("ko-KR",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Seoul"}).format(checkOut):null;
+      setCompBaseline({hasCheckIn:!!checkIn,checkInTime:checkIn?.toISOString()??null,hasCheckOut:!!checkOut,checkOutTime:checkOut?.toISOString()??null,actualCheckoutHHMM,expectedEndTime:expectedEnd.toISOString(),expectedEndHHMM,shiftMinutes});
       setCompForm(current=>{
         if(current.work_date!==date||(timeToMinutes(current.start_time)??0)>=(timeToMinutes(expectedEndHHMM)??0)) return current;
+        if(actualCheckoutHHMM&&(timeToMinutes(actualCheckoutHHMM)??0)>(timeToMinutes(expectedEndHHMM)??0)) {
+          return {...current,start_time:expectedEndHHMM,end_time:actualCheckoutHHMM,hours:timeDiffHours(expectedEndHHMM,actualCheckoutHHMM)};
+        }
         const durationMinutes=Math.max(30,Math.round(Number(current.hours||2)*60));
         const nextEnd=Math.min(23*60+59,(timeToMinutes(expectedEndHHMM)??0)+durationMinutes);
         return {...current,start_time:expectedEndHHMM,end_time:minutesToTime(nextEnd),hours:Math.round((nextEnd-(timeToMinutes(expectedEndHHMM)??0))/6)/10};
@@ -2715,7 +2715,15 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   }
 
   function handleCompTimeChange(field:"start_time"|"end_time",val:string){
-    const next={...compForm,[field]:val};
+    let next={...compForm,[field]:val};
+    if(field==="start_time"){
+      const oldStart=timeToMinutes(compForm.start_time);
+      const oldEnd=timeToMinutes(compForm.end_time);
+      const newStart=timeToMinutes(val);
+      if(oldStart!=null&&oldEnd!=null&&newStart!=null&&oldEnd>oldStart) {
+        next={...next,end_time:minutesToTime(newStart+(oldEnd-oldStart))};
+      }
+    }
     const h=timeDiffHours(next.start_time,next.end_time);
     setCompForm({...next,hours:h>0?h:compForm.hours});
   }
@@ -2732,7 +2740,8 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       return setMessage(`${basis} ${compBaseline.expectedEndHHMM} 이후 시간만 추가근무로 신청할 수 있습니다.`);
     }
     const startAt=new Date(`${compForm.work_date}T${compForm.start_time}:00`);
-    if(new Date().getTime()>=startAt.getTime()) return setMessage("추가근무 신청은 신청 시작 시간 전에만 가능합니다.");
+    const hasActualOvertime=(timeToMinutes(compBaseline.actualCheckoutHHMM)??0)>(timeToMinutes(compBaseline.expectedEndHHMM)??0);
+    if(!hasActualOvertime&&new Date().getTime()>=startAt.getTime()) return setMessage("추가근무 신청은 원칙적으로 시작 시간 전에만 가능합니다. 이미 퇴근 기록이 있고 기준 종료보다 늦게 퇴근한 날짜는 실제 퇴근시간 기준으로 신청할 수 있습니다.");
     const duplicate=compRequests.find(r=>r.work_date===compForm.work_date&&r.start_time===compForm.start_time&&r.end_time===compForm.end_time&&["pending","approved"].includes(r.status));
     if(duplicate) return setMessage("이미 신청한 시간입니다. 관리자의 승인을 기다려주세요.");
     const normalHours=Math.round((compBaseline.shiftMinutes/60)*10)/10;
@@ -2830,6 +2839,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
             <span>{compBaseline.hasCheckIn
               ? `${timeOnly(compBaseline.checkInTime)} 출근 · 소정근로 ${formatHourValue(Math.round((compBaseline.shiftMinutes/60)*10)/10)}시간 · 기본 휴게 1시간 · 기준 종료 ${compBaseline.expectedEndHHMM}`
               : "아직 출근기록이 없어 등록된 출근 스케줄 기준으로 계산했습니다."}</span>
+            {compBaseline.actualCheckoutHHMM&&(timeToMinutes(compBaseline.actualCheckoutHHMM)??0)>(timeToMinutes(compBaseline.expectedEndHHMM)??0)&&<span>실제 퇴근 기록 {compBaseline.actualCheckoutHHMM} 기준으로 종료 시간이 자동 입력되었습니다. 이 시간이 맞나요?</span>}
           </div>}
           <div className="form-row"><label className="label">추가근무일</label><input className="input" type="date" value={compForm.work_date} onChange={e=>setCompForm({...compForm,work_date:e.target.value})} /></div>
           <div className="comp-time-grid">
@@ -3431,7 +3441,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       old_check_in_time:log?.check_in_time??null,
       old_check_out_time:log?.check_out_time??null,
       requested_check_in_time:log?.check_in_time ? dateTimeLocalValue(log.check_in_time) : defaultDateTimeLocal(workDate,schedule.work_start),
-      requested_check_out_time:log?.check_out_time ? dateTimeLocalValue(log.check_out_time) : "",
+      requested_check_out_time:log?.check_out_time ? dateTimeLocalValue(log.check_out_time) : defaultDateTimeLocal(workDate,schedule.work_end),
       reason:"출퇴근 버튼 누락 또는 오입력 정정",
       evidence_note:"관리자 확인",
     });
@@ -3441,12 +3451,15 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       if(!draft) return draft;
       const employee=empMap[draft.employee_id];
       const schedule=getScheduleForDate(employee,workDate,overrides,workTimeRequests.filter((r:any)=>r.status==="approved"));
-      const keepTime=(value:string,fallback:string)=>value ? `${workDate}T${String(value).slice(11,16)}` : defaultDateTimeLocal(workDate,fallback);
+      const dayLog=allLogs.find((log:any)=>log.employee_id===draft.employee_id&&localDateStr(log.check_in_time)===workDate);
       return {
         ...draft,
+        attendance_log_id:dayLog?.id??null,
         work_date:workDate,
-        requested_check_in_time:keepTime(draft.requested_check_in_time,schedule.work_start),
-        requested_check_out_time:draft.requested_check_out_time ? `${workDate}T${String(draft.requested_check_out_time).slice(11,16)}` : "",
+        old_check_in_time:dayLog?.check_in_time??null,
+        old_check_out_time:dayLog?.check_out_time??null,
+        requested_check_in_time:dayLog?.check_in_time ? dateTimeLocalValue(dayLog.check_in_time) : defaultDateTimeLocal(workDate,schedule.work_start),
+        requested_check_out_time:dayLog?.check_out_time ? dateTimeLocalValue(dayLog.check_out_time) : defaultDateTimeLocal(workDate,schedule.work_end),
       };
     });
   }
@@ -4032,12 +4045,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           {visibleRnrStackGroups.length===0 ? <p className="subtle">분류할 R&R이 없습니다.</p> : visibleRnrStackGroups.map((group:any)=>(
             <div className="rnr-stack-column" key={group.key}>
               <div className="rnr-person-head"><b>{group.department}</b><span>{group.position} · {group.category}</span></div>
-              {group.entries.map((entry:any)=>(
+              {group.entries.slice(0,5).map((entry:any)=>(
                 <button className="rnr-person-task" key={entry.id} onClick={()=>openRnr(entry)}>
                   <b>{rnrDisplayTitle(entry)}</b>
                   <span>담당 {rnrAssigneeName(entry)}</span>
                 </button>
               ))}
+              {group.entries.length>5&&<small className="subtle">외 {group.entries.length-5}건은 필터 또는 상세에서 확인</small>}
             </div>
           ))}
         </div>
@@ -4045,12 +4059,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           {rnrBoardColumns.length===0 ? <p className="subtle">담당자별로 표시할 R&R이 없습니다.</p> : rnrBoardColumns.map(column=>(
             <div className="rnr-person-column" key={column.key}>
               <div className="rnr-person-head"><b>{column.title}</b><span>{column.subtitle}</span></div>
-              {column.entries.map((entry:any)=>(
+              {column.entries.slice(0,5).map((entry:any)=>(
                 <button className="rnr-person-task" key={entry.id} onClick={()=>openRnr(entry)}>
                   <b>{rnrDisplayTitle(entry)}</b>
                   <span>{entry.department||"공통"} · {entry.position||entry.category||"업무"}</span>
                 </button>
               ))}
+              {column.entries.length>5&&<small className="subtle">외 {column.entries.length-5}건</small>}
             </div>
           ))}
         </div>
@@ -5321,6 +5336,13 @@ function ConsentReportPage() {
     </body></html>`);
     popup.document.close();
   }
+  async function deleteRejectedWorkTimeRequest(request:any) {
+    if(request.status!=="rejected") return setMessage("반려된 근무시간 변경 요청만 삭제할 수 있습니다.");
+    if(!window.confirm("반려된 근무시간 변경 요청을 삭제할까요? 저장된 서명 기록도 목록에서 사라집니다.")) return;
+    const {error}=await supabase.from("work_time_change_requests").delete().eq("id",request.id).eq("status","rejected");
+    if(error) setMessage(friendlySignatureDbError(error));
+    else { setMessage("반려된 근무시간 변경 요청을 삭제했습니다."); await load(); }
+  }
 
   return <div className="grid">
     {message&&<div className="alert error">{message}</div>}
@@ -5372,7 +5394,7 @@ function ConsentReportPage() {
               <td className="clamp-two">{request.reason||request.review_note||request.note||"-"}</td>
               <td><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
               <td className="nowrap-cell"><SignedAt value={request.created_at} /></td>
-              <td><div className="actions"><button className="button secondary compact" disabled={!request.signature_data} onClick={()=>setSelected({employee,record:request,kind:"workTimeRequest"})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!request.signature_data} onClick={()=>printSignedRecord(employee,request,"workTimeRequest")}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button></div></td>
+              <td><div className="actions"><button className="button secondary compact" disabled={!request.signature_data} onClick={()=>setSelected({employee,record:request,kind:"workTimeRequest"})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!request.signature_data} onClick={()=>printSignedRecord(employee,request,"workTimeRequest")}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button>{request.status==="rejected"&&<button className="button danger compact" onClick={()=>deleteRejectedWorkTimeRequest(request)}><i className="ti ti-trash" aria-hidden="true"></i>삭제</button>}</div></td>
             </tr>;
           })}</tbody>
         </table>
@@ -5567,17 +5589,36 @@ function ReportsPage() {
     실제기록시간:fmtMin(workedMinutes(l.check_in_time,l.check_out_time)),
     상태:l.status,
     초과근무심사:l.overtime_review_status==="approved"?"승인":l.overtime_review_status==="rejected"?"미인정":"-",
-    기기:l.device_status??"-"
   };});
 
   function downloadAll(){
-    exportRowsToExcel("lupl_attendance_report.xlsx","근태",allLogRows);
+    const rows:any[]=[];
+    const sourceLogs=recordFilteredLogs;
+    visibleEmployees.forEach((employee:any)=>{
+      const employeeLogs=sourceLogs.filter((log:any)=>log.employee_id===employee.id);
+      if(!employeeLogs.length) return;
+      const counts={normal:0,late:0,field:0,remote:0,exception:0};
+      employeeLogs.forEach((log:any)=>{ counts[attendanceGroupForLog(log) as keyof typeof counts]+=1; });
+      const minutes=employeeLogs.reduce((sum:number,log:any)=>sum+(reportWorkedMinutes(log)??0),0);
+      rows.push({
+        구분:"직원 요약",
+        직원:employee.name,
+        사번:employee.employee_no??"-",
+        근태유형:`정상 ${counts.normal}건 · 지각 ${counts.late}건 · 외근 ${counts.field}건 · 재택 ${counts.remote}건 · 예외 ${counts.exception}건`,
+        인정근무:fmtMin(minutes),
+        상태:`총 ${employeeLogs.length}건`,
+      });
+      rows.push(...allLogRows.filter(row=>row.직원===employee.name&&row.사번===(employee.employee_no??"-")));
+      rows.push({});
+    });
+    exportRowsToExcel("lupl_attendance_report.xlsx","근태",rows.length?rows:allLogRows);
   }
 
   const fieldLogs=visibleLogs.filter(l=>["special_school","external_education","other_field"].includes(l.workplaces?.type));
   const exceptions=visibleLogs.filter(l=>["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음","지각","결근"].includes(l.status)||!l.check_out_time||attendanceGroupForLog(l)==="late");
+  const monthVisibleLogs=visibleLogs.filter((log:any)=>localDateStr(log.check_in_time).startsWith(reportMonth));
   const statusChartRows=visibleEmployees.map((employee:any)=>{
-    const employeeLogs=visibleLogs.filter((log:any)=>log.employee_id===employee.id);
+    const employeeLogs=monthVisibleLogs.filter((log:any)=>log.employee_id===employee.id);
     const counts={normal:0,late:0,field:0,remote:0,exception:0};
     const typeCounts:Record<string,number>={};
     employeeLogs.forEach((log:any)=>{
@@ -5627,7 +5668,7 @@ function ReportsPage() {
   const hasWeekendActivity=calendarDates.some(date=>{
     const day=dayKeyFromDate(dateFromIso(date));
     const info=(calendarScheduleMap as any)[date];
-    return ["sat","sun"].includes(day)&&((calendarLogMap as any)[date]?.length>0||info?.workday||info?.leave);
+    return ["sat","sun"].includes(day)&&((calendarLogMap as any)[date]?.length>0||info?.workday);
   });
   const calendarDayKeys=hasWeekendActivity?ALL_DAYS:ALL_DAYS.slice(0,5);
   const calendarVisibleDates=hasWeekendActivity?calendarDates:calendarDates.filter(date=>!["sat","sun"].includes(dayKeyFromDate(dateFromIso(date))));
@@ -5721,7 +5762,10 @@ function ReportsPage() {
       </section>
 
       <section className="card">
-        <h2 className="card-title"><i className="ti ti-chart-bar" aria-hidden="true"></i>직원별 근태 유형</h2>
+        <div className="monthly-report-head">
+          <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-chart-bar" aria-hidden="true"></i>직원별 근태 유형</h2>
+          <input className="input payroll-month-picker" type="month" value={reportMonth} onChange={e=>setReportMonth(e.target.value||todayIso().slice(0,7))} />
+        </div>
         <div className="attendance-status-chart">
           {statusChartRows.map(({employee,counts,typeRows,typeDetails,total,shownTotal}:any)=>(
             <div className="attendance-status-row" key={employee.id}>
@@ -5771,7 +5815,7 @@ function ReportsPage() {
 function DataTable({ rows }: { rows: Record<string,any>[] }) {
   if(!rows.length) return <p className="subtle">표시할 데이터가 없습니다.</p>;
   const cols=Object.keys(rows[0]);
-  const nowrapCols=new Set(["직원","상태","서명 일시"]);
+  const nowrapCols=new Set(["직원","사번","상태","서명 일시"]);
   return (
     <div className="table-wrap">
       <table>
