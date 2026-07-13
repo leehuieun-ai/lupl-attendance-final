@@ -53,15 +53,33 @@ const ATTENDANCE_CORRECTION_DETAIL_TEXT = [
   "기재된 시각이 실제 근로시간과 다르면 이의제기할 수 있으며, 회사는 객관 자료 확인 후 다시 정정합니다.",
 ].join("\n");
 const PRIVACY_CONSENT_VERSION = "2026-07";
-const ADMIN_CONFIDENTIALITY_CONSENT_VERSION = "2026-07-admin-confidentiality";
+const ADMIN_CONFIDENTIALITY_CONSENT_VERSION = "2026-07-admin-confidentiality-formal";
 const ADMIN_CONFIDENTIALITY_NOTICE_TEXT = "관리자 비밀유지 및 정보보호 서약서";
 const ADMIN_CONFIDENTIALITY_DETAIL_TEXT = [
-  "본인은 관리자 권한으로 접근하거나 업무상 알게 된 회사의 비공개 정보를 승인 없이 제3자에게 공개, 제공, 복제, 전송, 게시 또는 사적으로 이용하지 않겠습니다.",
-  "비공개 정보에는 고객·직원 개인정보, 거래처 정보, 계약·정산·재무자료, 교육자료, 운영 매뉴얼, 소스코드, 계정·접근권한, 사업계획, 마케팅 자료, 내부 대화 및 회의 내용 등 공개되지 않은 모든 업무자료가 포함됩니다.",
-  "포트폴리오, 이력서, 발표자료, SNS, 블로그, 외부 제안서 등에 회사 업무 산출물이나 내부 정보를 사용할 때에는 사전에 회사의 명시적 승인을 받겠습니다.",
-  "본 서약은 서명일 현재 본인이 보유하거나 알고 있는 비공개 정보 및 서명일 이후 새로 취득하는 비공개 정보에 적용되며, 퇴직 후에도 유효합니다.",
-  "퇴직, 권한 변경 또는 회사 요청 시 회사 자료와 계정, 저장매체, 출력물, 사본을 즉시 반환·삭제하고, 개인 기기나 개인 클라우드에 보관하지 않겠습니다.",
-  "위반 시 회사의 손해배상 청구, 접근권한 회수, 징계 및 관련 법령상 책임이 발생할 수 있음을 확인합니다. 본 서약은 임금, 휴가, 근로시간 등 근로조건의 포기나 위약벌 약정이 아닙니다.",
+  "1. 목적",
+  "본 서약서는 관리자 권한으로 접근하는 회사 정보, 개인정보 및 업무자료를 보호하기 위하여 작성합니다.",
+  "",
+  "2. 비밀정보의 범위",
+  "비밀정보란 회사가 공개하지 않은 모든 업무상 정보를 말합니다.",
+  "여기에는 고객·직원 개인정보, 거래처 정보, 계약·정산·재무자료, 교육자료, 운영 매뉴얼, 소스코드, 계정 및 접근권한, 사업계획, 마케팅 자료, 내부 대화 및 회의 내용이 포함됩니다.",
+  "",
+  "3. 금지행위",
+  "본인은 비밀정보를 회사의 승인 없이 공개, 제공, 복제, 전송, 게시하거나 사적으로 이용하지 않겠습니다.",
+  "본인은 비밀정보를 개인 기기, 개인 이메일, 개인 클라우드 또는 외부 저장소에 임의로 보관하지 않겠습니다.",
+  "",
+  "4. 외부 공개 및 포트폴리오 사용",
+  "본인은 회사 업무 산출물, 내부 자료 또는 고객·직원 관련 정보를 포트폴리오, 이력서, 발표자료, SNS, 블로그, 외부 제안서 등에 사용하려는 경우 사전에 회사의 명시적 승인을 받겠습니다.",
+  "",
+  "5. 퇴직·권한 변경 시 조치",
+  "본인은 퇴직, 권한 변경 또는 회사 요청이 있는 경우 회사 자료, 계정, 저장매체, 출력물 및 사본을 즉시 반환하거나 삭제하겠습니다.",
+  "",
+  "6. 위반 시 조치",
+  "본 서약을 위반한 경우 회사는 접근권한 회수, 징계, 손해배상 청구 및 관계 법령에 따른 조치를 할 수 있음을 확인합니다.",
+  "",
+  "7. 근로조건과의 관계",
+  "본 서약은 임금, 휴가, 근로시간 등 근로조건의 포기 또는 위약벌 약정이 아닙니다.",
+  "",
+  "위 내용을 확인하고 서약합니다.",
 ].join("\n");
 const WORK_TIME_CONSENT_CHECK_TEXT = "근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 전자서명할 수 있으며, 실제 변경은 건별 요청 및 회사 승인 후 적용된다는 설명을 확인했습니다.";
 const ANNUAL_LEAVE_LEGAL_NOTE = "파트타임이라는 이유만으로 연차가 항상 없는 것은 아닙니다. 4주 평균 1주 소정근로시간이 15시간 미만이면 연차 규정 적용 제외가 가능하고, 15시간 이상 단시간근로자는 연차가 발생할 수 있습니다.";
@@ -1436,11 +1454,15 @@ function AdminConfidentialityModal({ employee, onDone }: { employee:any; onDone:
     <div className="modal-backdrop">
       <div className="modal-box work-consent-modal" onClick={e=>e.stopPropagation()}>
         <div className="popup-mark"><i className="ti ti-shield-lock" aria-hidden="true"></i></div>
-        <h2 className="card-title" style={{display:"block",marginBottom:8}}>관리자 비밀유지 서약</h2>
-        <p className="body-text">관리자 권한으로 접근하는 회사·직원·고객·운영 정보를 보호하기 위한 관리자 전용 필수 서약입니다.</p>
-        <div className="form-row" style={{marginTop:14}}>
-          <label className="label">확인일시</label>
-          <input className="input" type="date" value={confirmDate} onChange={e=>setConfirmDate(e.target.value||todayIso())} />
+        <h2 className="card-title" style={{display:"block",marginBottom:8}}>{ADMIN_CONFIDENTIALITY_NOTICE_TEXT}</h2>
+        <p className="body-text">관리자 권한으로 접근하는 회사 정보와 개인정보를 보호하기 위한 필수 서약입니다.</p>
+        <div className="consent-preview" style={{marginTop:14}}>
+          <dl>
+            <div><dt>성명</dt><dd>{employee.name}</dd></div>
+            <div><dt>사번</dt><dd>{employee.employee_no}</dd></div>
+            <div><dt>권한</dt><dd>관리자</dd></div>
+            <div><dt>확인일시</dt><dd><input className="input" type="date" value={confirmDate} onChange={e=>setConfirmDate(e.target.value||todayIso())} /></dd></div>
+          </dl>
         </div>
         <div className="type-desc work-time-detail work-time-detail-space" style={{whiteSpace:"pre-wrap"}}>{ADMIN_CONFIDENTIALITY_DETAIL_TEXT}</div>
         <div style={{marginTop:14}}>
