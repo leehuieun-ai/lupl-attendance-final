@@ -210,8 +210,13 @@ button { cursor: pointer; }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table-summary { caption-side: top; text-align: left; padding: 11px 12px; background: #f7f9fc; color: var(--ink); font-size: 13px; font-weight: 700; border-bottom: 1px solid var(--line); }
+.table-cell-nowrap { display: inline-block; white-space: nowrap; overflow-wrap: normal; }
 .nowrap-cell b, .nowrap-cell span { display: block; white-space: nowrap; }
 .nowrap-cell span { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.signed-at-cell { display: block; margin-top: 4px; line-height: 1.35; }
+.signed-at-cell b, .signed-at-cell span { display: block; white-space: nowrap; }
+.signed-at-cell b { color: #182235; font-size: 12px; font-weight: 750; }
+.signed-at-cell span { color: var(--muted); font-size: 12px; }
 .workload-summary-board { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 10px; margin: 12px 0 14px; }
 .workload-summary-card { border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; padding: 12px; }
 .workload-summary-card b, .workload-summary-card span, .workload-summary-card strong, .workload-summary-card small { display: block; }
@@ -865,8 +870,8 @@ body { overflow-x: hidden; }
 .employee-contract-grid .select,
 .employee-contract-grid .input { margin-top: 6px; background: #fff; font-size: 13px; }
 .compact-select { min-height: 38px; padding: 8px 10px; }
-.compact-days { display: grid; grid-template-columns: repeat(7,minmax(34px,1fr)); gap: 4px; margin-top: 7px; }
-.compact-days .day-btn { min-width: 0; min-height: 30px; padding: 5px 0; font-size: 12px; }
+.compact-days { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 4px; margin-top: 7px; }
+.compact-days .day-btn { width: 100%; min-width: 0; min-height: 30px; padding: 5px 0; font-size: 12px; }
 .inline-time-edit { display: grid; grid-template-columns: minmax(0,1fr); gap: 6px; margin-top: 6px; }
 .inline-time-edit .input { min-height: 38px; padding: 8px 9px; }
 .employee-contract-note {
@@ -964,7 +969,7 @@ body { overflow-x: hidden; }
 .attendance-status-chart { display: grid; gap: 12px; }
 .attendance-status-row { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 12px; align-items: center; }
 .attendance-status-name b, .attendance-status-name span { display: block; }
-.attendance-status-name b { color: #182235; font-size: 14px; }
+.attendance-status-name b { color: #182235; font-size: 14px; white-space: nowrap; }
 .attendance-status-name span { color: var(--muted); font-size: 12px; font-weight: 750; margin-top: 2px; }
 .attendance-status-bars { min-height: 42px; display: flex; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: #f8fafc; }
 .attendance-status-bars span { min-width: fit-content; display: inline-flex; align-items: center; justify-content: center; padding: 0 10px; color: #fff; font-size: 12px; font-weight: 850; white-space: nowrap; }
@@ -1002,7 +1007,7 @@ body { overflow-x: hidden; }
 .monthly-calendar-cell { min-height: 78px; display: grid; align-content: start; gap: 4px; border: 1px solid #e3e9f3; border-radius: 8px; background: #f8fafc; padding: 9px; color: #98a2b3; }
 .monthly-calendar-cell.empty { visibility: hidden; }
 .monthly-calendar-cell.worked { border-color: color-mix(in srgb,var(--employee-color) 30%,#d7e6ff); background: color-mix(in srgb,var(--employee-color) 12%,white); color: var(--employee-color); }
-.monthly-calendar-cell.scheduled { border-style: dashed; background: #fbfcfe; color: #667085; }
+.monthly-calendar-cell.scheduled { border-color: #fdba74; border-style: dashed; background: #fff7ed; color: #c2410c; }
 .monthly-calendar-cell.off { filter: grayscale(1); }
 .monthly-calendar-cell b { color: #182235; font-size: 13px; }
 .monthly-calendar-cell span { color: inherit; font-size: 13px; font-weight: 850; }

@@ -171,6 +171,10 @@ function timeOnly(v?: string | Date | null) {
   if (!v) return "-";
   return new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Seoul" }).format(new Date(v));
 }
+function SignedAt({value}:{value?:string|null}) {
+  if(!value) return <span className="subtle">-</span>;
+  return <span className="signed-at-cell"><b>{formatDateOnly(value)}</b><span>{timeOnly(value)}</span></span>;
+}
 function kstHHMM(v: Date | string) {
   const d = kstDate(v);
   return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
@@ -5334,8 +5338,8 @@ function ConsentReportPage() {
             const workConsent=latestWorkConsentByEmployee[employee.id];
             return <tr key={employee.id}>
               <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
-              <td><span className={`badge ${consent?"good":"warn"}`}>{consent?"완료":"미동의"}</span><br/><span className="subtle">{consent?formatDateTime(consent.created_at):"-"}</span></td>
-              <td><span className={`badge ${workConsent?"good":"warn"}`}>{workConsent?"완료":"미서명"}</span><br/><span className="subtle">{workConsent?formatDateTime(workConsent.created_at):"-"}</span></td>
+              <td><span className={`badge ${consent?"good":"warn"}`}>{consent?"완료":"미동의"}</span><SignedAt value={consent?.created_at} /></td>
+              <td><span className={`badge ${workConsent?"good":"warn"}`}>{workConsent?"완료":"미서명"}</span><SignedAt value={workConsent?.created_at} /></td>
               <td><div className="actions">
                 <button className="button secondary compact" disabled={!consent} onClick={()=>consent&&setSelected({employee,record:consent,kind:"privacy"})}><i className="ti ti-eye" aria-hidden="true"></i>개인정보</button>
                 <button className="button secondary compact" disabled={!workConsent} onClick={()=>workConsent&&setSelected({employee,record:workConsent,kind:"workTimeConsent"})}><i className="ti ti-clock-edit" aria-hidden="true"></i>근무시간</button>
@@ -5367,7 +5371,7 @@ function ConsentReportPage() {
               <td><span className="work-change-kind">{workChangeKind(request)}</span></td>
               <td className="clamp-two">{request.reason||request.review_note||request.note||"-"}</td>
               <td><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
-              <td className="nowrap-cell"><b>{formatDateOnly(request.created_at)}</b><span>{timeOnly(request.created_at)}</span></td>
+              <td className="nowrap-cell"><SignedAt value={request.created_at} /></td>
               <td><div className="actions"><button className="button secondary compact" disabled={!request.signature_data} onClick={()=>setSelected({employee,record:request,kind:"workTimeRequest"})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!request.signature_data} onClick={()=>printSignedRecord(employee,request,"workTimeRequest")}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button></div></td>
             </tr>;
           })}</tbody>
@@ -5397,7 +5401,7 @@ function ConsentReportPage() {
               <td>{attendanceCorrectionTimeLine(request)}</td>
               <td>{request.reason||"-"}</td>
               <td><span className={`badge ${request.status==="signed"?"good":request.status==="objected"?"bad":"warn"}`}>{attendanceCorrectionStatusLabel(request.status)}</span></td>
-              <td>{formatDateTime(request.signed_at)}</td>
+              <td><SignedAt value={request.signed_at} /></td>
               <td><div className="actions"><button className="button secondary compact" disabled={!request.signature_data} onClick={()=>setSelected({employee,record:request,kind:"attendanceCorrection"})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button><button className="button ghost compact" disabled={!request.signature_data} onClick={()=>printSignedRecord(employee,request,"attendanceCorrection")}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button></div></td>
             </tr>;
           })}</tbody>
@@ -5409,7 +5413,7 @@ function ConsentReportPage() {
       <div className="modal-box consent-modal" onClick={e=>e.stopPropagation()}>
         <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-file-certificate" aria-hidden="true"></i>{selected.employee.name} {signedTitle(selected.kind)}</h2><button className="modal-close" title="닫기" onClick={()=>setSelected(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
         <div className="consent-preview">
-          <dl><div><dt>사번</dt><dd>{selected.employee.employee_no}</dd></div><div><dt>서명 일시</dt><dd>{formatDateTime(selected.record.created_at)}</dd></div><div><dt>버전</dt><dd>{selected.record.consent_version??selected.record.legal_notice_version??"-"}</dd></div></dl>
+          <dl><div><dt>사번</dt><dd>{selected.employee.employee_no}</dd></div><div><dt>서명 일시</dt><dd><SignedAt value={selected.record.created_at} /></dd></div><div><dt>버전</dt><dd>{selected.record.consent_version??selected.record.legal_notice_version??"-"}</dd></div></dl>
           <div className="type-desc">{signedBody(selected.kind,selected.record).map((line,index)=><p key={index} style={{margin:index===0?0:"8px 0 0",whiteSpace:"pre-wrap"}}>{line}</p>)}</div>
           <div className="consent-signature"><span>전자 서명</span>{selected.record.signature_data?<img src={selected.record.signature_data} alt={`${selected.employee.name} 전자 서명`} />:<p>서명 이미지가 없습니다.</p>}</div>
         </div>
@@ -5487,14 +5491,37 @@ function ReportsPage() {
   function employeeForLog(log:any) {
     return employeeMap[log.employee_id] ?? log.employees ?? {id:log.employee_id??`unknown-${log.id}`,name:"기록 보관 직원",employee_no:"퇴사/삭제 계정"};
   }
+  function lateMinutesForLog(log:any) {
+    if(!log?.check_in_time) return 0;
+    const employee=employeeForLog(log);
+    const info=reportScheduleInfoForDate(employee,localDateStr(log.check_in_time));
+    if(!info?.workday) return 0;
+    const scheduledStart=timeToMinutes(info.start);
+    if(scheduledStart==null) return 0;
+    const lateThreshold=Math.max(10*60,scheduledStart);
+    const checkedIn=kstDate(log.check_in_time);
+    const actualMinutes=checkedIn.getUTCHours()*60+checkedIn.getUTCMinutes();
+    return Math.max(0,actualMinutes-lateThreshold);
+  }
   function attendanceTypeLabelsForLog(log:any) {
     const labels:string[]=[];
+    const add=(label:string)=>{if(label&&!labels.includes(label)) labels.push(label);};
     const status=String(log.status??"").trim();
     const workplaceType=workplaceTypeLabels[log.workplaces?.type];
-    if(status) labels.push(status);
-    if(workplaceType&&!labels.includes(workplaceType)) labels.push(workplaceType);
-    if(!log.check_out_time&&!labels.includes("퇴근 미처리")) labels.push("퇴근 미처리");
+    if(lateMinutesForLog(log)>0||status.includes("지각")) add("지각");
+    if(status&&!["정상","정상출근","확인 완료"].includes(status)) add(status);
+    add(workplaceType||"일반근무");
+    if(!log.check_out_time) add("퇴근 미처리");
     return labels.length?labels:["미분류"];
+  }
+  function attendanceGroupForLog(log:any) {
+    const status=String(log.status??"");
+    const type=log.workplaces?.type;
+    if(lateMinutesForLog(log)>0||status.includes("지각")) return "late";
+    if(type==="remote") return "remote";
+    if(["special_school","external_education","other_field"].includes(type)) return "field";
+    if(!log.check_out_time||status.includes("확인")||status.includes("결근")) return "exception";
+    return "normal";
   }
   function reportWorkedMinutes(log:any) {
     const raw=workedMinutes(log.check_in_time,log.check_out_time);
@@ -5548,20 +5575,15 @@ function ReportsPage() {
   }
 
   const fieldLogs=visibleLogs.filter(l=>["special_school","external_education","other_field"].includes(l.workplaces?.type));
-  const exceptions=visibleLogs.filter(l=>["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음","지각","결근"].includes(l.status)||!l.check_out_time);
+  const exceptions=visibleLogs.filter(l=>["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음","지각","결근"].includes(l.status)||!l.check_out_time||attendanceGroupForLog(l)==="late");
   const statusChartRows=visibleEmployees.map((employee:any)=>{
     const employeeLogs=visibleLogs.filter((log:any)=>log.employee_id===employee.id);
     const counts={normal:0,late:0,field:0,remote:0,exception:0};
     const typeCounts:Record<string,number>={};
     employeeLogs.forEach((log:any)=>{
       attendanceTypeLabelsForLog(log).forEach(label=>{typeCounts[label]=(typeCounts[label]??0)+1;});
-      const status=String(log.status??"");
-      const type=log.workplaces?.type;
-      if(status.includes("지각")) counts.late+=1;
-      else if(type==="remote") counts.remote+=1;
-      else if(["special_school","external_education","other_field"].includes(type)) counts.field+=1;
-      else if(!log.check_out_time||status.includes("확인")||status.includes("결근")) counts.exception+=1;
-      else counts.normal+=1;
+      const group=attendanceGroupForLog(log);
+      counts[group as keyof typeof counts]+=1;
     });
     const total=Math.max(1,employeeLogs.length);
     const typeRows=Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]));
@@ -5749,11 +5771,12 @@ function ReportsPage() {
 function DataTable({ rows }: { rows: Record<string,any>[] }) {
   if(!rows.length) return <p className="subtle">표시할 데이터가 없습니다.</p>;
   const cols=Object.keys(rows[0]);
+  const nowrapCols=new Set(["직원","상태","서명 일시"]);
   return (
     <div className="table-wrap">
       <table>
         <thead><tr>{cols.map(c=><th key={c}>{c}</th>)}</tr></thead>
-        <tbody>{rows.map((row,i)=><tr key={i}>{cols.map(c=><td key={c} data-label={c}>{String(row[c]??"-")}</td>)}</tr>)}</tbody>
+        <tbody>{rows.map((row,i)=><tr key={i}>{cols.map(c=><td key={c} data-label={c}><span className={nowrapCols.has(c)?"table-cell-nowrap":""}>{String(row[c]??"-")}</span></td>)}</tr>)}</tbody>
       </table>
     </div>
   );
