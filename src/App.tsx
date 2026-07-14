@@ -346,15 +346,39 @@ function latestCompEndForDate(compRequests:any[], dateIso:string) {
       return !latest||end.getTime()>latest.getTime()?end:latest;
     },null);
 }
-function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequests:any[], workTimeChanges:any[] = []) {
+function timeSpanMinutes(start?:string|null,end?:string|null) {
+  const s=timeToMinutes(start), e=timeToMinutes(end);
+  if(s==null||e==null) return 0;
+  return e>s ? e-s : (24*60-s)+e;
+}
+function approvedLeaveMinutesForDate(requests:any[], dateIso:string, schedule:any) {
+  const shiftMinutes=timeSpanMinutes(schedule.work_start??"09:00",schedule.work_end??"18:00");
+  const leaveMinutes=requests
+    .filter((request:any)=>request.status==="approved"&&dateIso>=request.start_date&&dateIso<=request.end_date)
+    .filter((request:any)=>request.request_type==="comp_leave_use"||LEAVE_TYPE_META[request.request_type]?.usesLeave)
+    .reduce((sum:number,request:any)=>{
+      if(["half_am","half_pm","hourly","comp_leave_use"].includes(request.request_type)){
+        const start=request.request_type==="half_pm" ? (request.start_time??"14:00") : (request.start_time??schedule.work_start??"09:00");
+        const end=request.request_type==="half_am" ? (request.end_time??"14:00") : (request.end_time??schedule.work_end??"18:00");
+        return sum+timeSpanMinutes(start,end);
+      }
+      return sum+shiftMinutes;
+    },0);
+  return Math.min(shiftMinutes,leaveMinutes);
+}
+function expectedWorkEndForDate(dateIso:string, schedule:any, leaveRequests:any[]=[], checkIn?:Date|null) {
+  const shiftMinutes=timeSpanMinutes(schedule.work_start??"09:00",schedule.work_end??"18:00");
+  const leaveMinutes=approvedLeaveMinutesForDate(leaveRequests,dateIso,schedule);
+  const effectiveShiftMinutes=Math.max(0,shiftMinutes-leaveMinutes);
+  const expectedEnd=checkIn ? addMinutes(checkIn,effectiveShiftMinutes) : addMinutes(kstDateTime(dateIso,schedule.work_end),-leaveMinutes);
+  return {expectedEnd,shiftMinutes:effectiveShiftMinutes,leaveMinutes};
+}
+function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequests:any[], workTimeChanges:any[] = [], leaveRequests:any[] = []) {
   if(!log?.check_in_time||log?.check_out_time) return null;
   const dateIso=localDateStr(log.check_in_time);
   const sched=getScheduleForDate(employee,dateIso,overrides,workTimeChanges);
-  const startMin=timeToMinutes(sched.work_start) ?? 9*60;
-  const endMin=timeToMinutes(sched.work_end) ?? 18*60;
-  const shiftSpanMinutes=endMin>startMin ? endMin-startMin : (24*60-startMin)+endMin;
   const checkIn=new Date(log.check_in_time);
-  let target=addMinutes(checkIn,shiftSpanMinutes);
+  let target=expectedWorkEndForDate(dateIso,sched,leaveRequests,checkIn).expectedEnd;
   const compEnd=latestCompEndForDate(compRequests,dateIso);
   return compEnd&&compEnd.getTime()>target.getTime()?compEnd:target;
 }
@@ -928,9 +952,8 @@ export default function App() {
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"worktime",label:"근무시간 변경",icon:"ti-calendar-time"},
-    ...(isAdmin
-      ? [{id:"improvements" as Tab,label:"개선함",icon:"ti-notes"}]
-      : [{id:"team-schedule" as Tab,label:"팀 일정",icon:"ti-calendar-week"},{id:"improvements" as Tab,label:"개선함",icon:"ti-notes"}]),
+    {id:"team-schedule",label:"팀 일정",icon:"ti-calendar-week"},
+    {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
     {id:"admin-dashboard",label:"오늘",icon:"ti-layout-dashboard"},
@@ -1583,6 +1606,7 @@ function HomePage({ employee }: { employee: any }) {
   const [compTimeRows,setCompTimeRows] = useState<any[]>([]);
   const [todayOverrides,setTodayOverrides] = useState<any[]>([]);
   const [workTimeChanges,setWorkTimeChanges] = useState<any[]>([]);
+  const [todayLeaveRequests,setTodayLeaveRequests] = useState<any[]>([]);
   const [attendanceCorrectionRequests,setAttendanceCorrectionRequests] = useState<any[]>([]);
   const [todayTasks,setTodayTasks] = useState<any[]>([]);
   const [todoDraft,setTodoDraft] = useState({title:"",content:""});
@@ -1636,13 +1660,14 @@ function HomePage({ employee }: { employee: any }) {
   }
   async function load() {
     const today=todayIso();
-    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:taskRows},{data:rnrRows},{data:correctionRows,error:correctionError}]=await Promise.all([
+    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:leaveRows},{data:taskRows},{data:rnrRows},{data:correctionRows,error:correctionError}]=await Promise.all([
       supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name"),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("check_in_time",{ascending:false}).limit(10),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).is("check_out_time",null).order("check_in_time",{ascending:false}),
       supabase.from("comp_time_requests").select("*").eq("employee_id",employee.id).eq("work_date",today).in("status",["pending","approved"]).order("start_time"),
       supabase.from("weekly_schedule_overrides").select("*").eq("employee_id",employee.id).eq("week_start",weekStartIso(today)).limit(1),
       supabase.from("work_time_change_requests").select("*").eq("employee_id",employee.id).eq("status","approved").order("created_at",{ascending:false}).limit(100),
+      supabase.from("attendance_requests").select("*").eq("employee_id",employee.id).eq("status","approved").lte("start_date",today).gte("end_date",today).order("created_at",{ascending:false}),
       supabase.from("daily_tasks").select("*").eq("task_date",today).eq("is_active",true).order("created_at",{ascending:false}).limit(100),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(80),
       supabase.from("attendance_correction_requests").select("*").eq("employee_id",employee.id).eq("status","pending").order("created_at",{ascending:true}).limit(10),
@@ -1651,6 +1676,7 @@ function HomePage({ employee }: { employee: any }) {
     setCompTimeRows(compRows??[]);
     setTodayOverrides(overrides??[]);
     setWorkTimeChanges(changes??[]);
+    setTodayLeaveRequests(leaveRows??[]);
     setAttendanceCorrectionRequests(correctionError?[]:correctionRows??[]);
     setTodayTasks(taskRows??[]);
     if(employee.role==="admin"){
@@ -1876,7 +1902,7 @@ function HomePage({ employee }: { employee: any }) {
   const thisDevice=thisFp?myDevices.find(d=>d.fingerprint_hash===thisFp):null;
   const approvedDevices=myDevices.filter(d=>d.status==="approved").sort((a,b)=>new Date(b.last_seen_at).getTime()-new Date(a.last_seen_at).getTime());
   const shownDevices=[...approvedDevices.slice(0,1),...myDevices.filter(d=>d.status!=="approved")];
-  const reminderTarget=checkoutReminderTarget(todayLog,employee,todayOverrides,compTimeRows,workTimeChanges);
+  const reminderTarget=checkoutReminderTarget(todayLog,employee,todayOverrides,compTimeRows,workTimeChanges,todayLeaveRequests);
   const reminderTargetTime=reminderTarget?.getTime() ?? null;
   const activeCompRows=compTimeRows.filter((request:any)=>request.status==="approved");
   const reminderOffsets=[-5,5,15,30];
@@ -2704,22 +2730,20 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       const date=compForm.work_date;
       const dayStart=new Date(`${date}T00:00:00+09:00`).toISOString();
       const dayEnd=new Date(`${date}T23:59:59.999+09:00`).toISOString();
-      const [logResult,overrideResult]=await Promise.all([
+      const [logResult,overrideResult,changeResult,leaveResult]=await Promise.all([
         supabase.from("attendance_logs").select("check_in_time,check_out_time").eq("employee_id",employee.id).gte("check_in_time",dayStart).lte("check_in_time",dayEnd).order("check_in_time",{ascending:false}).limit(1).maybeSingle(),
         supabase.from("weekly_schedule_overrides").select("*").eq("employee_id",employee.id).eq("week_start",weekStartIso(date)).maybeSingle(),
+        supabase.from("work_time_change_requests").select("*").eq("employee_id",employee.id).eq("status","approved").order("created_at",{ascending:false}).limit(100),
+        supabase.from("attendance_requests").select("*").eq("employee_id",employee.id).eq("status","approved").lte("start_date",date).gte("end_date",date).order("created_at",{ascending:false}),
       ]);
-      const workStart=overrideResult.data?.work_start??employee.work_start??"09:00";
-      const workEnd=overrideResult.data?.work_end??employee.work_end??"18:00";
-      const startMin=timeToMinutes(workStart)??9*60;
-      const endMin=timeToMinutes(workEnd)??18*60;
-      const shiftMinutes=endMin>startMin?endMin-startMin:(24*60-startMin)+endMin;
+      const schedule=getScheduleForDate(employee,date,overrideResult.data?[overrideResult.data]:[],changeResult.data??[]);
       const checkIn=logResult.data?.check_in_time?new Date(logResult.data.check_in_time):null;
       const checkOut=logResult.data?.check_out_time?new Date(logResult.data.check_out_time):null;
-      const expectedEnd=checkIn?addMinutes(checkIn,shiftMinutes):kstDateTime(date,workEnd);
+      const {expectedEnd,shiftMinutes,leaveMinutes}=expectedWorkEndForDate(date,schedule,leaveResult.data??[],checkIn);
       if(cancelled) return;
       const expectedEndHHMM=new Intl.DateTimeFormat("ko-KR",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Seoul"}).format(expectedEnd);
       const actualCheckoutHHMM=checkOut?new Intl.DateTimeFormat("ko-KR",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Seoul"}).format(checkOut):null;
-      setCompBaseline({hasCheckIn:!!checkIn,checkInTime:checkIn?.toISOString()??null,hasCheckOut:!!checkOut,checkOutTime:checkOut?.toISOString()??null,actualCheckoutHHMM,expectedEndTime:expectedEnd.toISOString(),expectedEndHHMM,shiftMinutes});
+      setCompBaseline({hasCheckIn:!!checkIn,checkInTime:checkIn?.toISOString()??null,hasCheckOut:!!checkOut,checkOutTime:checkOut?.toISOString()??null,actualCheckoutHHMM,expectedEndTime:expectedEnd.toISOString(),expectedEndHHMM,shiftMinutes,leaveMinutes});
       setCompForm(current=>{
         if(current.work_date!==date||(timeToMinutes(current.start_time)??0)>=(timeToMinutes(expectedEndHHMM)??0)) return current;
         if(actualCheckoutHHMM&&(timeToMinutes(actualCheckoutHHMM)??0)>(timeToMinutes(expectedEndHHMM)??0)) {
@@ -2839,9 +2863,10 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
     const duplicate=compRequests.find(r=>r.work_date===compForm.work_date&&r.start_time===compForm.start_time&&r.end_time===compForm.end_time&&["pending","approved"].includes(r.status));
     if(duplicate) return setMessage("이미 신청한 시간입니다. 관리자의 승인을 기다려주세요.");
     const normalHours=Math.round((compBaseline.shiftMinutes/60)*10)/10;
+    const leaveText=compBaseline.leaveMinutes ? ` · 승인 휴가 ${formatHourValue(Math.round((compBaseline.leaveMinutes/60)*10)/10)}시간 반영` : "";
     const basis=compBaseline.hasCheckIn
-      ? `실제 출근 ${timeOnly(compBaseline.checkInTime)} · 소정근로 ${formatHourValue(normalHours)}시간 · 기본 휴게 1시간 · 기준 종료 ${compBaseline.expectedEndHHMM}`
-      : `출근 전이므로 등록 스케줄 기준 종료 ${compBaseline.expectedEndHHMM}`;
+      ? `실제 출근 ${timeOnly(compBaseline.checkInTime)} · 소정근로 ${formatHourValue(normalHours)}시간${leaveText} · 기준 종료 ${compBaseline.expectedEndHHMM}`
+      : `출근 전이므로 등록 스케줄 기준 종료 ${compBaseline.expectedEndHHMM}${leaveText}`;
     if(!window.confirm(`${basis}\n${compBaseline.expectedEndHHMM} 이후부터 추가근무로 인정됩니다.\n\n추가근무를 신청하시겠습니까?\n신청 후 수정이 불가능합니다.`)) return;
     const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:compForm.work_date,start_time:compForm.start_time,end_time:compForm.end_time,hours:compForm.hours,converted_days:Number((compForm.hours/8).toFixed(2)),reason:compForm.reason,status:"pending"});
     if(error) setMessage(error.message); else{setMessage("추가근무 신청이 저장되었습니다. 관리자 승인 후 보상휴가로 적립됩니다.");await load();}
@@ -2931,8 +2956,8 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
           {compBaseline&&<div className="alert overtime-baseline-alert">
             <b>추가근무 인정 시작: {compBaseline.expectedEndHHMM} 이후</b>
             <span>{compBaseline.hasCheckIn
-              ? `${timeOnly(compBaseline.checkInTime)} 출근 · 소정근로 ${formatHourValue(Math.round((compBaseline.shiftMinutes/60)*10)/10)}시간 · 기본 휴게 1시간 · 기준 종료 ${compBaseline.expectedEndHHMM}`
-              : "아직 출근기록이 없어 등록된 출근 스케줄 기준으로 계산했습니다."}</span>
+              ? `${timeOnly(compBaseline.checkInTime)} 출근 · 소정근로 ${formatHourValue(Math.round((compBaseline.shiftMinutes/60)*10)/10)}시간${compBaseline.leaveMinutes?` · 승인 휴가 ${formatHourValue(Math.round((compBaseline.leaveMinutes/60)*10)/10)}시간 반영`:""} · 기준 종료 ${compBaseline.expectedEndHHMM}`
+              : `아직 출근기록이 없어 등록된 출근 스케줄 기준으로 계산했습니다.${compBaseline.leaveMinutes?` 승인 휴가 ${formatHourValue(Math.round((compBaseline.leaveMinutes/60)*10)/10)}시간 반영`:""}`}</span>
             {compBaseline.actualCheckoutHHMM&&(timeToMinutes(compBaseline.actualCheckoutHHMM)??0)>(timeToMinutes(compBaseline.expectedEndHHMM)??0)&&<span>실제 퇴근 기록 {compBaseline.actualCheckoutHHMM} 기준으로 종료 시간이 자동 입력되었습니다. 이 시간이 맞나요?</span>}
           </div>}
           <div className="form-row"><label className="label">추가근무일</label><input className="input" type="date" value={compForm.work_date} onChange={e=>setCompForm({...compForm,work_date:e.target.value})} /></div>
@@ -3479,13 +3504,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   function expectedCompCheckout(request:any, log=compAttendance(request)){
     const schedule=compSchedule(request);
+    const leaveRows=requests.filter((row:any)=>row.employee_id===request.employee_id);
     if(log?.check_in_time){
-      const startMin=timeToMinutes(schedule.work_start)??9*60;
-      const endMin=timeToMinutes(schedule.work_end)??18*60;
-      const shiftSpan=endMin>startMin ? endMin-startMin : (24*60-startMin)+endMin;
-      return addMinutes(new Date(log.check_in_time),shiftSpan);
+      return expectedWorkEndForDate(request.work_date,schedule,leaveRows,new Date(log.check_in_time)).expectedEnd;
     }
-    return kstDateTime(request.work_date,schedule.work_end);
+    return expectedWorkEndForDate(request.work_date,schedule,leaveRows,null).expectedEnd;
   }
   function estimatedOvertime(request:any){
     const log=compAttendance(request);
@@ -3523,7 +3546,14 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   async function reviewDevice(id:string,status:string){const {error}=await supabase.from("registered_devices").update({status}).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function confirmAttendanceLog(id:string){const {error}=await supabase.rpc("confirm_attendance_log",{p_log_id:id,p_status:"확인 완료"});if(error)setMessage(error.message);else{setMessage("근태 기록을 확인 완료 처리했습니다.");await load();onChanged();}}
   async function forceClockOut(id:string){if(!window.confirm("이 미퇴근 기록을 현재 시각 기준으로 마감할까요?")) return; const {error}=await supabase.rpc("close_attendance_log",{p_log_id:id,p_status:"관리자 강제퇴근",p_device_fingerprint_hash:null,p_device_info:{}});if(error)setMessage(error.message);else{setMessage("미퇴근 기록을 마감했습니다.");await load();onChanged();}}
+  function hasPendingAttendanceCorrection(employeeId:string){
+    return attendanceCorrectionRequests.some((request:any)=>request.employee_id===employeeId&&request.status==="pending");
+  }
   function openAttendanceCorrection(employee:any, log:any|null) {
+    if(hasPendingAttendanceCorrection(employee?.id)) {
+      setMessage(`${employee?.name??"직원"}에게 이미 서명 대기 중인 출퇴근 기록 정정 요청이 있습니다.`);
+      return;
+    }
     const workDate=log?.check_in_time ? localDateStr(log.check_in_time) : todayIso();
     const schedule=getScheduleForDate(employee,workDate,overrides,workTimeRequests.filter((r:any)=>r.status==="approved"));
     setCorrectionDraft({
@@ -3832,6 +3862,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             <tbody>
               {dailyRows.map(({employee:e,log}:any)=>{
                 const display=attendanceDisplay(e,log,overrides,workTimeRequests.filter(r=>r.status==="approved"));
+                const correctionPending=hasPendingAttendanceCorrection(e.id);
                 return (
                 <tr key={e.id}>
                   <td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span></td>
@@ -3839,7 +3870,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   <td>{log ? formatDateTime(log.check_in_time) : "-"}</td>
                   <td>{log?.check_out_time ? formatDateTime(log.check_out_time) : "-"}</td>
                   <td><div className="status-badges"><span className={`badge ${display.primaryClass}`}>{display.primary}</span>{display.workType&&<span className="badge work-type">{display.workType}</span>}</div>{display.primary.includes("지각")&&<span className="late-detail">{display.lateMinutes}분 지각 · 기준 {String(display.scheduleStart).slice(0,5)}</span>}</td>
-                  <td><div className="actions">{log&&!log.check_out_time&&<button className="button danger compact" onClick={()=>forceClockOut(log.id)}>기록 마감</button>}<button className="button secondary compact" onClick={()=>openAttendanceCorrection(e,log)}>{log?"기록 정정":"출근 정정"}</button></div></td>
+                  <td><div className="actions">{log&&!log.check_out_time&&<button className="button danger compact" onClick={()=>forceClockOut(log.id)}>기록 마감</button>}<button className="button secondary compact" disabled={correctionPending} title={correctionPending?"이미 서명 대기 중인 기록 정정 요청이 있습니다.":undefined} onClick={()=>openAttendanceCorrection(e,log)}>{correctionPending?"정정 요청중":log?"기록 정정":"출근 정정"}</button></div></td>
                 </tr>
                 );
               })}
@@ -3876,7 +3907,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   <span className={`badge ${!l.check_out_time?"warn":""}`}>{!l.check_out_time?"미퇴근":"확인 필요"}</span>
                 </div>
                 <div className="type-desc" style={{marginTop:8}}>상세: 출근 {formatDateTime(l.check_in_time)} / 퇴근 {formatDateTime(l.check_out_time)} / 상태 {l.status??"-"}</div>
-                <div className="actions"><button className="button secondary" onClick={()=>confirmAttendanceLog(l.id)}>확인 완료</button><button className="button ghost" onClick={()=>openAttendanceCorrection(empMap[l.employee_id],l)}>기록 정정</button>{!l.check_out_time&&<button className="button danger" onClick={()=>forceClockOut(l.id)}>기록 마감</button>}</div>
+                <div className="actions"><button className="button secondary" onClick={()=>confirmAttendanceLog(l.id)}>확인 완료</button><button className="button ghost" disabled={hasPendingAttendanceCorrection(l.employee_id)} title={hasPendingAttendanceCorrection(l.employee_id)?"이미 서명 대기 중인 기록 정정 요청이 있습니다.":undefined} onClick={()=>openAttendanceCorrection(empMap[l.employee_id],l)}>{hasPendingAttendanceCorrection(l.employee_id)?"정정 요청중":"기록 정정"}</button>{!l.check_out_time&&<button className="button danger" onClick={()=>forceClockOut(l.id)}>기록 마감</button>}</div>
               </div>
             ))}
           </div>
