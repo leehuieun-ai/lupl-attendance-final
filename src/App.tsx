@@ -4279,7 +4279,30 @@ function SettingsPage({ currentEmployee, section="schedule", readOnly=false }: {
   const [leaveRequests,setLeaveRequests]=useState<any[]>([]);
   const [compTimeRequests,setCompTimeRequests]=useState<any[]>([]);
   const [msg,setMsg]=useState("");
+  function applyScheduleData(data:any){
+    const list=data?.employees??[];
+    const map:Record<string,any>={};
+    list.forEach((x:any)=>{map[x.id]=x;});
+    setEmployees(list);
+    setEmpMap(map);
+    setOverrides(data?.weekly_schedule_overrides??[]);
+    setWorkTimeChanges(data?.work_time_change_requests??[]);
+    setAbsences(data?.employee_absences??[]);
+    setScheduleEvents(data?.employee_schedule_events??[]);
+    setLeaveRequests(data?.attendance_requests??[]);
+    setCompTimeRequests(data?.comp_time_requests??[]);
+  }
   async function load(){
+    if(readOnly&&section==="schedule"){
+      const {data,error}=await supabase.rpc("team_schedule_snapshot");
+      if(error){
+        setMsg(`팀 일정 데이터를 불러오지 못했습니다. Supabase 팀 일정 패치를 먼저 실행해주세요. (${error.message})`);
+        return;
+      }
+      setMsg("");
+      applyScheduleData(data);
+      return;
+    }
     const [e,ov,wt,ab,se,lr,cr]=await Promise.all([
       supabase.from("employees").select("*").order("employee_no",{ascending:true}),
       supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(200),
@@ -4289,13 +4312,21 @@ function SettingsPage({ currentEmployee, section="schedule", readOnly=false }: {
       supabase.from("attendance_requests").select("*").eq("status","approved").order("start_date",{ascending:true}),
       supabase.from("comp_time_requests").select("*").in("status",["pending","approved"]).order("work_date",{ascending:true}),
     ]);
-    const list=e.data??[]; const map:Record<string,any>={}; list.forEach((x:any)=>{map[x.id]=x;});
-    setEmployees(list); setEmpMap(map); setOverrides(ov.data??[]); setWorkTimeChanges(wt.data??[]); setAbsences(ab.data??[]); setScheduleEvents(se.data??[]); setLeaveRequests(lr.data??[]); setCompTimeRequests(cr.data??[]);
+    applyScheduleData({
+      employees:e.data??[],
+      weekly_schedule_overrides:ov.data??[],
+      work_time_change_requests:wt.data??[],
+      employee_absences:ab.data??[],
+      employee_schedule_events:se.data??[],
+      attendance_requests:lr.data??[],
+      comp_time_requests:cr.data??[],
+    });
   }
-  useEffect(()=>{load();},[]);
+  useEffect(()=>{load();},[section,readOnly]);
   function empName(id?:string|null){return id&&empMap[id]?empMap[id].name:"-";}
   return <div className="grid">
     {section==="schedule"&&<>
+      {readOnly&&msg&&<div className="alert error">{msg}</div>}
       <TeamScheduleBoard employees={employees} events={scheduleEvents} overrides={overrides} workTimeChanges={workTimeChanges} leaveRequests={leaveRequests} compTimeRequests={compTimeRequests} currentEmployee={currentEmployee} onChanged={load} readOnly={readOnly} />
       {!readOnly&&<ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setMsg} msg={msg} />}
     </>}
