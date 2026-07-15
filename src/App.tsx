@@ -375,11 +375,28 @@ function compactOvertimeReason(raw:string, employee:any, dateRange:any) {
     .replace(new RegExp(String(employee?.employee_no??"").replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"g"),"")
     .replace(dateRange?.start_date??"","")
     .replace(/(?:(?:\d{4})[-./])?\d{1,2}[-./]\d{1,2}/g,"")
+    .replace(/\d{1,2}\s*월\s*\d{1,2}\s*일/g,"")
+    .replace(/추가\s*근무|초과\s*근무|연장\s*근무|야근/g,"")
     .replace(/신청/g,"")
     .replace(/\d{1,2}:\d{2}\s*(?:~|-|부터|에서)\s*\d{1,2}:\d{2}/g,"")
     .replace(/\d+(?:\.\d+)?\s*시간/g,"")
     .replace(/[·|]/g," ")
+    .replace(/(^|\s)시간(?=\s|$)/g," ")
+    .replace(/\s+/g," ")
     .trim();
+}
+function cleanOvertimeReasonText(text?:string|null) {
+  return String(text??"").replace(/\s*원문:[\s\S]*$/,"").replace(/^시간\s+/,"").trim();
+}
+function displayOvertimeReason(reason?:string|null) {
+  const raw=String(reason??"").trim();
+  if(!raw) return "사유 미입력";
+  const match=raw.match(/근무 인정 사유:\s*([^\n]+)/);
+  const firstLine=raw.split(/\r?\n/).find(line=>{
+    const value=line.trim();
+    return value&&!/^원문:/.test(value)&&!/^저녁시간 처리:/.test(value)&&value!=="관리자 한 줄 입력";
+  });
+  return cleanOvertimeReasonText(match?.[1]??firstLine??raw)||"사유 미입력";
 }
 function normalizeMinuteRange(start?:string|null,end?:string|null):[number,number]|null {
   const s=timeToMinutes(start), e=timeToMinutes(end);
@@ -3453,6 +3470,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     try { return JSON.parse(localStorage.getItem("lupl_hidden_rejected_archive")??"[]"); }
     catch { return []; }
   });
+  const [showRejectedArchive,setShowRejectedArchive]=useState(false);
   const [newEmployee,setNewEmployee]=useState({name:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,department:"",position:"",no_annual_leave:false,work_days:["mon","tue","wed","thu","fri"]});
   const [scheduleEmpId,setScheduleEmpId]=useState("");
   const [scheduleMsg,setScheduleMsg]=useState("");
@@ -3963,7 +3981,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const baselineHHMM=kstHHMM(baseline);
     const durationText=`${formatHourValue(durationMinutes/60)}시간`;
     const defaultDinnerAsWork=/외부|미팅|거래처|식사|저녁\s*근무|저녁.*인정/.test(raw);
-    const rawReason=compactOvertimeReason(raw,employee,dateRange);
     const choice=window.prompt([
       `${employee.name}님의 ${workDate} 기준 퇴근시간은 ${baselineHHMM}입니다.`,
       parsedTime
@@ -3977,14 +3994,15 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     ].join("\n"),defaultDinnerAsWork?"2":"1");
     if(choice==null) return;
     const dinnerAsWork=String(choice).trim().startsWith("2");
-    let reasonDetail="";
-    if(dinnerAsWork){
-      const meetingReason=rawReason||window.prompt("외부 미팅/업무상 식사를 근무시간으로 인정하는 사유를 입력해주세요.\n예: 거래처 ○○사와 프로젝트 일정 협의, 참석자 ○○○, 장소 ○○");
-      if(!meetingReason?.trim()) return setApprovalCommandMsg("외부 미팅 근무 인정은 사유가 필요합니다.");
-      reasonDetail=`저녁시간 처리: 외부 미팅/업무상 식사 근무 인정\n근무 인정 사유: ${meetingReason.trim()}`;
-    }else{
-      reasonDetail="저녁시간 처리: 휴게시간 제외(18:00~19:00)";
-    }
+    const defaultReason=cleanOvertimeReasonText(compactOvertimeReason(raw,employee,dateRange))||(dinnerAsWork?"외부 미팅":"추가근무");
+    const reasonInput=window.prompt(
+      dinnerAsWork
+        ? "추가근무 신청 사유를 입력해주세요.\n외부 미팅/업무상 식사를 근무시간으로 인정하는 경우, 회사가 확인 가능한 사유로 남겨주세요."
+        : "추가근무 신청 사유를 입력해주세요.",
+      defaultReason
+    );
+    const reason=cleanOvertimeReasonText(reasonInput);
+    if(!reason) return setApprovalCommandMsg("추가근무 신청 사유가 필요합니다.");
     const expectedEnd=addOvertimeMinutes(baseline,durationMinutes,!dinnerAsWork);
     const startHHMM=parsedTime?.start??baselineHHMM;
     const endHHMM=parsedTime?.end??kstHHMM(expectedEnd);
@@ -3996,6 +4014,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         : dinnerAsWork
         ? `외부 미팅 식사를 근무시간으로 인정하여 ${endHHMM}까지 ${durationText} 처리`
         : `저녁 휴게시간을 제외하여 ${endHHMM}까지 ${durationText} 처리`,
+      `신청 사유: ${reason}`,
       "",
       "최종 적립은 승인함에서 실제 퇴근기록 또는 회사 확인 사유를 기준으로 처리됩니다.",
       "이대로 추가할까요?"
@@ -4003,7 +4022,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(!window.confirm(preview)) return;
     const duplicate=compRequests.find((request:any)=>request.employee_id===employee.id&&request.work_date===workDate&&["pending","approved"].includes(request.status)&&String(request.start_time??"").slice(0,5)===startHHMM&&String(request.end_time??"").slice(0,5)===endHHMM);
     if(duplicate) return setApprovalCommandMsg("이미 같은 날짜와 시간의 추가근무 신청이 있습니다.");
-    const reason=`${rawReason||"관리자 한 줄 입력"}\n원문: ${raw}\n${reasonDetail}`;
     const {error}=await supabase.from("comp_time_requests").insert({
       employee_id:employee.id,
       work_date:workDate,
@@ -4233,7 +4251,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <div>
                   <b>{empName(r.employee_id)}</b>
                   <div className="subtle">{r.work_date} · 신청 {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)} · {r.hours}시간</div>
-                  <div className="type-desc" style={{marginTop:6}}>신청 사유: {r.reason||"사유 미입력"}</div>
+                  <div className="type-desc" style={{marginTop:6}}>신청 사유: {displayOvertimeReason(r.reason)}</div>
                   {usesActualCheckout&&<div className="type-desc" style={{marginTop:6}}>예정 퇴근 {log?timeOnly(expectedCompCheckout(r,log)):String(compSchedule(r).work_end??"18:00").slice(0,5)} · 실제 퇴근 {log?.check_out_time?timeOnly(log.check_out_time):"아직 퇴근 전"} · 인정 예상 {actual==null?"-":`${actual}시간`}</div>}
                 </div>
                 <div className="actions">
@@ -4295,12 +4313,15 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       {view==="approvals"&&<section className="card rejected-archive-card">
         <div className="section-head">
           <div>
-            <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-archive" aria-hidden="true"></i>반려 기록 정리</h2>
+            <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-archive" aria-hidden="true"></i>반려 기록 정리{rejectedArchiveRows.length>0&&<span className="count-badge">{rejectedArchiveRows.length}</span>}</h2>
             <p className="subtle">근태 이력은 보존하고, 확인 끝난 반려 항목만 관리자 화면에서 숨깁니다.</p>
           </div>
-          {hiddenRejectedIds.length>0&&<button className="button ghost" onClick={restoreRejectedArchiveRows}>숨김 초기화</button>}
+          <div className="actions">
+            {hiddenRejectedIds.length>0&&<button className="button ghost compact" onClick={restoreRejectedArchiveRows}>숨김 초기화</button>}
+            <button className="button ghost compact" onClick={()=>setShowRejectedArchive(v=>!v)}>{showRejectedArchive?"접기":"보기"}</button>
+          </div>
         </div>
-        <div className="rejected-archive-list">
+        {showRejectedArchive&&<div className="rejected-archive-list">
           {rejectedArchiveRows.slice(0,20).map((row:any)=>(
             <div className="rejected-archive-row" key={row.key}>
               <div>
@@ -4313,7 +4334,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             </div>
           ))}
           {rejectedArchiveRows.length===0&&<p className="subtle">정리할 반려 기록이 없습니다.</p>}
-        </div>
+        </div>}
       </section>}
 
       {view==="employees"&&selectedDetailEmployee&&<section className="employee-detail-panel">
