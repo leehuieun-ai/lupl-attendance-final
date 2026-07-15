@@ -3706,12 +3706,22 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const scheduledEnd=expectedCompCheckout(request,log);
     return Math.max(0,Math.round(((new Date(log.check_out_time).getTime()-scheduledEnd.getTime())/3600000)*100)/100);
   }
+  function companyConfirmedComp(request:any){
+    return /관리자 한 줄|회사 확인|원문:|저녁시간 처리:|근무 인정 사유:/.test(`${request.reason??""}\n${request.review_note??""}`);
+  }
+  function actualOvertimeLabel(actual:any){
+    if(actual==null) return "퇴근기록 확인 전";
+    return Number(actual)>0 ? `실제기록 기준 ${formatHourValue(actual)}시간` : "실제기록 기준 인정 전";
+  }
   async function reviewCompRequest(request:any,status:string){
     const usesActualCheckout=request.work_date>="2026-06-24";
     const completedLog=compAttendance(request);
     const scheduledEnd=expectedCompCheckout(request,completedLog);
-    const result=usesActualCheckout&&completedLog
+    const companyConfirmed=companyConfirmedComp(request);
+    const result=usesActualCheckout&&completedLog&&!companyConfirmed
       ? await supabase.rpc("review_comp_time_attendance",{p_request_id:request.id,p_status:status,p_scheduled_end:kstHHMM(scheduledEnd),p_review_note:status==="approved"?"실제 퇴근시간 기준 승인":"초과근무 미인정 및 예정 퇴근시간 적용"})
+      : companyConfirmed
+      ? await supabase.rpc("review_comp_time_request",{p_request_id:request.id,p_status:status,p_review_note:status==="approved"?"회사 확인 사유 기준 승인":"회사 확인 사유 기준 반려"})
       : await supabase.from("comp_time_requests").update({
           status,
           reviewed_by:currentEmployee.id,
@@ -3726,8 +3736,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         return next;
       });
       setMessage(status==="approved"
-        ? completedLog?"실제 초과근무가 승인되어 보상휴가로 적립되었습니다.":"추가근무를 사전 승인했습니다. 승인 종료시간까지 퇴근 기준이 연장됩니다."
-        : completedLog?"초과근무를 반려하고 예정 퇴근시간으로 근태를 마감했습니다.":"추가근무를 반려했습니다.");
+        ? companyConfirmed?"회사 확인 사유 기준으로 추가근무가 승인되어 보상휴가로 적립되었습니다.":completedLog?"실제 초과근무가 승인되어 보상휴가로 적립되었습니다.":"추가근무를 사전 승인했습니다. 승인 종료시간까지 퇴근 기준이 연장됩니다."
+        : companyConfirmed?"회사 확인 사유 기준 추가근무를 반려했습니다.":completedLog?"초과근무를 반려하고 예정 퇴근시간으로 근태를 마감했습니다.":"추가근무를 반려했습니다.");
       await load();
       onChanged();
     }
@@ -4037,6 +4047,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       converted_days:Number((durationMinutes/60/8).toFixed(2)),
       reason,
       status:"pending",
+      review_note:"관리자 한 줄 입력 · 회사 확인 사유 기준 승인 대기",
     });
     if(error) return setApprovalCommandMsg(`추가근무 신청 저장 실패: ${error.message}`);
     setApprovalCommand("");
@@ -4253,15 +4264,17 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
               const log=compAttendance(r);
               const actual=estimatedOvertime(r);
               const usesActualCheckout=r.work_date>="2026-06-24";
+              const companyConfirmed=companyConfirmedComp(r);
+              const requestHoursText=`${formatHourValue(r.hours)}시간`;
               return <div className="list-row" key={r.id}>
                 <div>
                   <b>{empName(r.employee_id)}</b>
-                  <div className="subtle">{r.work_date} · 신청 {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)} · {r.hours}시간</div>
+                  <div className="subtle">{r.work_date} · 신청 {r.start_time?.slice(0,5)}~{r.end_time?.slice(0,5)} · {requestHoursText}</div>
                   <div className="type-desc" style={{marginTop:6}}>신청 사유: {displayOvertimeReason(r.reason)}</div>
-                  {usesActualCheckout&&<div className="type-desc" style={{marginTop:6}}>예정 퇴근 {log?timeOnly(expectedCompCheckout(r,log)):String(compSchedule(r).work_end??"18:00").slice(0,5)} · 실제 퇴근 {log?.check_out_time?timeOnly(log.check_out_time):"아직 퇴근 전"} · 인정 예상 {actual==null?"-":`${actual}시간`}</div>}
+                  {usesActualCheckout&&<div className="type-desc" style={{marginTop:6}}>예정 퇴근 {log?timeOnly(expectedCompCheckout(r,log)):String(compSchedule(r).work_end??"18:00").slice(0,5)} · 실제 퇴근 {log?.check_out_time?timeOnly(log.check_out_time):"아직 퇴근 전"} · {companyConfirmed?`회사 확인 기준 ${requestHoursText} · ${actualOvertimeLabel(actual)}`:`인정 확인 ${actualOvertimeLabel(actual)}`}</div>}
                 </div>
                 <div className="actions">
-                  <button className="button secondary" onClick={()=>reviewCompRequest(r,"approved")}>{log?.check_out_time?"실제시간 정산":"초과근무 승인"}</button>
+                  <button className="button secondary" onClick={()=>reviewCompRequest(r,"approved")}>{companyConfirmed?"회사확인 승인":log?.check_out_time?"실제시간 정산":"초과근무 승인"}</button>
                   <button className="button danger" onClick={()=>reviewCompRequest(r,"rejected")}>반려</button>
                 </div>
               </div>;
