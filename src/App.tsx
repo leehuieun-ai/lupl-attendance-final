@@ -351,27 +351,85 @@ function timeSpanMinutes(start?:string|null,end?:string|null) {
   if(s==null||e==null) return 0;
   return e>s ? e-s : (24*60-s)+e;
 }
-function approvedLeaveMinutesForDate(requests:any[], dateIso:string, schedule:any) {
-  const shiftMinutes=timeSpanMinutes(schedule.work_start??"09:00",schedule.work_end??"18:00");
-  const leaveMinutes=requests
+function normalizeMinuteRange(start?:string|null,end?:string|null):[number,number]|null {
+  const s=timeToMinutes(start), e=timeToMinutes(end);
+  if(s==null||e==null) return null;
+  return [s,e>s?e:e+24*60];
+}
+function subtractMinuteRange(ranges:[number,number][], cut:[number,number]|null) {
+  if(!cut) return ranges;
+  const cuts:[number,number][]=[cut,[cut[0]+24*60,cut[1]+24*60]];
+  let next=ranges;
+  cuts.forEach(([cutStart,cutEnd])=>{
+    next=next.flatMap(([start,end])=>{
+      const overlapStart=Math.max(start,cutStart);
+      const overlapEnd=Math.min(end,cutEnd);
+      if(overlapEnd<=overlapStart) return [[start,end] as [number,number]];
+      const pieces:[number,number][]=[];
+      if(start<overlapStart) pieces.push([start,overlapStart]);
+      if(overlapEnd<end) pieces.push([overlapEnd,end]);
+      return pieces;
+    });
+  });
+  return next.filter(([start,end])=>end>start);
+}
+function minuteRangeTotal(ranges:[number,number][]) {
+  return ranges.reduce((sum,[start,end])=>sum+Math.max(0,end-start),0);
+}
+function approvedLeaveRangesForDate(requests:any[], dateIso:string, schedule:any) {
+  const workRange=normalizeMinuteRange(schedule?.work_start??"09:00",schedule?.work_end??"18:00");
+  if(!workRange) return [];
+  return requests
     .filter((request:any)=>request.status==="approved"&&dateIso>=request.start_date&&dateIso<=request.end_date)
     .filter((request:any)=>request.request_type==="comp_leave_use"||LEAVE_TYPE_META[request.request_type]?.usesLeave)
-    .reduce((sum:number,request:any)=>{
+    .map((request:any)=>{
       if(["half_am","half_pm","hourly","comp_leave_use"].includes(request.request_type)){
-        const start=request.request_type==="half_pm" ? (request.start_time??"14:00") : (request.start_time??schedule.work_start??"09:00");
-        const end=request.request_type==="half_am" ? (request.end_time??"14:00") : (request.end_time??schedule.work_end??"18:00");
-        return sum+timeSpanMinutes(start,end);
+        const start=request.request_type==="half_pm" ? (request.start_time??"14:00") : (request.start_time??schedule?.work_start??"09:00");
+        const end=request.request_type==="half_am" ? (request.end_time??"14:00") : (request.end_time??schedule?.work_end??"18:00");
+        return normalizeMinuteRange(start,end);
       }
-      return sum+shiftMinutes;
-    },0);
-  return Math.min(shiftMinutes,leaveMinutes);
+      return workRange;
+    })
+    .filter(Boolean) as [number,number][];
+}
+function requiredWorkRangesForDate(dateIso:string, schedule:any, leaveRequests:any[]=[]) {
+  const workRange=normalizeMinuteRange(schedule?.work_start??"09:00",schedule?.work_end??"18:00");
+  if(!workRange) return [];
+  let ranges=subtractMinuteRange([workRange],normalizeMinuteRange(schedule?.break_start??"12:00",schedule?.break_end??"13:00"));
+  approvedLeaveRangesForDate(leaveRequests,dateIso,schedule).forEach(leave=>{ ranges=subtractMinuteRange(ranges,leave); });
+  return ranges.sort((a,b)=>a[0]-b[0]);
+}
+function approvedLeaveMinutesForDate(requests:any[], dateIso:string, schedule:any) {
+  const workRange=normalizeMinuteRange(schedule?.work_start??"09:00",schedule?.work_end??"18:00");
+  if(!workRange) return 0;
+  const gross=minuteRangeTotal(subtractMinuteRange([workRange],normalizeMinuteRange(schedule?.break_start??"12:00",schedule?.break_end??"13:00")));
+  return Math.max(0,gross-minuteRangeTotal(requiredWorkRangesForDate(dateIso,schedule,requests)));
+}
+function kstMinutesOnDate(value:Date, dateIso:string) {
+  const parts=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).formatToParts(value);
+  const part=(type:string)=>parts.find(p=>p.type===type)?.value??"";
+  const seenDate=`${part("year")}-${part("month")}-${part("day")}`;
+  const hour=Number(part("hour"))%24;
+  let total=hour*60+Number(part("minute")||0);
+  if(seenDate>dateIso) total+=24*60;
+  if(seenDate<dateIso) total-=24*60;
+  return total;
 }
 function expectedWorkEndForDate(dateIso:string, schedule:any, leaveRequests:any[]=[], checkIn?:Date|null) {
-  const shiftMinutes=timeSpanMinutes(schedule.work_start??"09:00",schedule.work_end??"18:00");
-  const leaveMinutes=approvedLeaveMinutesForDate(leaveRequests,dateIso,schedule);
-  const effectiveShiftMinutes=Math.max(0,shiftMinutes-leaveMinutes);
-  const expectedEnd=checkIn ? addMinutes(checkIn,effectiveShiftMinutes) : addMinutes(kstDateTime(dateIso,schedule.work_end),-leaveMinutes);
-  return {expectedEnd,shiftMinutes:effectiveShiftMinutes,leaveMinutes};
+  const ranges=requiredWorkRangesForDate(dateIso,schedule,leaveRequests);
+  const lastRange=ranges[ranges.length-1];
+  let missedMinutes=0;
+  if(checkIn){
+    const checkInMinute=kstMinutesOnDate(checkIn,dateIso);
+    missedMinutes=ranges.reduce((sum,[start,end])=>{
+      if(checkInMinute<=start) return sum;
+      if(checkInMinute>=end) return sum+(end-start);
+      return sum+(checkInMinute-start);
+    },0);
+  }
+  const baseEndMinute=lastRange?.[1]??(timeToMinutes(schedule?.work_start??"09:00")??9*60);
+  const expectedEnd=addMinutes(kstDateTime(dateIso,minutesToTime(baseEndMinute%(24*60))),Math.floor(baseEndMinute/(24*60))*24*60+missedMinutes);
+  return {expectedEnd,shiftMinutes:minuteRangeTotal(ranges)+missedMinutes,leaveMinutes:approvedLeaveMinutesForDate(leaveRequests,dateIso,schedule)};
 }
 function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequests:any[], workTimeChanges:any[] = [], leaveRequests:any[] = []) {
   if(!log?.check_in_time||log?.check_out_time) return null;
@@ -3301,6 +3359,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [leaveModalEmp,setLeaveModalEmp]=useState<any|null>(null);
   const [leaveUsageEmpId,setLeaveUsageEmpId]=useState("all");
   const [correctionDraft,setCorrectionDraft]=useState<any|null>(null);
+  const [approvalCommand,setApprovalCommand]=useState("");
+  const [approvalCommandMsg,setApprovalCommandMsg]=useState("");
 
   async function load() {
     const {data:emps}=await supabase.from("employees").select("*").order("created_at",{ascending:false});
@@ -3775,6 +3835,67 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     }
     await updateEmployee(emp.id,{...patch,...derived});
   }
+  function approvalCommandTargetEmployee(text:string){
+    const compact=text.replace(/\s/g,"");
+    return [...activeEmployees]
+      .sort((a,b)=>String(b.name??"").length-String(a.name??"").length)
+      .find(employee=>compact.includes(String(employee.name??"").replace(/\s/g,""))||compact.includes(String(employee.employee_no??"").replace(/\s/g,"")));
+  }
+  async function applyApprovalScheduleCommand(){
+    const raw=approvalCommand.trim();
+    if(!raw) return setApprovalCommandMsg("일정 예외를 한 줄로 입력해주세요. 예: 이희은 7월 14일 13:00~18:00 근무");
+    const employee=approvalCommandTargetEmployee(raw);
+    if(!employee) return setApprovalCommandMsg("직원 이름 또는 사번을 찾지 못했습니다.");
+    const dateRange=parseKoreanDateRange(raw,0);
+    if(!dateRange) return setApprovalCommandMsg("적용할 날짜를 함께 적어주세요. 예: 이희은 7월 14일 13:00~18:00 근무");
+    const parsedTime=parsePromptTimeRanges(raw)[0]??parsePromptTimeRange(raw);
+    const singleTime=parsedTime?null:parsePromptSingleTime(raw);
+    const noWork=/출근\s*안|근무\s*안|일\s*안|안\s*함|휴무|쉬는|쉼/.test(raw);
+    const schedule=getScheduleForDate(employee,dateRange.start_date,overrides,approvedWorkTimeChanges);
+    let nextStart=String(schedule.work_start??employee.work_start??"09:00").slice(0,5);
+    let nextEnd=String(schedule.work_end??employee.work_end??"18:00").slice(0,5);
+    if(parsedTime){ nextStart=parsedTime.start; nextEnd=parsedTime.end; }
+    else if(singleTime){ /퇴근|종료|마감|끝/.test(raw) ? nextEnd=singleTime : nextStart=singleTime; }
+    const startMin=timeToMinutes(nextStart);
+    const endMin=timeToMinutes(nextEnd);
+    if(!noWork&&startMin!=null&&endMin!=null&&endMin<=startMin) nextEnd=minutesToTime(startMin+8*60);
+    const periodLabel=dateRange.start_date===dateRange.end_date?dateRange.start_date:`${dateRange.start_date}~${dateRange.end_date}`;
+    const preview=[
+      `${employee.name} 직원의 ${periodLabel} 일정 예외를 저장합니다.`,
+      noWork ? "변경: 출근 안 함" : `변경: ${timeLabel(nextStart)}~${timeLabel(nextEnd)} 근무`,
+      "",
+      "기본 주간 근무조건은 바꾸지 않습니다.",
+      "이대로 반영할까요?"
+    ].join("\n");
+    if(!window.confirm(preview)) return;
+    const {data:existingRows,error:findError}=await supabase
+      .from("employee_schedule_events")
+      .select("*")
+      .eq("employee_id",employee.id)
+      .eq("start_date",dateRange.start_date)
+      .eq("end_date",dateRange.end_date);
+    if(findError) return setApprovalCommandMsg(`일정 확인 실패: ${findError.message}`);
+    const payload={
+      employee_id:employee.id,
+      title:noWork?"출근 안 함":"시간 변경 근무",
+      event_type:noWork?"unavailable":"work",
+      start_date:dateRange.start_date,
+      end_date:dateRange.end_date,
+      start_time:noWork?"09:00":nextStart,
+      end_time:noWork?"19:00":nextEnd,
+      note:null,
+      updated_at:new Date().toISOString(),
+    };
+    const existing=(existingRows??[]).find((event:any)=>["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type));
+    const result=existing?.id
+      ? await supabase.from("employee_schedule_events").update(payload).eq("id",existing.id)
+      : await supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
+    if(result.error) return setApprovalCommandMsg(`일정 변경 실패: ${result.error.message}`);
+    setApprovalCommand("");
+    setApprovalCommandMsg(`${employee.name} ${periodLabel} 일정 예외를 저장했습니다.`);
+    await load();
+    onChanged();
+  }
   const showsApprovals=view==="approvals";
 
   return (
@@ -3877,6 +3998,16 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             </tbody>
           </table>
         </div>
+      </section>}
+
+      {showsApprovals&&<section className="card">
+        <h2 className="card-title"><i className="ti ti-sparkles" aria-hidden="true"></i>승인함 한 줄 입력</h2>
+        <div className="schedule-command-bar">
+          <input className="input" value={approvalCommand} onChange={e=>setApprovalCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyApprovalScheduleCommand()} placeholder="예: 이희은 7월 14일 13:00~18:00 근무" />
+          <button className="button secondary" onClick={applyApprovalScheduleCommand}>일정 예외 저장</button>
+        </div>
+        <p className="subtle schedule-command-help">승인 중 확인한 직원 일정 예외를 빠르게 캘린더에 남깁니다. 휴가·시간차 승인 기록은 아래 휴가 신청 승인으로 남겨주세요.</p>
+        {approvalCommandMsg&&<div className={`alert ${approvalCommandMsg.includes("실패")||approvalCommandMsg.includes("찾지")||approvalCommandMsg.includes("적용")?"error":"success"}`} style={{marginTop:12}}>{approvalCommandMsg}</div>}
       </section>}
 
       {showsApprovals&&<section className="card">
