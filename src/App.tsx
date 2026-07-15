@@ -545,6 +545,10 @@ function timeLabel(time?: string | null) { return time ? String(time).slice(0,5)
 function timeRangeLabel(start?: string | null, end?: string | null) { return `${timeLabel(start)} ~ ${timeLabel(end)}`; }
 function employeeContractStart(employee:any) { return employee?.work_start_date ?? employee?.contract_start ?? employee?.joined_at ?? todayIso(); }
 function employeeContractEnd(employee:any) { return employee?.contract_end ?? null; }
+function employeeSeniorityValue(employee:any) { return String(employee?.work_start_date ?? employee?.joined_at ?? employee?.created_at ?? "9999-12-31").slice(0,10); }
+function sortEmployeesBySeniority(a:any,b:any) {
+  return employeeSeniorityValue(a).localeCompare(employeeSeniorityValue(b)) || String(a?.name??"").localeCompare(String(b?.name??""));
+}
 function isOnOrAfterIsoDate(value?: string | null, baseline?: string | null) {
   if(!value || !baseline) return true;
   return localDateStr(value) >= String(baseline).slice(0,10);
@@ -1255,6 +1259,15 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     const {error}=await supabase.from("improvement_requests").update({status,updated_at:new Date().toISOString()}).eq("id",id);
     if(error) setMsg(error.message); else await load();
   }
+  async function editRequest(row:any) {
+    const note=window.prompt("개선 요청 내용을 수정해주세요.", row.note);
+    if(note==null) return;
+    const next=note.trim();
+    if(!next) return setMsg("개선 요청 내용은 비워둘 수 없습니다.");
+    const {error}=await supabase.from("improvement_requests").update({note:next,updated_at:new Date().toISOString()}).eq("id",row.id);
+    if(error) setMsg(error.message);
+    else { setMsg("개선 요청 내용을 수정했습니다."); await load(); }
+  }
   async function markVisibleDone() {
     if(!isAdmin) return;
     const ids=visible.filter(row=>row.status!=="done").map(row=>row.id);
@@ -1346,7 +1359,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
         <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>{isAdmin?"앱에서 바로 남긴 개선 메모가 쌓입니다. 처리한 항목은 개선완료로 정리합니다.":"내가 남긴 개선 요청과 처리 상태를 확인합니다."}</p></div>
         <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button>{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={rows.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
       </div>
-      {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("관리자 승인")?"success":"error"}`}>{msg}</div>}
+      {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("관리자 승인")||msg.includes("수정했습니다")?"success":"error"}`}>{msg}</div>}
       {githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
       <div className="improvement-summary-line">대기 {openCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
       <div className="grid two">
@@ -1362,10 +1375,13 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
             </div>
             <p>{row.note}</p>
             <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)} · {row.page_title??"-"}</small>
-            {isAdmin&&<div className="actions">
+            {(isAdmin||(row.created_by===currentEmployee.id&&row.status==="open"))&&<div className="actions">
+              <button className="button ghost compact" onClick={()=>editRequest(row)}>수정</button>
+              {isAdmin&&<>
               {row.status!=="done"&&<button className="button secondary compact" onClick={()=>updateStatus(row.id,"done")}>완료</button>}
               {row.status!=="dismissed"&&<button className="button ghost compact" onClick={()=>updateStatus(row.id,"dismissed")}>삭제</button>}
               {row.status!=="open"&&<button className="button ghost compact" onClick={()=>updateStatus(row.id,"open")}>대기</button>}
+              </>}
             </div>}
           </article>
         ))}
@@ -1778,9 +1794,9 @@ function HomePage({ employee }: { employee: any }) {
     const employeeDept=String(employee.department??"").trim();
     const employeePosition=String(employee.position??"").trim();
     setRoleGuideEntries((rnrRows??[]).filter((entry:any)=>
-      entry.assigned_employee_id===employee.id ||
-      (!!employeeDept&&String(entry.department??"").trim()===employeeDept) ||
-      (!!employeePosition&&String(entry.position??"").trim()===employeePosition)
+      entry.assigned_employee_id
+        ? entry.assigned_employee_id===employee.id
+        : ((!!employeeDept&&String(entry.department??"").trim()===employeeDept) || (!!employeePosition&&String(entry.position??"").trim()===employeePosition))
     ).slice(0,5));
     const currentOpenLogs=(openLogs??[]).filter((log:any)=>logAppliesToCurrentEmployment(log,employee));
     const currentLogs=(logs??[]).filter((log:any)=>logAppliesToCurrentEmployment(log,employee));
@@ -2396,6 +2412,11 @@ function rnrDescriptionLines(entry:any) {
 function splitWorkTimePromptSegments(text:string) {
   return text.split(/\s*(?:[,，、;；]|\r?\n+|\s+그리고\s+|\s+또는\s+)\s*/).map(part=>part.trim()).filter(Boolean);
 }
+function datePartsToIso(year:number,month:number,day:number) {
+  if(year<2000||year>2100) return null;
+  if(month<1||month>12||day<1||day>31) return null;
+  return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+}
 function parseKoreanDateRange(text:string, index=0) {
   const year=new Date().getFullYear();
   const rangeMatch=text.match(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일?\s*(?:부터|에서|~|-)\s*(?:(?:(\d{4})년\s*)?(\d{1,2})월\s*)?(\d{1,2})일?\s*(?:까지)?/);
@@ -2412,12 +2433,40 @@ function parseKoreanDateRange(text:string, index=0) {
       end_date:`${y2}-${String(m2).padStart(2,"0")}-${String(d2).padStart(2,"0")}`,
     };
   }
+  const numericRange=text.match(/(?:(\d{4})[./-])?(\d{1,2})[./-](\d{1,2})\s*(?:부터|에서|~|-)\s*(?:(?:(\d{4})[./-])?(\d{1,2})[./-])?(\d{1,2})(?:까지)?/);
+  if(numericRange){
+    const y1=Number(numericRange[1]??year);
+    const m1=Number(numericRange[2]);
+    const d1=Number(numericRange[3]);
+    const y2=Number(numericRange[4]??y1);
+    const m2=Number(numericRange[5]??m1);
+    const d2=Number(numericRange[6]);
+    const start=datePartsToIso(y1,m1,d1);
+    const end=datePartsToIso(y2,m2,d2);
+    if(start&&end) return {id:`p${Date.now()}-${index}`,start_date:start,end_date:end};
+  }
+  const compactRange=text.match(/(?<!\d)(?:(\d{4})?(\d{2})(\d{2}))\s*(?:부터|에서|~|-)\s*(?:(\d{4})?(\d{2})(\d{2}))(?!\d)/);
+  if(compactRange){
+    const y1=Number(compactRange[1]??year);
+    const y2=Number(compactRange[4]??y1);
+    const start=datePartsToIso(y1,Number(compactRange[2]),Number(compactRange[3]));
+    const end=datePartsToIso(y2,Number(compactRange[5]),Number(compactRange[6]));
+    if(start&&end) return {id:`p${Date.now()}-${index}`,start_date:start,end_date:end};
+  }
   const matches=Array.from(text.matchAll(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일/g));
   const dates=matches.map(match=>{
     const y=Number(match[1]??year);
     const m=String(Number(match[2])).padStart(2,"0");
     const d=String(Number(match[3])).padStart(2,"0");
     return `${y}-${m}-${d}`;
+  });
+  Array.from(text.matchAll(/(?:(\d{4})[./-])?(\d{1,2})[./-](\d{1,2})/g)).forEach(match=>{
+    const iso=datePartsToIso(Number(match[1]??year),Number(match[2]),Number(match[3]));
+    if(iso) dates.push(iso);
+  });
+  Array.from(text.matchAll(/(?<!\d)(?:(\d{4})?(\d{2})(\d{2}))(?!\d)/g)).forEach(match=>{
+    const iso=datePartsToIso(Number(match[1]??year),Number(match[2]),Number(match[3]));
+    if(iso) dates.push(iso);
   });
   if(dates.length>=2) return {id:`p${Date.now()}-${index}`,start_date:dates[0],end_date:dates[1]};
   if(dates.length===1) return {id:`p${Date.now()}-${index}`,start_date:dates[0],end_date:dates[0]};
@@ -3733,8 +3782,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const no=String(employee?.employee_no??"").trim().toLowerCase();
     return name==="test"||no.startsWith("test");
   }
-  const filtered=employees.filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?e.employment_status!=="active":e.employment_status==="active");
-  const activeEmployees=employees.filter(e=>e.employment_status==="active"&&!isTestEmployee(e));
+  const filtered=employees
+    .filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?e.employment_status!=="active":e.employment_status==="active")
+    .sort(sortEmployeesBySeniority);
+  const activeEmployees=employees.filter(e=>e.employment_status==="active"&&!isTestEmployee(e)).sort(sortEmployeesBySeniority);
   useEffect(()=>{
     if(activeEmployees.length===0) { if(selectedDetailEmployeeId) setSelectedDetailEmployeeId(""); return; }
     if(!selectedDetailEmployeeId || !activeEmployees.some((employee:any)=>employee.id===selectedDetailEmployeeId)) {
@@ -3744,7 +3795,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const leaveUsageRows=requests
     .filter((request:any)=>requestTypeLabels[request.request_type])
     .filter((request:any)=>!isTestEmployee(empMap[request.employee_id])&&String(request.reason??"").trim().toLowerCase()!=="test")
-    .filter((request:any)=>leaveUsageEmpId==="all"||request.employee_id===leaveUsageEmpId);
+    .filter((request:any)=>leaveUsageEmpId==="all"||request.employee_id===leaveUsageEmpId)
+    .sort((a:any,b:any)=>sortEmployeesBySeniority(empMap[a.employee_id],empMap[b.employee_id])||String(b.created_at??"").localeCompare(String(a.created_at??"")));
   const todayLogByEmployee:Record<string,any>={};
   allLogs
     .filter((l:any)=>isToday(l.check_in_time))
@@ -4105,9 +4157,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
 
       {showsApprovals&&<section className="card">
         <h2 className="card-title"><i className="ti ti-sparkles" aria-hidden="true"></i>승인함 한 줄 입력</h2>
-        <div className="schedule-command-bar">
+        <div className="schedule-command-bar approval-command-bar">
           <input className="input" value={approvalCommand} onChange={e=>setApprovalCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyApprovalScheduleCommand()} placeholder="예: 이희은 7월 14일 추가근무 3시간 / 13:00~18:00 근무" />
-          <button className="button secondary" onClick={applyApprovalScheduleCommand}>한 줄 처리</button>
+          <button className="button secondary compact" onClick={applyApprovalScheduleCommand}>처리</button>
         </div>
         <p className="subtle schedule-command-help">추가근무는 승인 대기 신청으로 남기고, 일정 변경 문장은 캘린더 예외로 저장합니다. 저녁시간은 일반 야근이면 휴게 제외, 외부 미팅 식사면 사유를 남겨 근무 인정합니다.</p>
         {approvalCommandMsg&&<div className={`alert ${approvalCommandMsg.includes("실패")||approvalCommandMsg.includes("찾지")||approvalCommandMsg.includes("적용")?"error":"success"}`} style={{marginTop:12}}>{approvalCommandMsg}</div>}
@@ -4330,7 +4382,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             const lv=leaveForEmployee(employee.id);
             return <button key={employee.id} className={leaveUsageEmpId===employee.id?"active":""} onClick={()=>setLeaveUsageEmpId(employee.id)}>
               <b>{employee.name}</b>
-              <span>연차 사용 {lv?.used.toFixed(1)??"0.0"}일 · 보상휴가 사용 {formatHourValue(lv?.compUsedH||0)}시간</span>
+              <span>{employee.no_annual_leave?"연차 없음":`연차 사용 ${lv?.used.toFixed(1)??"0.0"}일`} · 보상휴가 사용 {formatHourValue(lv?.compUsedH||0)}시간</span>
             </button>;
           })}
         </div>

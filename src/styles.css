@@ -312,6 +312,8 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 }
 .schedule-command-bar > i { color: var(--blue-dark); font-size: 18px; }
 .schedule-command-bar .input { background: #fff; }
+.approval-command-bar { grid-template-columns: minmax(0,1fr) auto; }
+.approval-command-bar .button { min-width: 64px; box-shadow: 0 4px 12px rgba(58,109,240,.08); }
 .schedule-command-help { margin: 7px 0 0; }
 .schedule-employee-tabs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
 .schedule-employee-tabs > span { margin-right: 4px; color: #5a6475; font-size: 12px; font-weight: 700; }
