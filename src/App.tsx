@@ -351,6 +351,18 @@ function timeSpanMinutes(start?:string|null,end?:string|null) {
   if(s==null||e==null) return 0;
   return e>s ? e-s : (24*60-s)+e;
 }
+function parseDurationMinutes(text:string) {
+  const compact=text.replace(/\s/g,"");
+  const numberWord="영|공|한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉)?|스무|스물(?:한|두|세|네)?|일|이|삼|사|오|육|칠|팔|구|십|이십(?:일|이|삼|사)?";
+  const hourMatch=compact.match(new RegExp(`(\\d+(?:\\.\\d+)?|${numberWord})시간`));
+  const minuteMatch=compact.match(new RegExp(`(\\d+|${numberWord})분`));
+  const hourRaw=hourMatch?.[1];
+  const minuteRaw=minuteMatch?.[1];
+  const hours=hourRaw ? (/^\d/.test(hourRaw) ? Number(hourRaw) : koreanNumberToInt(hourRaw)??0) : 0;
+  const minutes=minuteRaw ? (/^\d/.test(minuteRaw) ? Number(minuteRaw) : koreanNumberToInt(minuteRaw)??0) : 0;
+  const total=Math.round(hours*60+minutes);
+  return total>0?total:null;
+}
 function normalizeMinuteRange(start?:string|null,end?:string|null):[number,number]|null {
   const s=timeToMinutes(start), e=timeToMinutes(end);
   if(s==null||e==null) return null;
@@ -430,6 +442,26 @@ function expectedWorkEndForDate(dateIso:string, schedule:any, leaveRequests:any[
   const baseEndMinute=lastRange?.[1]??(timeToMinutes(schedule?.work_start??"09:00")??9*60);
   const expectedEnd=addMinutes(kstDateTime(dateIso,minutesToTime(baseEndMinute%(24*60))),Math.floor(baseEndMinute/(24*60))*24*60+missedMinutes);
   return {expectedEnd,shiftMinutes:minuteRangeTotal(ranges)+missedMinutes,leaveMinutes:approvedLeaveMinutesForDate(leaveRequests,dateIso,schedule)};
+}
+function dateTimeForWorkDateTime(dateIso:string, time?:string|null, after?:Date|null) {
+  if(!time) return null;
+  let value=kstDateTime(dateIso,time);
+  if(after&&value.getTime()<=after.getTime()) value=addMinutes(value,24*60);
+  return value;
+}
+function dinnerBreakOverlapMinutes(start:Date, end:Date|null) {
+  if(!end||end.getTime()<=start.getTime()) return 0;
+  const dateIso=localDateStr(start);
+  const dinnerStart=kstDateTime(dateIso,"18:00");
+  const dinnerEnd=kstDateTime(dateIso,"19:00");
+  return Math.max(0,Math.round((Math.min(end.getTime(),dinnerEnd.getTime())-Math.max(start.getTime(),dinnerStart.getTime()))/60000));
+}
+function addOvertimeMinutes(start:Date, durationMinutes:number, excludeDinner:boolean) {
+  const end=addMinutes(start,durationMinutes);
+  return excludeDinner ? addMinutes(end,dinnerBreakOverlapMinutes(start,end)) : end;
+}
+function compRequestExcludesDinner(request:any) {
+  return /저녁\s*휴게\s*제외|저녁시간\s*처리:\s*휴게시간\s*제외/.test(String(request?.reason??""));
 }
 function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequests:any[], workTimeChanges:any[] = [], leaveRequests:any[] = []) {
   if(!log?.check_in_time||log?.check_out_time) return null;
@@ -3565,10 +3597,16 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   function expectedCompCheckout(request:any, log=compAttendance(request)){
     const schedule=compSchedule(request);
     const leaveRows=requests.filter((row:any)=>row.employee_id===request.employee_id);
-    if(log?.check_in_time){
-      return expectedWorkEndForDate(request.work_date,schedule,leaveRows,new Date(log.check_in_time)).expectedEnd;
+    const baseline=log?.check_in_time
+      ? expectedWorkEndForDate(request.work_date,schedule,leaveRows,new Date(log.check_in_time)).expectedEnd
+      : expectedWorkEndForDate(request.work_date,schedule,leaveRows,null).expectedEnd;
+    if(compRequestExcludesDinner(request)){
+      const requestEnd=dateTimeForWorkDateTime(request.work_date,request.end_time,baseline);
+      const actualEnd=log?.check_out_time ? new Date(log.check_out_time) : null;
+      return addMinutes(baseline,dinnerBreakOverlapMinutes(baseline,actualEnd??requestEnd));
     }
-    return expectedWorkEndForDate(request.work_date,schedule,leaveRows,null).expectedEnd;
+    const requestStart=dateTimeForWorkDateTime(request.work_date,request.start_time,null);
+    return requestStart&&requestStart.getTime()>baseline.getTime()?requestStart:baseline;
   }
   function estimatedOvertime(request:any){
     const log=compAttendance(request);
@@ -3841,13 +3879,78 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       .sort((a,b)=>String(b.name??"").length-String(a.name??"").length)
       .find(employee=>compact.includes(String(employee.name??"").replace(/\s/g,""))||compact.includes(String(employee.employee_no??"").replace(/\s/g,"")));
   }
+  async function applyApprovalOvertimeCommand(raw:string, employee:any, dateRange:any){
+    const durationMinutes=parseDurationMinutes(raw);
+    if(!durationMinutes) return setApprovalCommandMsg("추가근무 시간을 찾지 못했습니다. 예: 이희은 7월 14일 추가근무 3시간");
+    if(dateRange.start_date!==dateRange.end_date) return setApprovalCommandMsg("추가근무 한 줄 처리는 하루 단위로 입력해주세요.");
+    const workDate=dateRange.start_date;
+    const log=allLogs.find((row:any)=>row.employee_id===employee.id&&localDateStr(row.check_in_time)===workDate);
+    const schedule=getScheduleForDate(employee,workDate,overrides,approvedWorkTimeChanges);
+    const leaveRows=requests.filter((row:any)=>row.employee_id===employee.id);
+    const baseline=expectedWorkEndForDate(workDate,schedule,leaveRows,log?.check_in_time?new Date(log.check_in_time):null).expectedEnd;
+    const baselineHHMM=kstHHMM(baseline);
+    const durationText=`${formatHourValue(durationMinutes/60)}시간`;
+    const defaultDinnerAsWork=/외부|미팅|거래처|식사|저녁\s*근무|저녁.*인정/.test(raw);
+    const choice=window.prompt([
+      `${employee.name}님의 ${workDate} 기준 퇴근시간은 ${baselineHHMM}입니다.`,
+      `이후 추가근무 ${durationText}을(를) 더해 처리합니다.`,
+      "",
+      "1 = 저녁시간 휴게 제외(기본, 일반 야근)",
+      "2 = 외부 미팅/업무상 식사로 저녁시간 근무 인정",
+      "",
+      "실제 출퇴근 기록 또는 회사 확인 사유를 기준으로 승인됩니다."
+    ].join("\n"),defaultDinnerAsWork?"2":"1");
+    if(choice==null) return;
+    const dinnerAsWork=String(choice).trim().startsWith("2");
+    let reasonDetail="";
+    if(dinnerAsWork){
+      const meetingReason=window.prompt("외부 미팅/업무상 식사를 근무시간으로 인정하는 사유를 입력해주세요.\n예: 거래처 ○○사와 프로젝트 일정 협의, 참석자 ○○○, 장소 ○○");
+      if(!meetingReason?.trim()) return setApprovalCommandMsg("외부 미팅 근무 인정은 사유가 필요합니다.");
+      reasonDetail=`저녁시간 처리: 외부 미팅/업무상 식사 근무 인정\n근무 인정 사유: ${meetingReason.trim()}`;
+    }else{
+      reasonDetail="저녁시간 처리: 휴게시간 제외(18:00~19:00)";
+    }
+    const expectedEnd=addOvertimeMinutes(baseline,durationMinutes,!dinnerAsWork);
+    const startHHMM=baselineHHMM;
+    const endHHMM=kstHHMM(expectedEnd);
+    const preview=[
+      `${employee.name}님의 ${workDate} 추가근무 신청을 승인 대기 목록에 추가합니다.`,
+      `기준 퇴근시간: ${baselineHHMM}`,
+      dinnerAsWork
+        ? `외부 미팅 식사를 근무시간으로 인정하여 ${endHHMM}까지 ${durationText} 처리`
+        : `저녁 휴게시간을 제외하여 ${endHHMM}까지 ${durationText} 처리`,
+      "",
+      "최종 적립은 승인함에서 실제 퇴근기록 또는 회사 확인 사유를 기준으로 처리됩니다.",
+      "이대로 추가할까요?"
+    ].join("\n");
+    if(!window.confirm(preview)) return;
+    const duplicate=compRequests.find((request:any)=>request.employee_id===employee.id&&request.work_date===workDate&&["pending","approved"].includes(request.status)&&String(request.start_time??"").slice(0,5)===startHHMM&&String(request.end_time??"").slice(0,5)===endHHMM);
+    if(duplicate) return setApprovalCommandMsg("이미 같은 날짜와 시간의 추가근무 신청이 있습니다.");
+    const reason=`관리자 한 줄 입력: ${raw}\n${reasonDetail}`;
+    const {error}=await supabase.from("comp_time_requests").insert({
+      employee_id:employee.id,
+      work_date:workDate,
+      start_time:startHHMM,
+      end_time:endHHMM,
+      hours:Number((durationMinutes/60).toFixed(2)),
+      converted_days:Number((durationMinutes/60/8).toFixed(2)),
+      reason,
+      status:"pending",
+    });
+    if(error) return setApprovalCommandMsg(`추가근무 신청 저장 실패: ${error.message}`);
+    setApprovalCommand("");
+    setApprovalCommandMsg(`${employee.name} ${workDate} 추가근무 ${durationText}을 승인 대기 목록에 추가했습니다.`);
+    await load();
+    onChanged();
+  }
   async function applyApprovalScheduleCommand(){
     const raw=approvalCommand.trim();
-    if(!raw) return setApprovalCommandMsg("일정 예외를 한 줄로 입력해주세요. 예: 이희은 7월 14일 13:00~18:00 근무");
+    if(!raw) return setApprovalCommandMsg("한 줄로 입력해주세요. 예: 이희은 7월 14일 추가근무 3시간");
     const employee=approvalCommandTargetEmployee(raw);
     if(!employee) return setApprovalCommandMsg("직원 이름 또는 사번을 찾지 못했습니다.");
     const dateRange=parseKoreanDateRange(raw,0);
-    if(!dateRange) return setApprovalCommandMsg("적용할 날짜를 함께 적어주세요. 예: 이희은 7월 14일 13:00~18:00 근무");
+    if(!dateRange) return setApprovalCommandMsg("적용할 날짜를 함께 적어주세요. 예: 이희은 7월 14일 추가근무 3시간");
+    if(/추가\s*근무|초과\s*근무|연장\s*근무|야근/.test(raw)) return applyApprovalOvertimeCommand(raw,employee,dateRange);
     const parsedTime=parsePromptTimeRanges(raw)[0]??parsePromptTimeRange(raw);
     const singleTime=parsedTime?null:parsePromptSingleTime(raw);
     const noWork=/출근\s*안|근무\s*안|일\s*안|안\s*함|휴무|쉬는|쉼/.test(raw);
@@ -4003,10 +4106,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       {showsApprovals&&<section className="card">
         <h2 className="card-title"><i className="ti ti-sparkles" aria-hidden="true"></i>승인함 한 줄 입력</h2>
         <div className="schedule-command-bar">
-          <input className="input" value={approvalCommand} onChange={e=>setApprovalCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyApprovalScheduleCommand()} placeholder="예: 이희은 7월 14일 13:00~18:00 근무" />
-          <button className="button secondary" onClick={applyApprovalScheduleCommand}>일정 예외 저장</button>
+          <input className="input" value={approvalCommand} onChange={e=>setApprovalCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyApprovalScheduleCommand()} placeholder="예: 이희은 7월 14일 추가근무 3시간 / 13:00~18:00 근무" />
+          <button className="button secondary" onClick={applyApprovalScheduleCommand}>한 줄 처리</button>
         </div>
-        <p className="subtle schedule-command-help">승인 중 확인한 직원 일정 예외를 빠르게 캘린더에 남깁니다. 휴가·시간차 승인 기록은 아래 휴가 신청 승인으로 남겨주세요.</p>
+        <p className="subtle schedule-command-help">추가근무는 승인 대기 신청으로 남기고, 일정 변경 문장은 캘린더 예외로 저장합니다. 저녁시간은 일반 야근이면 휴게 제외, 외부 미팅 식사면 사유를 남겨 근무 인정합니다.</p>
         {approvalCommandMsg&&<div className={`alert ${approvalCommandMsg.includes("실패")||approvalCommandMsg.includes("찾지")||approvalCommandMsg.includes("적용")?"error":"success"}`} style={{marginTop:12}}>{approvalCommandMsg}</div>}
       </section>}
 
