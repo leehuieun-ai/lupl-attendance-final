@@ -377,6 +377,7 @@ function compactOvertimeReason(raw:string, employee:any, dateRange:any) {
     .replace(/(?:(?:\d{4})[-./])?\d{1,2}[-./]\d{1,2}/g,"")
     .replace(/\d{1,2}\s*월\s*\d{1,2}\s*일/g,"")
     .replace(/추가\s*근무|초과\s*근무|연장\s*근무|야근/g,"")
+    .replace(/신청\s*사유\s*:/g,"")
     .replace(/신청/g,"")
     .replace(/\d{1,2}:\d{2}\s*(?:~|-|부터|에서)\s*\d{1,2}:\d{2}/g,"")
     .replace(/\d+(?:\.\d+)?\s*시간/g,"")
@@ -386,17 +387,22 @@ function compactOvertimeReason(raw:string, employee:any, dateRange:any) {
     .trim();
 }
 function cleanOvertimeReasonText(text?:string|null) {
-  return String(text??"").replace(/\s*원문:[\s\S]*$/,"").replace(/^시간\s+/,"").trim();
+  return String(text??"")
+    .replace(/\s*(원문:|저녁시간 처리:|근무 인정 사유:)[\s\S]*$/,"")
+    .replace(/^시간\s+/,"")
+    .replace(/\s+/g," ")
+    .trim();
 }
 function displayOvertimeReason(reason?:string|null) {
   const raw=String(reason??"").trim();
   if(!raw) return "사유 미입력";
-  const match=raw.match(/근무 인정 사유:\s*([^\n]+)/);
+  const confirmedReason=raw.match(/근무 인정 사유:\s*([\s\S]*)$/)?.[1];
   const firstLine=raw.split(/\r?\n/).find(line=>{
     const value=line.trim();
     return value&&!/^원문:/.test(value)&&!/^저녁시간 처리:/.test(value)&&value!=="관리자 한 줄 입력";
   });
-  return cleanOvertimeReasonText(match?.[1]??firstLine??raw)||"사유 미입력";
+  const cleaned=cleanOvertimeReasonText(confirmedReason??firstLine??raw);
+  return cleaned&&cleaned!=="관리자 한 줄 입력"?cleaned:"사유 미입력";
 }
 function normalizeMinuteRange(start?:string|null,end?:string|null):[number,number]|null {
   const s=timeToMinutes(start), e=timeToMinutes(end);
