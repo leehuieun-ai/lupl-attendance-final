@@ -90,8 +90,10 @@ const RNR_BASELINE_ROLES = [
   {department:"AI부서", position:"선임", keywords:["AI","자동화","데이터","프롬프트","모델","분석"], duties:["AI 자동화 기획","데이터 정리","프롬프트/결과 검수","업무 효율화 제안"]},
   {department:"개발부서", position:"매니저", keywords:["개발","버그","배포","시스템","앱","기능"], duties:["서비스 기능 개발","버그 확인 및 수정","배포 상태 점검","운영 기능 개선"]},
   {department:"디자인부서", position:"매니저", keywords:["디자인","브랜드","UI","이미지","콘텐츠","시안"], duties:["브랜드/콘텐츠 디자인","UI 화면 정리","홍보 이미지 제작","시안 관리"]},
+  {department:"기획부서", position:"선임", keywords:["기획","전략","사업","프로젝트","제안","운영안"], duties:["사업·운영 기획","프로젝트 요구사항 정리","일정·우선순위 조율","성과 지표 설계"]},
 ];
 const RNR_CATEGORY_RULES = [
+  {label:"기획·전략", keywords:["기획","전략","사업","프로젝트","제안","운영안","우선순위","로드맵"]},
   {label:"문서·행정", keywords:["서류","문서","계약서","제출","양식","파일","자료","공문","인사","채용","근로계약","근태","휴가"]},
   {label:"회계·정산", keywords:["회계","세무","세금","정산","입금","출금","매출","비용","영수증","청구","결제","부가세","원천세","신고","세무사","증빙"]},
   {label:"고객·수업운영", keywords:["운영","일정","비품","재고","교육장","학교","수업","교육","준비","체크","문의","전화","응대","상담","고객","학부모","안내"]},
@@ -127,7 +129,7 @@ const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
   payroll:["급여 계산","직원별 급여·근무 기준","공제 내역"],
   reports:["근태 요약","근태 기록","엑셀 내보내기"],
   consents:["직원 서명 리포트","개인정보 동의","근무시간 변경 요청 서명"],
-  rnr:["업무 메모","AI 정리","R&R 스택","담당자별 보드"],
+  rnr:["업무 메모","AI 정리","조직도","R&R 스택","담당자별 보드"],
   improvements:["개선 요청 목록","상태 관리"],
 };
 
@@ -3472,6 +3474,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [selectedRnr,setSelectedRnr]=useState<any|null>(null);
   const [editingRnr,setEditingRnr]=useState<any|null>(null);
   const [rnrDepartmentFilter,setRnrDepartmentFilter]=useState("all");
+  const [rnrOrgDraft,setRnrOrgDraft]=useState<Record<string,{employeeId:string;position:string}>>({});
   const [rnrBusy,setRnrBusy]=useState(false);
   const [rnrMsg,setRnrMsg]=useState("");
   const [message,setMessage]=useState("");
@@ -3554,6 +3557,31 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   async function updateEmployee(id:string,patch:Record<string,any>){const {error}=await supabase.from("employees").update(patch).eq("id",id);if(error)setMessage(error.message);else{await load();onChanged();}}
   async function toggleEmployee(id:string,cur:string){const n=cur!=="active";await updateEmployee(id,{is_active:n,employment_status:n?"active":"inactive"});}
+  const orgDepartmentValue=(department:string)=>department==="공통"?"":department;
+  const employeeDepartmentLabel=(employee:any)=>String(employee?.department??"").trim()||"공통";
+  const rnrOrgDraftFor=(department:string)=>rnrOrgDraft[department]??{employeeId:"",position:"매니저"};
+  function setRnrOrgDraftValue(department:string,patch:Partial<{employeeId:string;position:string}>){
+    setRnrOrgDraft(current=>({...current,[department]:{...(current[department]??{employeeId:"",position:"매니저"}),...patch}}));
+  }
+  async function assignRnrOrgEmployee(department:string){
+    const draft=rnrOrgDraftFor(department);
+    const employee=employees.find((e:any)=>e.id===draft.employeeId);
+    if(!employee) return setRnrMsg("조직도에 넣을 직원을 선택해주세요.");
+    const nextPosition=draft.position||employee.position||"매니저";
+    const {error}=await supabase.from("employees").update({department:orgDepartmentValue(department),position:nextPosition}).eq("id",employee.id);
+    if(error) return setRnrMsg(error.message);
+    setRnrMsg(`${employee.name}님을 ${department} · ${nextPosition}(으)로 배치했습니다.`);
+    setRnrOrgDraft(current=>({...current,[department]:{employeeId:"",position:nextPosition}}));
+    await load(); onChanged();
+  }
+  async function updateRnrOrgEmployee(employee:any,patch:Record<string,any>){
+    const next={...patch};
+    if("department" in next) next.department=orgDepartmentValue(next.department);
+    const {error}=await supabase.from("employees").update(next).eq("id",employee.id);
+    if(error) return setRnrMsg(error.message);
+    setRnrMsg(`${employee.name}님의 조직도 정보를 변경했습니다.`);
+    await load(); onChanged();
+  }
   function localRnrSuggestion(text:string) {
     const normalized=text.toLowerCase();
     const picked=RNR_BASELINE_ROLES.find(role=>role.keywords.some(keyword=>normalized.includes(keyword.toLowerCase())))??RNR_BASELINE_ROLES[0];
@@ -4042,19 +4070,39 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     })).filter(column=>column.entries.length>0),
     ...(unassignedRnrEntries.length>0?[{key:"role",title:"직책 기준",subtitle:"담당자 미지정",entries:unassignedRnrEntries}]:[]),
   ];
-  const rnrStackGroups=Array.from(rnrEntries.reduce((map:Map<string,any>,entry:any)=>{
-    const department=entry.department||"공통";
-    const position=entry.position||"직책 공통";
-    const category=entry.category||"업무";
-    const key=`${department}|${position}|${category}`;
-    if(!map.has(key)) map.set(key,{key,department,position,category,entries:[]});
-    map.get(key).entries.push(entry);
-    return map;
-  },new Map<string,any>()).values()).sort((a:any,b:any)=>`${a.department}${a.position}${a.category}`.localeCompare(`${b.department}${b.position}${b.category}`));
-  const rnrDepartments=Array.from(new Set(rnrStackGroups.map((group:any)=>group.department))).sort();
-  const visibleRnrStackGroups=rnrDepartmentFilter==="all"
-    ? rnrStackGroups
-    : rnrStackGroups.filter((group:any)=>group.department===rnrDepartmentFilter);
+  const baseRnrDepartments=DEPARTMENT_OPTIONS.filter(Boolean);
+  const rnrDepartmentNames=Array.from(new Set([
+    ...baseRnrDepartments,
+    ...activeEmployees.map((employee:any)=>String(employee.department??"").trim()).filter(Boolean),
+    ...rnrEntries.map((entry:any)=>String(entry.department??"").trim()).filter(Boolean),
+    ...(rnrEntries.some((entry:any)=>!String(entry.department??"").trim())||activeEmployees.some((employee:any)=>!String(employee.department??"").trim())?["공통"]:[]),
+  ])).sort((a:string,b:string)=>{
+    const ai=baseRnrDepartments.indexOf(a);
+    const bi=baseRnrDepartments.indexOf(b);
+    if(ai>=0&&bi>=0) return ai-bi;
+    if(ai>=0) return -1;
+    if(bi>=0) return 1;
+    if(a==="공통") return 1;
+    if(b==="공통") return -1;
+    return a.localeCompare(b);
+  });
+  const rnrDepartmentCards=rnrDepartmentNames.map((department:string)=>{
+    const members=activeEmployees
+      .filter((employee:any)=>employeeDepartmentLabel(employee)===department)
+      .sort((a:any,b:any)=>String(a.name??"").localeCompare(String(b.name??"")));
+    const entries=rnrEntries.filter((entry:any)=>(String(entry.department??"").trim()||"공통")===department);
+    const workGroups=Array.from(entries.reduce((map:Map<string,any>,entry:any)=>{
+      const category=entry.category||"업무";
+      const key=`${department}|${category}`;
+      if(!map.has(key)) map.set(key,{key,category,entries:[]});
+      map.get(key).entries.push(entry);
+      return map;
+    },new Map<string,any>()).values()).sort((a:any,b:any)=>String(a.category).localeCompare(String(b.category)));
+    return {department,members,entries,workGroups};
+  });
+  const visibleRnrDepartmentCards=rnrDepartmentFilter==="all"
+    ? rnrDepartmentCards
+    : rnrDepartmentCards.filter((card:any)=>card.department===rnrDepartmentFilter);
   const selectedDetailEmployee=activeEmployees.find((employee:any)=>employee.id===selectedDetailEmployeeId)??activeEmployees[0]??null;
   const selectedBreakStart=selectedDetailEmployee?.break_start??"12:00";
   const selectedBreakEnd=selectedDetailEmployee?.break_end??"13:00";
@@ -4677,7 +4725,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <b>기본 역할 추천</b>
                 <div className="rnr-role-guide">
                   {RNR_BASELINE_ROLES.map(role=>(
-                    <div className="rnr-role-guide-row" key={role.position}>
+                    <div className="rnr-role-guide-row" key={`${role.department}-${role.position}`}>
                       <strong>{role.department} · {role.position}</strong>
                       <span>{role.duties.slice(0,3).join(" · ")}</span>
                     </div>
@@ -4687,38 +4735,64 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             )}
           </div>
         </div>
-        <div className="rnr-section-title"><b>부서·직책·업무별 R&R 스택</b><span>같은 유형의 업무가 쌓여 다음 담당자가 기준 업무를 빠르게 볼 수 있습니다.</span></div>
+        <div className="rnr-section-title"><b>조직도와 부서별 업무</b><span>직원을 바로 배치하고, 부서 안에서 업무 분류별 R&R을 확인합니다.</span></div>
         <div className="rnr-department-tabs">
           <button className={rnrDepartmentFilter==="all"?"active":""} onClick={()=>setRnrDepartmentFilter("all")}>전체</button>
-          {rnrDepartments.map((department:string)=><button key={department} className={rnrDepartmentFilter===department?"active":""} onClick={()=>setRnrDepartmentFilter(department)}>{department}</button>)}
+          {rnrDepartmentNames.map((department:string)=><button key={department} className={rnrDepartmentFilter===department?"active":""} onClick={()=>setRnrDepartmentFilter(department)}>{department}</button>)}
         </div>
-        <div className="rnr-stack-board">
-          {visibleRnrStackGroups.length===0 ? <p className="subtle">분류할 R&R이 없습니다.</p> : visibleRnrStackGroups.map((group:any)=>(
-            <div className="rnr-stack-column" key={group.key}>
-              <div className="rnr-person-head"><b>{group.department}</b><span>{group.position} · {group.category}</span></div>
-              {group.entries.slice(0,5).map((entry:any)=>(
-                <button className="rnr-person-task" key={entry.id} onClick={()=>openRnr(entry)}>
-                  <b>{rnrDisplayTitle(entry)}</b>
-                  <span>담당 {rnrAssigneeName(entry)}</span>
-                </button>
-              ))}
-              {group.entries.length>5&&<small className="subtle">외 {group.entries.length-5}건은 필터 또는 상세에서 확인</small>}
+        <div className="rnr-org-board">
+          {visibleRnrDepartmentCards.map((card:any)=>{
+            const draft=rnrOrgDraftFor(card.department);
+            return (
+            <div className="rnr-org-card" key={card.department}>
+              <div className="rnr-org-head">
+                <div><b>{card.department}</b><span>{card.members.length}명 · 업무 {card.entries.length}건</span></div>
+                <i className="ti ti-sitemap" aria-hidden="true"></i>
+              </div>
+              <div className="rnr-member-list">
+                {card.members.length===0&&<p className="rnr-empty-work">배치된 직원이 없습니다.</p>}
+                {card.members.map((member:any)=>(
+                  <div className="rnr-member-row" key={member.id}>
+                    <div className="rnr-member-name"><b>{member.name}</b><span>{member.employee_no}</span></div>
+                    <select className="select compact-select" value={employeeDepartmentLabel(member)} onChange={e=>updateRnrOrgEmployee(member,{department:e.target.value})}>
+                      {rnrDepartmentNames.map((department:string)=><option key={department} value={department}>{department}</option>)}
+                    </select>
+                    <select className="select compact-select" value={member.position??""} onChange={e=>updateRnrOrgEmployee(member,{position:e.target.value})}>
+                      {POSITION_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"직책 없음"}</option>)}
+                      {member.position&&!POSITION_OPTIONS.includes(member.position)&&<option value={member.position}>{member.position}</option>}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <div className="rnr-org-add">
+                <select className="select compact-select" value={draft.employeeId} onChange={e=>setRnrOrgDraftValue(card.department,{employeeId:e.target.value})}>
+                  <option value="">직원 선택</option>
+                  {activeEmployees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name} · {employeeDepartmentLabel(employee)}</option>)}
+                </select>
+                <select className="select compact-select" value={draft.position} onChange={e=>setRnrOrgDraftValue(card.department,{position:e.target.value})}>
+                  {POSITION_OPTIONS.filter(Boolean).map(option=><option key={option} value={option}>{option}</option>)}
+                </select>
+                <button className="button secondary compact" onClick={()=>assignRnrOrgEmployee(card.department)}><i className="ti ti-user-plus" aria-hidden="true"></i>넣기</button>
+              </div>
+              <div className="rnr-department-workgroups">
+                {card.workGroups.length===0&&<p className="rnr-empty-work">등록된 업무 R&R이 없습니다.</p>}
+                {card.workGroups.map((group:any)=>(
+                  <div className="rnr-work-category" key={group.key}>
+                    <div className="rnr-work-category-head"><b>{group.category}</b><span>{group.entries.length}건</span></div>
+                    <div className="rnr-work-list">
+                      {group.entries.slice(0,6).map((entry:any)=>(
+                        <button className="rnr-person-task" key={entry.id} onClick={()=>openRnr(entry)}>
+                          <b>{rnrDisplayTitle(entry)}</b>
+                          <span>{rnrAssigneeName(entry)} · {entry.position||"직책 공통"}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {group.entries.length>6&&<small className="subtle">외 {group.entries.length-6}건</small>}
+                  </div>
+                ))}
+              </div>
             </div>
-          ))}
-        </div>
-        <div className="rnr-person-board">
-          {rnrBoardColumns.length===0 ? <p className="subtle">담당자별로 표시할 R&R이 없습니다.</p> : rnrBoardColumns.map(column=>(
-            <div className="rnr-person-column" key={column.key}>
-              <div className="rnr-person-head"><b>{column.title}</b><span>{column.subtitle}</span></div>
-              {column.entries.slice(0,5).map((entry:any)=>(
-                <button className="rnr-person-task" key={entry.id} onClick={()=>openRnr(entry)}>
-                  <b>{rnrDisplayTitle(entry)}</b>
-                  <span>{entry.department||"공통"} · {entry.position||entry.category||"업무"}</span>
-                </button>
-              ))}
-              {column.entries.length>5&&<small className="subtle">외 {column.entries.length-5}건</small>}
-            </div>
-          ))}
+          )})}
         </div>
       </section>}
 
