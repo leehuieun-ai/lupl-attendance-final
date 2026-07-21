@@ -6,8 +6,8 @@ create table if not exists public.registered_devices (id uuid primary key defaul
 create table if not exists public.attendance_logs (id uuid primary key default gen_random_uuid(), employee_id uuid not null references public.employees(id) on delete cascade, workplace_id uuid references public.workplaces(id), check_in_time timestamptz not null default now(), check_out_time timestamptz, check_in_lat double precision, check_in_lng double precision, check_in_accuracy_m double precision, check_out_lat double precision, check_out_lng double precision, check_out_accuracy_m double precision, check_in_distance_m double precision, check_out_distance_m double precision, check_in_ip text, check_out_ip text, device_fingerprint_hash text, device_status text, status text not null default '정상출근', exception_reason text, auto_checkout_candidate boolean not null default false, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
 create table if not exists public.break_logs (id uuid primary key default gen_random_uuid(), attendance_log_id uuid not null references public.attendance_logs(id) on delete cascade, employee_id uuid not null references public.employees(id) on delete cascade, break_start timestamptz not null default now(), break_end timestamptz, created_at timestamptz not null default now());
 create table if not exists public.attendance_requests (id uuid primary key default gen_random_uuid(), employee_id uuid not null references public.employees(id) on delete cascade, request_type text not null check (request_type in ('annual','half_am','half_pm','hourly','sick','official','remote','field','time_fix','special','substitute','compensatory','comp_leave_use')), start_date date not null, end_date date not null, amount_days numeric(6,2), amount_hours numeric(6,2), reason text, status text not null default 'pending' check (status in ('pending','approved','rejected')), reviewed_by uuid references public.employees(id), reviewed_at timestamptz, review_note text, created_at timestamptz not null default now());
-create table if not exists public.comp_time_requests (id uuid primary key default gen_random_uuid(), employee_id uuid not null references public.employees(id) on delete cascade, work_date date not null, start_time time, end_time time, hours numeric(6,2) not null, converted_days numeric(6,2) not null, reason text, status text not null default 'pending' check (status in ('pending','approved','rejected')), reviewed_by uuid references public.employees(id), reviewed_at timestamptz, review_note text, created_at timestamptz not null default now());
-create table if not exists public.leave_adjustments (id uuid primary key default gen_random_uuid(), employee_id uuid not null references public.employees(id) on delete cascade, adjustment_type text not null check (adjustment_type in ('add','subtract','carryover','expire','cancel_use','comp_time_earned')), adjustment_days numeric(6,2) not null, source_type text, source_id uuid, reason text, created_by uuid references public.employees(id), created_at timestamptz not null default now());
+create table if not exists public.comp_time_requests (id uuid primary key default gen_random_uuid(), employee_id uuid not null references public.employees(id) on delete cascade, work_date date not null, start_time time, end_time time, hours numeric(8,4) not null, converted_days numeric(8,4) not null, reason text, status text not null default 'pending' check (status in ('pending','approved','rejected')), reviewed_by uuid references public.employees(id), reviewed_at timestamptz, review_note text, created_at timestamptz not null default now());
+create table if not exists public.leave_adjustments (id uuid primary key default gen_random_uuid(), employee_id uuid not null references public.employees(id) on delete cascade, adjustment_type text not null check (adjustment_type in ('add','subtract','carryover','expire','cancel_use','comp_time_earned')), adjustment_days numeric(8,4) not null, source_type text, source_id uuid, reason text, created_by uuid references public.employees(id), created_at timestamptz not null default now());
 create table if not exists public.monthly_closings (id uuid primary key default gen_random_uuid(), month text not null unique, status text not null default 'open' check (status in ('open','reviewed','closed')), closed_by uuid references public.employees(id), closed_at timestamptz, created_at timestamptz not null default now());
 create table if not exists public.privacy_consents (id uuid primary key default gen_random_uuid(), employee_id uuid not null references public.employees(id) on delete cascade, consent_location boolean not null default true, consent_device boolean not null default true, consent_version text not null default '2026-01', signature_data text, device_fingerprint_hash text, device_info jsonb not null default '{}'::jsonb, is_active boolean not null default true, created_at timestamptz not null default now());
 create table if not exists public.audit_logs (id uuid primary key default gen_random_uuid(), actor_employee_id uuid references public.employees(id), action text not null, target_table text, target_id uuid, before_data jsonb, after_data jsonb, reason text, created_at timestamptz not null default now());
@@ -48,7 +48,7 @@ alter table public.attendance_logs add column if not exists overtime_review_stat
 alter table public.attendance_logs add column if not exists overtime_reviewed_by uuid references public.employees(id);
 alter table public.attendance_logs add column if not exists overtime_reviewed_at timestamptz;
 alter table public.comp_time_requests add column if not exists attendance_log_id uuid references public.attendance_logs(id);
-alter table public.comp_time_requests add column if not exists actual_overtime_hours numeric(6,2);
+alter table public.comp_time_requests add column if not exists actual_overtime_hours numeric(8,4);
 alter table public.employees add column if not exists work_start_date date;
 alter table public.employees add column if not exists work_days text[] not null default array['mon','tue','wed','thu','fri'];
 alter table public.employees add column if not exists work_start time not null default '09:00';
@@ -226,7 +226,7 @@ begin
   if not exists(select 1 from public.employees where id=p_employee_id and is_active=true) then raise exception '활성 직원을 찾을 수 없습니다.'; end if;
   v_admin := public.current_employee_id();
   insert into public.comp_time_requests(employee_id,work_date,start_time,end_time,hours,converted_days,reason,status,reviewed_by,reviewed_at,review_note)
-  values(p_employee_id,p_work_date,p_start_time,p_end_time,p_hours,round(p_hours/8,2),p_reason,'approved',v_admin,now(),'관리자 직접 등록')
+  values(p_employee_id,p_work_date,p_start_time,p_end_time,p_hours,round(p_hours/8,4),p_reason,'approved',v_admin,now(),'관리자 직접 등록')
   returning * into v_request;
   insert into public.leave_adjustments(employee_id,adjustment_type,adjustment_days,source_type,source_id,reason,created_by)
   values(p_employee_id,'comp_time_earned',v_request.converted_days,'comp_time_requests',v_request.id,coalesce(p_reason,'관리자 등록 추가근무'),v_admin);
@@ -523,7 +523,7 @@ declare
   v_log public.attendance_logs%rowtype;
   v_log_before public.attendance_logs%rowtype;
   v_scheduled_end timestamptz;
-  v_actual_hours numeric(6,2);
+  v_actual_hours numeric(8,4);
 begin
   if not public.is_admin() then raise exception '관리자만 처리할 수 있습니다.'; end if;
   if p_status not in ('approved','rejected') then raise exception '허용되지 않은 처리 상태입니다.'; end if;
@@ -544,13 +544,13 @@ begin
 
   v_log_before := v_log;
   v_scheduled_end := timezone('Asia/Seoul', v_before.work_date::timestamp + p_scheduled_end);
-  v_actual_hours := greatest(0,round((extract(epoch from (v_log.check_out_time-v_scheduled_end))/3600)::numeric,2));
+  v_actual_hours := greatest(0,round((extract(epoch from (v_log.check_out_time-v_scheduled_end))/3600)::numeric,4));
 
   if p_status='approved' then
     if v_actual_hours<=0 then raise exception '예정 퇴근시간 이후의 초과근무가 없습니다.'; end if;
     update public.comp_time_requests
     set status='approved', hours=v_actual_hours, actual_overtime_hours=v_actual_hours,
-        converted_days=round(v_actual_hours/8,2), attendance_log_id=v_log.id,
+        converted_days=round(v_actual_hours/8,4), attendance_log_id=v_log.id,
         reviewed_by=v_admin, reviewed_at=now(),
         review_note=coalesce(p_review_note,'실제 퇴근시간 기준 승인')
     where id=p_request_id returning * into v_after;
