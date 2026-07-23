@@ -436,6 +436,22 @@ function subtractMinuteRange(ranges:[number,number][], cut:[number,number]|null)
 function minuteRangeTotal(ranges:[number,number][]) {
   return ranges.reduce((sum,[start,end])=>sum+Math.max(0,end-start),0);
 }
+function addMinutesSkippingRanges(startMinute:number, minutes:number, blockedRanges:[number,number][]) {
+  if(minutes<=0) return startMinute+minutes;
+  let cursor=startMinute;
+  let remaining=minutes;
+  for(const [start,end] of blockedRanges.sort((a,b)=>a[0]-b[0])){
+    if(end<=cursor) continue;
+    if(cursor<start){
+      const available=start-cursor;
+      if(remaining<=available) return cursor+remaining;
+      remaining-=available;
+      cursor=start;
+    }
+    if(cursor<end) cursor=end;
+  }
+  return cursor+remaining;
+}
 function approvedLeaveRangesForDate(requests:any[], dateIso:string, schedule:any) {
   const workRange=normalizeMinuteRange(schedule?.work_start??"09:00",schedule?.work_end??"18:00");
   if(!workRange) return [];
@@ -477,10 +493,13 @@ function kstMinutesOnDate(value:Date, dateIso:string) {
 }
 function expectedWorkEndForDate(dateIso:string, schedule:any, leaveRequests:any[]=[], checkIn?:Date|null) {
   const ranges=requiredWorkRangesForDate(dateIso,schedule,leaveRequests);
+  const firstRange=ranges[0];
   const lastRange=ranges[ranges.length-1];
   let missedMinutes=0;
+  let earlyMinutes=0;
   if(checkIn){
     const checkInMinute=kstMinutesOnDate(checkIn,dateIso);
+    if(firstRange&&checkInMinute<firstRange[0]) earlyMinutes=firstRange[0]-checkInMinute;
     missedMinutes=ranges.reduce((sum,[start,end])=>{
       if(checkInMinute<=start) return sum;
       if(checkInMinute>=end) return sum+(end-start);
@@ -488,7 +507,10 @@ function expectedWorkEndForDate(dateIso:string, schedule:any, leaveRequests:any[
     },0);
   }
   const baseEndMinute=lastRange?.[1]??(timeToMinutes(schedule?.work_start??"09:00")??9*60);
-  const expectedEnd=addMinutes(kstDateTime(dateIso,minutesToTime(baseEndMinute%(24*60))),Math.floor(baseEndMinute/(24*60))*24*60+missedMinutes);
+  const breakRange=normalizeMinuteRange(schedule?.break_start??"12:00",schedule?.break_end??"13:00");
+  const blockedRanges=[...(breakRange?[breakRange]:[]),...approvedLeaveRangesForDate(leaveRequests,dateIso,schedule)];
+  const endMinute=addMinutesSkippingRanges(baseEndMinute,missedMinutes-earlyMinutes,blockedRanges);
+  const expectedEnd=addMinutes(kstDateTime(dateIso,minutesToTime(endMinute%(24*60))),Math.floor(endMinute/(24*60))*24*60);
   return {expectedEnd,shiftMinutes:minuteRangeTotal(ranges)+missedMinutes,leaveMinutes:approvedLeaveMinutesForDate(leaveRequests,dateIso,schedule)};
 }
 function dateTimeForWorkDateTime(dateIso:string, time?:string|null, after?:Date|null) {
@@ -2461,7 +2483,7 @@ function rnrDescriptionLines(entry:any) {
     .slice(0,4);
 }
 function splitWorkTimePromptSegments(text:string) {
-  return text.split(/\s*(?:[,，、;；]|\r?\n+|\s+그리고\s+|\s+또는\s+)\s*/).map(part=>part.trim()).filter(Boolean);
+  return text.split(/\s*(?:[,，、;；]|\r?\n+|\s+\/\s+|\s+그리고\s+|\s+또는\s+)\s*/).map(part=>part.trim()).filter(Boolean);
 }
 function datePartsToIso(year:number,month:number,day:number) {
   if(year<2000||year>2100) return null;
@@ -2760,6 +2782,12 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
     setMsg("");
     applyParsedNaturalDraft(parsed,false);
   }
+  async function cancelWorkTimeRequest(id:string) {
+    if(!window.confirm("승인 대기 중인 근무시간 변경 요청을 철회할까요?")) return;
+    const {error}=await supabase.rpc("cancel_work_time_change_request",{p_request_id:id});
+    if(error) setMsg(`요청 철회 실패: ${error.message}`);
+    else { setMsg("근무시간 변경 요청을 철회했습니다."); await load(); }
+  }
   async function submit() {
     setMsg("");
     if(!naturalText.trim()) return setMsg("변경 내용을 한 줄로 적어주세요.");
@@ -2884,7 +2912,10 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
                       <b>{(r.periods??[]).map((p:any)=>p.start_date===p.end_date?p.start_date:`${p.start_date}~${p.end_date}`).join(" / ") || "-"}</b>
                       <div className="subtle">{workChangeKind(r)}</div>
                     </div>
-                    <span className={`badge ${badgeClass(r.status)}`}>{r.status==="pending"?"승인 대기":r.status==="approved"?"승인":"반려"}</span>
+                    <div className="actions">
+                      <span className={`badge ${badgeClass(r.status)}`}>{String(r.review_note??"").includes("철회")?"철회":r.status==="pending"?"승인 대기":r.status==="approved"?"승인":"반려"}</span>
+                      {r.status==="pending"&&<button className="button ghost compact" onClick={()=>cancelWorkTimeRequest(r.id)}>철회</button>}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2997,7 +3028,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
     // 잔여 검증 — 휴가 차감형 전체 (연차/반차/시간차/특별/대체/보상)
     if (isHourly && (!requestedHours || requestedHours<=0)) return setMessage("시간차 사용 시간을 입력해주세요.");
     if (effectiveRequestType==="comp_leave_use") {
-      if(requestedHours>compRemainHours+1e-9) return setMessage(`보상휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
+      if(requestedHours>compRemainHours+1e-9) return setMessage(`보상휴가 잔여 시간(${formatHourValue(compRemainHours)}시간)이 부족합니다.`);
     } else if (m?.usesLeave) {
       if (requestedDays > expectedRemaining + 1e-9) return setMessage(`잔여 휴가(${expectedRemaining.toFixed(1)}일)가 부족하여 신청할 수 없습니다.`);
     }
@@ -3018,7 +3049,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
   async function useCompLeave() {
     setMessage(""); const hours=Number(form.amount_hours||0);
     if(!hours||hours<=0) return setMessage("사용할 시간을 입력해주세요.");
-    if(hours>compRemainHours+1e-9) return setMessage(`보상휴가 잔여 시간(${compRemainHours}시간)이 부족합니다.`);
+    if(hours>compRemainHours+1e-9) return setMessage(`보상휴가 잔여 시간(${formatHourValue(compRemainHours)}시간)이 부족합니다.`);
     const {error}=await supabase.from("attendance_requests").insert({employee_id:employee.id,request_type:"comp_leave_use",start_date:form.start_date,end_date:form.start_date,amount_hours:hours,amount_days:hours/8,reason:form.reason||"보상휴가 시간 사용",status:"pending"});
     if(error) setMessage(error.message); else{setMessage("보상휴가 시간 사용 신청이 저장되었습니다.");await load();}
   }
@@ -3089,7 +3120,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
               <div className="leave-chip"><span>조정</span><b>{adj>=0?"+":""}{adj.toFixed(1)}일</b></div>
               <div className="leave-chip"><span>사용(승인)</span><b>{approvedUsed.toFixed(1)}일</b></div>
               <div className="leave-chip"><span>잔여(예상)</span><b>{expectedRemaining.toFixed(1)}일</b></div>
-              <div className="leave-chip leave-chip-highlight"><span>보상휴가 잔여</span><b>{compRemainHours}시간</b></div>
+              <div className="leave-chip leave-chip-highlight"><span>보상휴가 잔여</span><b>{formatHourValue(compRemainHours)}시간</b></div>
             </div>
             <p className="subtle leave-period-text">근무 시작일 {employee.joined_at??"-"} · {automaticAnnual>0?ent.description:"자동 연차 미발생"}<br />{automaticAnnual>0?`산정기간 ${ent.periodStart??"-"} ~ ${ent.periodEnd??"-"} (근로기준법 제60조)`:isAnnualLeaveDisabled(employee)?ANNUAL_LEAVE_LEGAL_NOTE:"관리자가 별도로 부여한 특별·대체·보상휴가는 사용할 수 있습니다."}</p>
           </div>
@@ -3108,7 +3139,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
 
           {isHourly&&compRemainHours>0&&(
             <div className="alert">
-              시간차 휴가는 승인된 추가근무 보상휴가 잔여시간 {compRemainHours}시간에서 자동 차감됩니다.
+              시간차 휴가는 승인된 추가근무 보상휴가 잔여시간 {formatHourValue(compRemainHours)}시간에서 자동 차감됩니다.
             </div>
           )}
 
@@ -3135,8 +3166,8 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
         {showOvertime&&<section className="card">
           <h2 className="card-title"><i className="ti ti-clock-plus" aria-hidden="true"></i>추가근무 신청</h2>
           <div className="grid three" style={{marginBottom:14}}>
-            <div className="metric"><div className="metric-value">{compEarnedHours}시간</div><div className="metric-label">승인 적립시간</div></div>
-            <div className="metric"><div className="metric-value">{compRemainHours}시간</div><div className="metric-label">사용 가능</div></div>
+            <div className="metric"><div className="metric-value">{formatHourValue(compEarnedHours)}시간</div><div className="metric-label">승인 적립시간</div></div>
+            <div className="metric"><div className="metric-value">{formatHourValue(compRemainHours)}시간</div><div className="metric-label">사용 가능</div></div>
             <div className="metric"><div className="metric-value">{compRequests.filter(r=>r.status==="pending").length}건</div><div className="metric-label">승인 대기</div></div>
           </div>
           <div className="body-text" style={{marginBottom:14}}>
@@ -3958,7 +3989,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   });
   const pT=workTimeRequests.filter(r=>r.status==="pending");
   const pA=attendanceCorrectionRequests
-    .filter(r=>["pending","objected","signed"].includes(r.status))
+    .filter(r=>["pending","objected"].includes(r.status))
     .sort((a:any,b:any)=>{
       const order:Record<string,number>={objected:0,pending:1,signed:2};
       return (order[a.status]??9)-(order[b.status]??9)||String(b.updated_at??b.signed_at??b.created_at??"").localeCompare(String(a.updated_at??a.signed_at??a.created_at??""));
