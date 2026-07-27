@@ -762,6 +762,20 @@ body { overflow-x: hidden; }
 .improvement-ai-box ul { margin: 8px 0 12px; padding-left: 18px; color: #364154; line-height: 1.55; }
 .improvement-ai-box li span { display: block; color: var(--muted); font-size: 12px; }
 .improvement-ai-box p { white-space: pre-wrap; color: #364154; line-height: 1.6; margin: 8px 0; }
+.improvement-subhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 16px 0 8px; }
+.improvement-subhead h3 { margin: 0; color: #182235; font-size: 15px; letter-spacing: 0; }
+.improvement-subhead span { color: #64748b; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.improvement-issue-groups { display: grid; gap: 10px; margin: 2px 0 14px; }
+.improvement-issue-card { border: 1px solid #cbdaf1; border-radius: 8px; background: #f8fbff; padding: 12px; }
+.improvement-issue-card-head { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
+.improvement-issue-card-head b { display: block; color: #182235; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+.improvement-issue-card-head small, .improvement-issue-card-head span { display: block; margin-top: 5px; color: #64748b; font-size: 12px; font-weight: 750; line-height: 1.45; }
+.improvement-issue-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; min-width: 170px; }
+.improvement-group-items { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #dbe7f6; }
+.improvement-group-item { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 10px; }
+.improvement-group-item b { display: block; color: #1f2937; font-size: 13px; line-height: 1.35; }
+.improvement-group-item p { margin: 6px 0; color: #475569; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.improvement-group-item small { display: block; color: #64748b; font-size: 12px; font-weight: 750; }
 .improvement-stack { display: grid; gap: 10px; }
 .improvement-item { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 12px; }
 .improvement-item-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; margin-bottom: 8px; }
@@ -1025,6 +1039,20 @@ body { overflow-x: hidden; }
   }
   .rnr-org-add .button {
     width: 100%;
+  }
+}
+@media (max-width: 720px) {
+  .improvement-subhead,
+  .improvement-issue-card-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .improvement-subhead span {
+    white-space: normal;
+  }
+  .improvement-issue-actions {
+    min-width: 0;
+    justify-content: flex-start;
   }
 }
 .attendance-status-chart { display: grid; gap: 12px; }

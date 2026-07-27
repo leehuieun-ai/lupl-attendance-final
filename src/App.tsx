@@ -1416,6 +1416,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   const [aiSummary,setAiSummary]=useState<any|null>(null);
   const [githubBusy,setGithubBusy]=useState(false);
   const [githubIssue,setGithubIssue]=useState<any|null>(null);
+  const [expandedGithubIssue,setExpandedGithubIssue]=useState<string|null>(null);
   const isAdmin=currentEmployee?.role==="admin";
   async function load() {
     let query=supabase.from("improvement_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(300);
@@ -1426,11 +1427,35 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   }
   useEffect(()=>{load();},[]);
   const scopedRows=isAdmin?rows:rows.filter(row=>row.created_by===currentEmployee.id&&row.visibility!=="admin_only");
-  const visible=scopedRows.filter(row=>(statusFilter==="all"||row.status===statusFilter)&&(menuFilter==="all"||row.menu_id===menuFilter));
+  const matchesFilters=(row:any)=>(statusFilter==="all"||row.status===statusFilter)&&(menuFilter==="all"||row.menu_id===menuFilter);
+  const isGithubSentRequest=(row:any)=>Boolean(row.github_issue_url||row.github_issue_number);
+  const visible=scopedRows.filter(row=>!isGithubSentRequest(row)&&matchesFilters(row));
+  const githubSentRows=scopedRows.filter(row=>isGithubSentRequest(row)&&matchesFilters(row));
+  const githubIssueGroups=Object.values(githubSentRows.reduce((acc:any,row:any)=>{
+    const key=String(row.github_issue_url||row.github_issue_number||"unknown");
+    if(!acc[key]) acc[key]={key,number:row.github_issue_number,url:row.github_issue_url,title:row.github_issue_title,sentAt:row.github_sent_at||row.updated_at||row.created_at,rows:[]};
+    const group=acc[key];
+    group.rows.push(row);
+    if(!group.number&&row.github_issue_number) group.number=row.github_issue_number;
+    if(!group.url&&row.github_issue_url) group.url=row.github_issue_url;
+    if(!group.title&&row.github_issue_title) group.title=row.github_issue_title;
+    const sentAt=row.github_sent_at||row.updated_at||row.created_at;
+    if(sentAt&&(!group.sentAt||String(sentAt)>String(group.sentAt))) group.sentAt=sentAt;
+    return acc;
+  },{})).sort((a:any,b:any)=>String(b.sentAt||"").localeCompare(String(a.sentAt||"")));
   function improvementRequestTitle(row:any) {
     const text=String(row.note??"").replace(/\s+/g," ").trim();
     if(text) return text.length>42?`${text.slice(0,42)}...`:text;
     return [row.menu_label,row.submenu_label].filter(Boolean).join(" · ")||"개선 요청";
+  }
+  function githubGroupMenus(group:any) {
+    const menus=Array.from(new Set(group.rows.map((row:any)=>row.menu_label).filter(Boolean)));
+    const shown=menus.slice(0,4).join(" · ");
+    return shown+(menus.length>4?` 외 ${menus.length-4}개`:"");
+  }
+  function githubGroupStatus(group:any) {
+    const counts=group.rows.reduce((acc:any,row:any)=>{acc[row.status]=(acc[row.status]??0)+1;return acc;},{});
+    return Object.entries(counts).map(([status,count])=>`${IMPROVEMENT_STATUS_LABELS[status]??status} ${count}건`).join(" · ");
   }
   async function updateStatus(id:string,status:string) {
     const {error}=await supabase.from("improvement_requests").update({status,updated_at:new Date().toISOString()}).eq("id",id);
@@ -1455,11 +1480,19 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   }
   async function markActiveDone() {
     if(!isAdmin) return;
-    const ids=rows.filter(row=>!["done","dismissed"].includes(row.status)).map(row=>row.id);
+    const ids=scopedRows.filter(row=>!isGithubSentRequest(row)&&!["done","dismissed"].includes(row.status)).map(row=>row.id);
     if(ids.length===0) return setMsg("처리할 개선 요청이 없습니다.");
     if(!window.confirm(`대기/검토/수정 예정 개선 요청 ${ids.length}건을 모두 개선완료로 변경할까요?`)) return;
     const {error}=await supabase.from("improvement_requests").update({status:"done",updated_at:new Date().toISOString()}).in("id",ids);
     if(error) setMsg(error.message); else { setMsg(`${ids.length}건을 모두 개선완료로 변경했습니다.`); await load(); }
+  }
+  async function markGithubGroupDone(group:any) {
+    if(!isAdmin) return;
+    const ids=group.rows.filter((row:any)=>row.status!=="done").map((row:any)=>row.id);
+    if(ids.length===0) return setMsg("이미 완료된 GitHub 이슈 묶음입니다.");
+    if(!window.confirm(`GitHub #${group.number??"-"}에 묶인 개선 요청 ${ids.length}건을 완료로 바꿀까요?`)) return;
+    const {error}=await supabase.from("improvement_requests").update({status:"done",updated_at:new Date().toISOString()}).in("id",ids);
+    if(error) setMsg(error.message); else { setMsg(`GitHub #${group.number??"-"} 묶음을 완료 처리했습니다.`); await load(); }
   }
   async function summarize() {
     if(!isAdmin) return;
@@ -1542,23 +1575,56 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   }
   const openCount=scopedRows.filter(row=>row.status==="open").length;
   const githubCount=scopedRows.filter(row=>row.github_issue_url||row.github_issue_number).length;
+  const githubIssueCount=new Set(scopedRows.filter(row=>row.github_issue_url||row.github_issue_number).map(row=>row.github_issue_url||row.github_issue_number)).size;
   const doneCount=scopedRows.filter(row=>row.status==="done").length;
   const hiddenCount=scopedRows.filter(row=>row.status==="dismissed").length;
   return (
     <section className="card improvement-page">
       <div className="section-head">
         <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>{isAdmin?"앱에서 바로 남긴 개선 메모가 쌓입니다. 처리한 항목은 개선완료로 정리합니다.":"내가 남긴 개선 요청과 처리 상태를 확인합니다."}</p></div>
-        <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button>{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={rows.every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
+        <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.length===0||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button>{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={scopedRows.filter(row=>!isGithubSentRequest(row)).every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
       </div>
       {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("관리자 승인")||msg.includes("수정했습니다")?"success":"error"}`}>{msg}</div>}
       {githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
-      <div className="improvement-summary-line">대기 {openCount}건 · GitHub 전송 {githubCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
+      <div className="improvement-summary-line">대기 {openCount}건 · GitHub 이슈 {githubIssueCount}개 / 전송 {githubCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
       <div className="grid two">
         <div className="form-row"><label className="label">상태</label><select className="select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="open">대기</option><option value="all">전체</option>{Object.entries(IMPROVEMENT_STATUS_LABELS).filter(([key])=>key!=="open").map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></div>
         <div className="form-row"><label className="label">메뉴</label><select className="select" value={menuFilter} onChange={e=>setMenuFilter(e.target.value)}><option value="all">전체 메뉴</option>{menuOptions.map(menu=><option key={menu.id} value={menu.id}>{menu.label}</option>)}</select></div>
       </div>
+      {githubIssueGroups.length>0&&<div className="improvement-issue-groups">
+        <div className="improvement-subhead">
+          <h3>GitHub 이슈별 모아보기</h3>
+          <span>{githubIssueGroups.length}개 이슈 · {githubSentRows.length}건</span>
+        </div>
+        {githubIssueGroups.map((group:any)=>{
+          const expanded=expandedGithubIssue===group.key;
+          return <article className="improvement-issue-card" key={group.key}>
+            <div className="improvement-issue-card-head">
+              <div>
+                <a className="github-issue-chip" href={group.url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{group.number??"-"}</a>
+                <b>{group.title||"전송된 개선 요청 묶음"}</b>
+                <small>{formatDateTime(group.sentAt)} · {group.rows.length}건 · {githubGroupStatus(group)}</small>
+                <span>{githubGroupMenus(group)||"메뉴 없음"}</span>
+              </div>
+              <div className="improvement-issue-actions">
+                {isAdmin&&<button className="button ghost compact" onClick={()=>markGithubGroupDone(group)}>묶음 완료</button>}
+                <button className="button secondary compact" onClick={()=>setExpandedGithubIssue(expanded?null:group.key)}>{expanded?"접기":"원문 보기"}</button>
+              </div>
+            </div>
+            {expanded&&<div className="improvement-group-items">
+              {group.rows.map((row:any)=>(
+                <div className="improvement-group-item" key={row.id}>
+                  <b>{improvementRequestTitle(row)}</b>
+                  <p>{row.note}</p>
+                  <small>{row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""} · {row.employees?.name??"작성자"} · {formatDateTime(row.created_at)}</small>
+                </div>
+              ))}
+            </div>}
+          </article>;
+        })}
+      </div>}
       <div className="improvement-stack">
-        {visible.length===0 ? <p className="subtle">표시할 개선 요청이 없습니다.</p> : visible.map(row=>(
+        {visible.length===0 ? <p className="subtle">{githubIssueGroups.length>0?"개별로 처리할 개선 요청은 없습니다. GitHub로 보낸 건은 이슈별 모아보기에서 확인하세요.":"표시할 개선 요청이 없습니다."}</p> : visible.map(row=>(
           <article className="improvement-item" key={row.id}>
             <div className="improvement-item-head">
               <div><span>{row.request_type_label||row.request_type}</span><b>{improvementRequestTitle(row)}</b><small>{row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""}</small></div>
