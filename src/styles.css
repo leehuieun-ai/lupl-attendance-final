@@ -934,6 +934,7 @@ body { overflow-x: hidden; }
 .role-guide-card b { color: #182235; }
 .role-guide-card span { color: var(--muted); font-size: 13px; }
 .role-guide-card ul { margin: 10px 0 0; padding-left: 18px; color: #364154; font-size: 13px; line-height: 1.55; }
+.role-guide-card li { margin-bottom: 8px; overflow-wrap: anywhere; }
 .rnr-card .textarea, .rnr-textarea { min-height: 150px; }
 .rnr-suggestion-box {
   min-height: 220px;
@@ -974,17 +975,18 @@ body { overflow-x: hidden; }
 .rnr-section-title span { color: var(--muted); font-size: 12px; font-weight: 650; }
 .rnr-stack-board { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 12px; }
 .rnr-stack-column { border: 1px solid #dbe5f5; border-radius: 8px; background: #fbfdff; padding: 12px; min-height: 130px; }
-.rnr-org-board { display: grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap: 14px; }
-.rnr-org-card { border: 1px solid #dbe5f5; border-radius: 8px; background: #fff; padding: 14px; display: grid; gap: 12px; align-content: start; box-shadow: 0 8px 24px rgba(15,23,42,.04); }
+.rnr-org-board { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,320px),1fr)); gap: 14px; }
+.rnr-org-card { min-width: 0; overflow: hidden; border: 1px solid #dbe5f5; border-radius: 8px; background: #fff; padding: 14px; display: grid; gap: 12px; align-content: start; box-shadow: 0 8px 24px rgba(15,23,42,.04); }
 .rnr-org-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; border-bottom: 1px solid #edf2f7; padding-bottom: 10px; }
 .rnr-org-head b { display: block; color: #182235; font-size: 18px; }
 .rnr-org-head span { display: block; color: #64748b; font-size: 12px; font-weight: 800; margin-top: 3px; }
 .rnr-org-head i { color: #2563eb; font-size: 22px; }
 .rnr-member-list { display: grid; gap: 8px; }
-.rnr-member-row { display: grid; grid-template-columns: minmax(92px,1fr) minmax(105px,.8fr) minmax(92px,.7fr); gap: 7px; align-items: center; padding: 9px; border: 1px solid #e5ebf4; border-radius: 8px; background: #f8fafc; }
+.rnr-member-row { min-width: 0; display: grid; grid-template-columns: minmax(88px,.9fr) minmax(0,1fr) minmax(0,.8fr); gap: 7px; align-items: center; padding: 9px; border: 1px solid #e5ebf4; border-radius: 8px; background: #f8fafc; }
 .rnr-member-name b, .rnr-member-name span { display: block; }
 .rnr-member-name b { color: #172033; font-size: 14px; }
 .rnr-member-name span { color: #64748b; font-size: 11px; font-weight: 750; margin-top: 2px; }
+.rnr-member-row .select, .rnr-org-add .select { min-width: 0; }
 .compact-select { min-height: 36px; padding: 7px 9px; font-size: 12px; border-radius: 8px; }
 .rnr-org-add { display: grid; grid-template-columns: minmax(130px,1fr) minmax(86px,.55fr) auto; gap: 7px; align-items: center; }
 .rnr-department-workgroups { display: grid; gap: 10px; padding-top: 4px; }
@@ -993,6 +995,14 @@ body { overflow-x: hidden; }
 .rnr-work-category-head b { color: #182235; font-size: 14px; }
 .rnr-work-category-head span { min-width: 38px; text-align: center; border-radius: 999px; background: #eaf2ff; color: #1d4ed8; padding: 4px 8px; font-size: 11px; font-weight: 850; }
 .rnr-work-list { display: grid; gap: 7px; }
+.rnr-work-item { display: grid; grid-template-columns: minmax(0,1fr) 38px; gap: 7px; align-items: stretch; }
+.rnr-work-item .rnr-person-task { margin-top: 0; min-width: 0; }
+.rnr-task-send { width: 38px; height: auto; min-height: 42px; color: var(--blue-dark); background: #eff6ff; border-color: #bfdbfe; }
+.rnr-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.rnr-attachments button, .rnr-attachments a { width: 74px; height: 74px; border: 1px solid var(--line); border-radius: 8px; padding: 0; background: #fff; overflow: hidden; }
+.rnr-attachments img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rnr-attachments.mini { margin: 6px 0 0; }
+.rnr-attachments.mini a { width: 46px; height: 46px; }
 .rnr-empty-work { margin: 0; border: 1px dashed #cbd5e1; border-radius: 8px; background: #f8fafc; color: #64748b; padding: 10px; font-size: 13px; font-weight: 700; }
 .rnr-edit-form .textarea { min-height: 96px; }
 .rnr-modal-actions .button { justify-content: center; }
@@ -1005,6 +1015,18 @@ body { overflow-x: hidden; }
 .rnr-department-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .rnr-department-tabs button { min-height: 36px; border: 1px solid #dfe5ee; border-radius: 999px; background: #fff; color: #4f5d73; padding: 8px 13px; font-size: 13px; font-weight: 800; }
 .rnr-department-tabs button.active { border-color: #93b4ff; background: var(--blue-soft); color: var(--blue-dark); }
+.improvement-item-head small { display: block; margin-top: 3px; color: #64748b; font-size: 12px; font-weight: 750; }
+.github-issue-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin: 4px 0 8px; padding: 7px 10px; border: 1px solid #c7d7fe; border-radius: 8px; background: #eff6ff; color: #1d4ed8; font-size: 12px; font-weight: 800; text-decoration: none; overflow-wrap: anywhere; }
+
+@media (max-width: 1180px) {
+  .rnr-member-row,
+  .rnr-org-add {
+    grid-template-columns: minmax(0,1fr);
+  }
+  .rnr-org-add .button {
+    width: 100%;
+  }
+}
 .attendance-status-chart { display: grid; gap: 12px; }
 .attendance-status-row { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 12px; align-items: center; }
 .attendance-status-name b, .attendance-status-name span { display: block; }
