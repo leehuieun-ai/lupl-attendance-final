@@ -2749,24 +2749,28 @@ function professionalRnrTitle(text:string, category="기타") {
   if(nouns.length>0) return `${nouns.join(" ")} 관리 업무`;
   return `${categoryPrefix[category]??"업무"} 관리 업무`;
 }
+function rnrTitleFromText(text:any) {
+  return String(text??"").trim().split(/\r?\n/).map(line=>line.trim()).find(Boolean)||"";
+}
 function rnrDisplayTitle(entry:any) {
-  return professionalRnrTitle(`${entry?.raw_input??""} ${entry?.summary??""} ${entry?.title??""}`, entry?.category||classifyRnrCategory(`${entry?.raw_input??""} ${entry?.summary??""} ${entry?.title??""}`));
+  return rnrTitleFromText(entry?.raw_input)||String(entry?.title??"").trim()||rnrTitleFromText(entry?.summary)||"업무 R&R";
 }
 function rnrDutyLine(text:any) {
   const cleaned=String(text||"").trim().replace(/[.!?。]+$/,"");
-  if(!cleaned) return "";
-  return /업무$/.test(cleaned) ? cleaned : `${cleaned} 업무`;
+  return cleaned;
 }
 function rnrDescriptionLines(entry:any) {
-  const checklist=Array.isArray(entry?.checklist) ? entry.checklist.map(rnrDutyLine).filter(Boolean) : [];
-  if(checklist.length>0) return checklist;
-  const summary=String(entry?.summary??"").trim();
-  if(!summary) return [rnrDutyLine(rnrDisplayTitle(entry))];
-  return summary
+  const title=rnrDisplayTitle(entry);
+  const summary=String(entry?.summary??entry?.raw_input??"").trim();
+  const descriptionLines=summary
     .split(/\s*(?:\r?\n+|[.;。]\s*)\s*/)
     .map(rnrDutyLine)
     .filter(Boolean)
+    .filter(line=>line!==title)
     .slice(0,4);
+  const checklist=Array.isArray(entry?.checklist) ? entry.checklist.map(rnrDutyLine).filter(Boolean) : [];
+  const merged=[...(descriptionLines.length?descriptionLines:[title]),...checklist.filter((item:string)=>!descriptionLines.includes(item))];
+  return merged.filter(Boolean);
 }
 function splitWorkTimePromptSegments(text:string) {
   return text.split(/\s*(?:[,，、;；]|\r?\n+|\s+\/\s+|\s+그리고\s+|\s+또는\s+)\s*/).map(part=>part.trim()).filter(Boolean);
@@ -3987,10 +3991,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(!rnrSuggestion) return setRnrMsg("먼저 업무를 정리해주세요.");
     const assignee=employees.find((e:any)=>e.id===rnrAssigneeId);
     const category=rnrSuggestion.category||classifyRnrCategory(`${rnrInput} ${rnrSuggestion.summary??""}`);
+    const rawTitle=rnrTitleFromText(rnrInput)||String(rnrSuggestion.title??"").trim()||"이미지 첨부 업무";
+    const summary=String(rnrSuggestion.summary||rnrInput.trim()||rawTitle).trim();
     const payload={
-      raw_input:rnrInput.trim(),
-      title:professionalRnrTitle(`${rnrInput.trim()} ${rnrSuggestion.summary??""} ${rnrSuggestion.title??""}`,category),
-      summary:rnrSuggestion.summary||rnrInput.trim(),
+      raw_input:rnrInput.trim()||rawTitle,
+      title:rawTitle,
+      summary,
       department:rnrSuggestion.department||assignee?.department||"",
       position:rnrSuggestion.position||assignee?.position||"",
       category,
@@ -4019,6 +4025,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   function beginEditRnr(entry:any){
     setEditingRnr({
       ...entry,
+      title:rnrDisplayTitle(entry),
+      summary:String(entry.summary??entry.raw_input??""),
       assigned_employee_id:entry.assigned_employee_id??"",
       checklistText:Array.isArray(entry.checklist)?entry.checklist.join("\n"):"",
     });
@@ -4028,9 +4036,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const assignee=employees.find((e:any)=>e.id===editingRnr.assigned_employee_id);
     const checklist=String(editingRnr.checklistText??"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
     const category=editingRnr.category||classifyRnrCategory(`${editingRnr.title} ${editingRnr.summary}`);
+    const title=String(editingRnr.title??"").trim()||rnrDisplayTitle(editingRnr);
+    const summary=String(editingRnr.summary??"").trim()||title;
     const payload={
-      title:professionalRnrTitle(`${editingRnr.summary??""} ${editingRnr.title??""}`,category),
-      summary:String(editingRnr.summary??"").trim()||professionalRnrTitle(editingRnr.title,category),
+      raw_input:title,
+      title,
+      summary,
       department:editingRnr.department||assignee?.department||"",
       position:editingRnr.position||assignee?.position||"",
       category,
@@ -4061,7 +4072,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   function nextTaskDateForRnr(entry:any) {
     const employee=entry.assigned_employee_id?empMap[entry.assigned_employee_id]:null;
-    for(let i=1;i<=45;i++){
+    for(let i=0;i<=45;i++){
       const date=addIsoDays(todayIso(),i);
       if(employee){
         const schedule=getScheduleForDate(employee,date,overrides,approvedWorkTimeChanges);
@@ -4092,7 +4103,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     }
     const {error}=result;
     if(error) setRnrMsg(error.message);
-    else setRnrMsg(targetEmployeeId?`${rnrAssigneeName(entry)}님의 다음 출근일(${taskDate}) 할일로 보냈습니다.`:`전체 직원 ${taskDate} 할일로 보냈습니다.`);
+    else {
+      await onChanged();
+      const dateLabel=taskDate===todayIso()?"오늘":`다음 출근일(${taskDate})`;
+      setRnrMsg(targetEmployeeId?`${rnrAssigneeName(entry)}님의 ${dateLabel} 할일로 보냈습니다.`:`전체 직원 ${dateLabel} 할일로 보냈습니다.`);
+    }
   }
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
@@ -5206,7 +5221,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           </div>
           {editingRnr ? (
             <div className="rnr-edit-form">
-              <div className="form-row"><label className="label">공식 업무명</label><input className="input" value={editingRnr.title??""} onChange={e=>setEditingRnr({...editingRnr,title:e.target.value})} /></div>
+              <div className="form-row"><label className="label">업무명</label><input className="input" value={editingRnr.title??""} onChange={e=>setEditingRnr({...editingRnr,title:e.target.value})} /></div>
               <div className="grid three">
                 <div className="form-row"><label className="label">부서</label><select className="select" value={editingRnr.department??""} onChange={e=>setEditingRnr({...editingRnr,department:e.target.value})}>{DEPARTMENT_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"공통"}</option>)}</select></div>
                 <div className="form-row"><label className="label">직책</label><select className="select" value={editingRnr.position??""} onChange={e=>setEditingRnr({...editingRnr,position:e.target.value})}>{POSITION_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"공통"}</option>)}</select></div>
