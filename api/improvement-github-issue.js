@@ -1,8 +1,16 @@
 import { readJsonBody, requireAdmin, send } from "./_shared.js";
 
+function requestTitle(request) {
+  const raw = String(request.title || request.note || request.submenu || request.menu || "개선 요청")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (raw.length > 46 ? `${raw.slice(0, 46)}...` : raw) || "개선 요청";
+}
+
 function issueBody(requests) {
   const items = requests.map((request, index) => [
-    `## ${index + 1}. ${request.menu || "메뉴 미지정"}${request.submenu ? ` / ${request.submenu}` : ""}`,
+    `## ${index + 1}. ${requestTitle(request)}`,
+    `- 메뉴: ${request.menu || "메뉴 미지정"}${request.submenu ? ` / ${request.submenu}` : ""}`,
     `- 유형: ${request.type || "-"}`,
     `- 상태: ${request.status || "-"}`,
     `- 작성자: ${request.requester || "-"}`,
@@ -26,7 +34,7 @@ export default async function handler(req, res) {
     if (requests.length === 0) return send(res, 400, { error: "GitHub Issue로 보낼 개선 요청이 없습니다." });
 
     const first = requests[0] || {};
-    const title = String(body.title || `[개선함] ${first.menu || "개선 요청"}${requests.length > 1 ? ` 외 ${requests.length - 1}건` : ""}`).slice(0, 120);
+    const title = String(body.title || `[개선함] ${requestTitle(first)}${requests.length > 1 ? ` 외 ${requests.length - 1}건` : ""}`).slice(0, 120);
     const labels = String(process.env.LUPL_GITHUB_ISSUE_LABELS || "").split(",").map(label => label.trim()).filter(Boolean);
     const payload = { title, body: issueBody(requests) };
     if (labels.length) payload.labels = labels;

@@ -617,6 +617,17 @@ function daysLabel(days:string[] = []) {
   const ordered=orderedDays(days);
   return ordered.length ? ordered.map((d:string)=>DAY_LABELS[d]??d).join(", ") : "-";
 }
+function imageFileToAttachment(file:File, prefix="att") {
+  return new Promise<any>((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve({id:`${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`,name:file.name||"pasted-image.png",type:file.type||"image/png",data_url:String(reader.result)});
+    reader.onerror=()=>reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+function isImageAttachment(attachment:any) {
+  return String(attachment?.data_url??"").startsWith("data:image/");
+}
 function timeLabel(time?: string | null) { return time ? String(time).slice(0,5) : "-"; }
 function timeRangeLabel(start?: string | null, end?: string | null) { return `${timeLabel(start)} ~ ${timeLabel(end)}`; }
 function employeeContractStart(employee:any) { return employee?.work_start_date ?? employee?.contract_start ?? employee?.joined_at ?? todayIso(); }
@@ -703,6 +714,11 @@ function summarizePeriods(periods:any[] = [], workDays:string[] = []) {
 function scheduleEventIsNoWork(event:any){
   return /출근\s*안|근무\s*안|출근\s*불가|근무\s*불가|휴무|쉬는|쉼/.test(`${event?.title??""} ${event?.note??""}`);
 }
+function scheduleEventBlocksRoster(event:any){
+  if(!event||!scheduleEventIsNoWork(event)) return false;
+  const days=countDaysInclusive(event.start_date,event.end_date);
+  return event.open_ended||event.end_date==="2099-12-31"||days>=28;
+}
 function scheduleEventPriorityValue(event:any){
   if(event?.event_type==="hidden"&&scheduleEventIsNoWork(event)) return 60;
   if(event?.event_type==="unavailable") return 50;
@@ -734,7 +750,11 @@ function scheduleInfoForDateWithEvents(employee:any,dateIso:string,events:any[]=
   return {workday,start,end,hours,event,schedule};
 }
 function employeeHasWeekWork(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[]) {
-  return dates.some(date=>scheduleInfoForDateWithEvents(employee,date,events,overrides,workTimeChanges).workday);
+  return dates.some(date=>{
+    const schedule=getScheduleForDate(employee,date,overrides,workTimeChanges);
+    if(!(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)))) return false;
+    return !scheduleEventBlocksRoster(scheduleEventForDate(events,employee,date));
+  });
 }
 function approvedWorkTimeChangeForDate(changes:any[] = [], emp:any, dateIso:string) {
   return changes.find((c:any)=>c.status==="approved" && c.employee_id===emp?.id && (c.periods??[]).some((p:any)=>dateInRange(dateIso,p.start_date,p.end_date)));
@@ -1389,7 +1409,7 @@ function ImprovementQuickCapture({ employee, currentTab, currentPageTitle, menuO
 
 function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmployee:any; menuOptions:{id:Tab;label:string}[] }) {
   const [rows,setRows]=useState<any[]>([]);
-  const [statusFilter,setStatusFilter]=useState("open");
+  const [statusFilter,setStatusFilter]=useState("all");
   const [menuFilter,setMenuFilter]=useState("all");
   const [msg,setMsg]=useState("");
   const [aiBusy,setAiBusy]=useState(false);
@@ -1407,6 +1427,11 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   useEffect(()=>{load();},[]);
   const scopedRows=isAdmin?rows:rows.filter(row=>row.created_by===currentEmployee.id&&row.visibility!=="admin_only");
   const visible=scopedRows.filter(row=>(statusFilter==="all"||row.status===statusFilter)&&(menuFilter==="all"||row.menu_id===menuFilter));
+  function improvementRequestTitle(row:any) {
+    const text=String(row.note??"").replace(/\s+/g," ").trim();
+    if(text) return text.length>42?`${text.slice(0,42)}...`:text;
+    return [row.menu_label,row.submenu_label].filter(Boolean).join(" · ")||"개선 요청";
+  }
   async function updateStatus(id:string,status:string) {
     const {error}=await supabase.from("improvement_requests").update({status,updated_at:new Date().toISOString()}).eq("id",id);
     if(error) setMsg(error.message); else await load();
@@ -1452,6 +1477,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
           menu:row.menu_label,
           submenu:row.submenu_label,
           note:row.note,
+          title:improvementRequestTitle(row),
           status:row.status,
           created_at:row.created_at,
           requester:row.employees?.name,
@@ -1492,7 +1518,19 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       const data=await response.json();
       if(!response.ok) throw new Error(data?.error||"GitHub Issue 생성 실패");
       const ids=target.filter(row=>row.status!=="planned").map(row=>row.id);
-      if(ids.length>0) await supabase.from("improvement_requests").update({status:"planned",updated_at:new Date().toISOString()}).in("id",ids);
+      if(ids.length>0) {
+        const patch={
+          status:"planned",
+          github_issue_number:data.issue?.number??null,
+          github_issue_url:data.issue?.html_url??null,
+          github_issue_title:data.issue?.title??null,
+          github_sent_at:new Date().toISOString(),
+          updated_at:new Date().toISOString(),
+        };
+        let updateResult=await supabase.from("improvement_requests").update(patch).in("id",ids);
+        if(updateResult.error&&/github_|schema cache/i.test(updateResult.error.message)) updateResult=await supabase.from("improvement_requests").update({status:"planned",updated_at:new Date().toISOString()}).in("id",ids);
+        if(updateResult.error) throw updateResult.error;
+      }
       await load();
       setGithubIssue(data.issue);
       setMsg(`GitHub Issue #${data.issue?.number} 생성 완료`);
@@ -1503,6 +1541,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     }
   }
   const openCount=scopedRows.filter(row=>row.status==="open").length;
+  const githubCount=scopedRows.filter(row=>row.github_issue_url||row.github_issue_number).length;
   const doneCount=scopedRows.filter(row=>row.status==="done").length;
   const hiddenCount=scopedRows.filter(row=>row.status==="dismissed").length;
   return (
@@ -1513,7 +1552,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       </div>
       {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("관리자 승인")||msg.includes("수정했습니다")?"success":"error"}`}>{msg}</div>}
       {githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
-      <div className="improvement-summary-line">대기 {openCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
+      <div className="improvement-summary-line">대기 {openCount}건 · GitHub 전송 {githubCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
       <div className="grid two">
         <div className="form-row"><label className="label">상태</label><select className="select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="open">대기</option><option value="all">전체</option>{Object.entries(IMPROVEMENT_STATUS_LABELS).filter(([key])=>key!=="open").map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></div>
         <div className="form-row"><label className="label">메뉴</label><select className="select" value={menuFilter} onChange={e=>setMenuFilter(e.target.value)}><option value="all">전체 메뉴</option>{menuOptions.map(menu=><option key={menu.id} value={menu.id}>{menu.label}</option>)}</select></div>
@@ -1522,11 +1561,12 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
         {visible.length===0 ? <p className="subtle">표시할 개선 요청이 없습니다.</p> : visible.map(row=>(
           <article className="improvement-item" key={row.id}>
             <div className="improvement-item-head">
-              <div><span>{row.request_type_label||row.request_type}</span><b>{row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""}</b></div>
+              <div><span>{row.request_type_label||row.request_type}</span><b>{improvementRequestTitle(row)}</b><small>{row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""}</small></div>
               <em>{IMPROVEMENT_STATUS_LABELS[row.status]??row.status}</em>
             </div>
             <p>{row.note}</p>
             {Array.isArray(row.attachments)&&row.attachments.length>0&&<div className="improvement-attachments readonly">{row.attachments.map((attachment:any,index:number)=>String(attachment?.data_url??"").startsWith("data:image/")?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+            {(row.github_issue_url||row.github_issue_number)&&<a className="github-issue-chip" href={row.github_issue_url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{row.github_issue_number??"-"} · {row.github_issue_title||"전송된 이슈"}</a>}
             <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)} · {row.page_title??"-"}</small>
             {(isAdmin||(row.created_by===currentEmployee.id&&row.status==="open"))&&<div className="actions">
               <button className="button ghost compact" onClick={()=>editRequest(row)}>수정</button>
@@ -2291,7 +2331,7 @@ function HomePage({ employee }: { employee: any }) {
         {roleGuideEntries.length>0&&(
           <div className="role-guide-card">
             <div><b>내 업무 안내</b><span>{roleGuideEntries[0].position||roleGuideEntries[0].department||"역할"} 기준으로 정리된 업무가 있습니다.</span></div>
-            <ul>{roleGuideEntries.slice(0,3).map((entry:any)=><li key={entry.id}>{entry.title}</li>)}</ul>
+            <ul>{roleGuideEntries.slice(0,3).map((entry:any)=><li key={entry.id}><span>{entry.title}</span>{Array.isArray(entry.attachments)&&entry.attachments.length>0&&<div className="rnr-attachments mini readonly">{entry.attachments.map((attachment:any,index:number)=>isImageAttachment(attachment)?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}</li>)}</ul>
           </div>
         )}
         <div className="punch-grid">
@@ -2440,6 +2480,7 @@ function HomePage({ employee }: { employee: any }) {
             <div className="today-task-view">
               <h3>{todayTask.title}</h3>
               <p>{todayTask.content}</p>
+              {Array.isArray(todayTask.attachments)&&todayTask.attachments.length>0&&<div className="rnr-attachments readonly">{todayTask.attachments.map((attachment:any,index:number)=>isImageAttachment(attachment)?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
             </div>
           ) : (
             <div className="today-task-button">
@@ -2495,12 +2536,40 @@ function periodRangeLabel(period:any) {
   if(period.open_ended||period.end_date==="2099-12-31") return `${period.start_date}부터`;
   return `${period.start_date}~${period.end_date}`;
 }
+const WORK_CHANGE_NO_WORK_RE=/출근\s*안|근무\s*안|일\s*안|안\s*함|휴무|쉬는|쉼/;
+function workChangeStoredDays(request:any) {
+  return orderedDays(request?.new_work_days??[]);
+}
+function inferredWorkChangeDays(request:any) {
+  const stored=workChangeStoredDays(request);
+  return stored.length>0 ? stored : daysFromPeriods(request?.periods??[]);
+}
 function isNoWorkChange(request:any) {
-  return (request?.new_work_days??[]).length===0;
+  if(workChangeStoredDays(request).length>0) return false;
+  if((request?.periods??[]).some((period:any)=>period?.open_ended||period?.end_date==="2099-12-31")) return true;
+  return WORK_CHANGE_NO_WORK_RE.test(`${request?.reason??""} ${request?.document_text??""}`);
+}
+function workChangeEffectiveDays(request:any) {
+  return isNoWorkChange(request) ? [] : inferredWorkChangeDays(request);
+}
+function workChangeDailyHours(request:any) {
+  return isNoWorkChange(request)?0:netDailyHours(request?.new_work_start,request?.new_work_end,request?.new_break_start,request?.new_break_end);
+}
+function workChangeWorkDaysCount(request:any) {
+  if(isNoWorkChange(request)) return 0;
+  const stored=Number(request?.total_work_days||0);
+  if(stored>0) return stored;
+  return summarizePeriods(request?.periods??[],workChangeEffectiveDays(request)).workDays;
+}
+function workChangeWeeklyHours(request:any) {
+  if(isNoWorkChange(request)) return 0;
+  const stored=Number(request?.weekly_work_hours||0);
+  if(stored>0) return Math.round(stored*10)/10;
+  return Math.round(workChangeDailyHours(request)*workChangeEffectiveDays(request).length*10)/10;
 }
 function workChangeKind(request:any) {
   if(isNoWorkChange(request)) return "출근 안 함";
-  const dayChanged=!sameDays(request?.old_work_days??[], request?.new_work_days??[]);
+  const dayChanged=!sameDays(request?.old_work_days??[], workChangeEffectiveDays(request));
   const timeChanged=timeLabel(request?.old_work_start)!==timeLabel(request?.new_work_start) || timeLabel(request?.old_work_end)!==timeLabel(request?.new_work_end);
   if(dayChanged&&timeChanged) return "근무요일·시간 변경";
   if(dayChanged) return "근무요일 변경";
@@ -2510,7 +2579,7 @@ function workChangeKind(request:any) {
 function workChangeConditionLabel(request:any) {
   if(isNoWorkChange(request)) return "출근 안 함";
   return [
-    `근무요일 ${daysLabel(request?.new_work_days??[])}`,
+    `근무요일 ${daysLabel(workChangeEffectiveDays(request))}`,
     `근무시간 ${timeRangeLabel(request?.new_work_start,request?.new_work_end)}`,
     `휴게 ${timeRangeLabel(request?.new_break_start,request?.new_break_end)}`,
   ].join("\n");
@@ -2519,24 +2588,25 @@ function workChangePreviousLabel(request:any) {
   return `기존: ${daysLabel(request?.old_work_days??[])} · ${timeRangeLabel(request?.old_work_start,request?.old_work_end)} · 휴게 ${timeRangeLabel(request?.old_break_start,request?.old_break_end)}`;
 }
 function workChangeWorkloadLabel(request:any) {
-  const daily=isNoWorkChange(request)?0:netDailyHours(request?.new_work_start,request?.new_work_end,request?.new_break_start,request?.new_break_end);
-  const weekly=Math.round((Number(request?.weekly_work_hours||0)||daily*(request?.new_work_days??[]).length)*10)/10;
-  const totalHours=Math.round(daily*Number(request?.total_work_days||0)*10)/10;
+  const daily=workChangeDailyHours(request);
+  const weekly=workChangeWeeklyHours(request);
+  const totalWorkDays=workChangeWorkDaysCount(request);
+  const totalHours=Math.round(daily*totalWorkDays*10)/10;
   return [
-    `근무 ${request?.total_work_days??0}일`,
+    `근무 ${totalWorkDays}일`,
     `실근무 ${formatHourValue(totalHours)}시간`,
     `주 ${formatHourValue(weekly)}시간`,
   ].join("\n");
 }
 function workChangeSummaryLine(employee:any,request:any) {
-  const daily=isNoWorkChange(request)?0:netDailyHours(request?.new_work_start,request?.new_work_end,request?.new_break_start,request?.new_break_end);
-  const totalHours=Math.round(daily*Number(request?.total_work_days||0)*10)/10;
+  const totalWorkDays=workChangeWorkDaysCount(request);
+  const totalHours=Math.round(workChangeDailyHours(request)*totalWorkDays*10)/10;
   const period=workChangePeriodLabel(request);
   const reason=String(request?.reason??"").trim();
   return [
     `${employee?.name??"직원"}님 ${period}`,
     workChangeKind(request),
-    `최종 근무 ${request?.total_work_days??0}일, ${formatHourValue(totalHours)}시간`,
+    `최종 근무 ${totalWorkDays}일, ${formatHourValue(totalHours)}시간`,
     reason?`사유 ${reason}`:"",
   ].filter(Boolean).join("\n");
 }
@@ -2793,7 +2863,7 @@ function parseWorkTimeChangePrompt(text:string, oldDays:string[]) {
   const parsed:any={};
   const ranges=parseKoreanDateRanges(normalized);
   if(ranges) parsed.periods=ranges;
-  if(/근무\s*안|일\s*안|안\s*함|휴무|쉬는|쉼/.test(normalized)) parsed.mode="no_work";
+  if(WORK_CHANGE_NO_WORK_RE.test(normalized)) parsed.mode="no_work";
   if(parsed.mode==="no_work"&&!parsed.periods) {
     const openEnded=parseOpenEndedDateRange(normalized,0);
     if(openEnded) parsed.periods=[openEnded];
@@ -3674,6 +3744,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [allLogs,setAllLogs]=useState<any[]>([]);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [rnrInput,setRnrInput]=useState("");
+  const [rnrAttachments,setRnrAttachments]=useState<any[]>([]);
   const [rnrSuggestion,setRnrSuggestion]=useState<any|null>(null);
   const [rnrAssigneeId,setRnrAssigneeId]=useState("");
   const [selectedRnr,setSelectedRnr]=useState<any|null>(null);
@@ -3802,9 +3873,21 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       assigned_person_name:"",
     };
   }
+  async function handleRnrPaste(event:any) {
+    const files=Array.from(event.clipboardData?.files??[]).filter((file:any)=>String(file.type??"").startsWith("image/")) as File[];
+    if(!files.length) return;
+    event.preventDefault();
+    const added=await Promise.all(files.slice(0,5).map(file=>imageFileToAttachment(file,"rnr")));
+    setRnrAttachments(current=>[...current,...added].slice(0,8));
+    setRnrMsg(`${added.length}개 이미지가 첨부되었습니다.`);
+  }
   async function suggestRnr() {
     const raw=rnrInput.trim();
-    if(!raw) return setRnrMsg("정리할 업무 내용을 입력해주세요.");
+    if(!raw&&!rnrAttachments.length) return setRnrMsg("정리할 업무 내용이나 이미지를 입력해주세요.");
+    if(!raw&&rnrAttachments.length){
+      setRnrSuggestion(localRnrSuggestion("이미지 첨부 업무"));
+      return setRnrMsg("이미지 첨부 업무로 정리했습니다. 제목과 담당자를 확인해주세요.");
+    }
     setRnrBusy(true); setRnrMsg("");
     try {
       const {data:sessionData}=await supabase.auth.getSession();
@@ -3851,11 +3934,17 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       assigned_person_name:assignee?.name||rnrSuggestion.assigned_person_name||"",
       created_by:currentEmployee.id,
       source:"admin_note",
+      attachments:rnrAttachments,
       is_active:true,
     };
-    const {error}=await supabase.from("rnr_entries").insert(payload);
+    let result=await supabase.from("rnr_entries").insert(payload);
+    if(result.error&&/attachments|schema cache/i.test(result.error.message)){
+      const {attachments,...fallbackPayload}=payload;
+      result=await supabase.from("rnr_entries").insert(fallbackPayload);
+    }
+    const {error}=result;
     if(error) setRnrMsg(error.message);
-    else { setRnrMsg("업무 R&R이 저장되었습니다."); setRnrInput(""); setRnrSuggestion(null); setRnrAssigneeId(""); await load(); }
+    else { setRnrMsg("업무 R&R이 저장되었습니다."); setRnrInput(""); setRnrAttachments([]); setRnrSuggestion(null); setRnrAssigneeId(""); await load(); }
   }
   function openRnr(entry:any){
     setSelectedRnr(entry);
@@ -3880,27 +3969,64 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       position:editingRnr.position||assignee?.position||"",
       category,
       checklist,
+      attachments:Array.isArray(editingRnr.attachments)?editingRnr.attachments:[],
       assigned_employee_id:editingRnr.assigned_employee_id||null,
       assigned_person_name:assignee?.name||editingRnr.assigned_person_name||"",
       updated_at:new Date().toISOString(),
     };
-    const {data,error}=await supabase.from("rnr_entries").update(payload).eq("id",editingRnr.id).select().single();
+    let result=await supabase.from("rnr_entries").update(payload).eq("id",editingRnr.id).select().single();
+    if(result.error&&/attachments|schema cache/i.test(result.error.message)){
+      const {attachments,...fallbackPayload}=payload;
+      result=await supabase.from("rnr_entries").update(fallbackPayload).eq("id",editingRnr.id).select().single();
+    }
+    const {data,error}=result;
     if(error) setRnrMsg(error.message);
     else { setRnrMsg("업무 R&R을 수정했습니다."); setSelectedRnr(data); setEditingRnr(null); await load(); }
+  }
+  function isFullDayApprovedLeave(employeeId:string,dateIso:string) {
+    return requests.some((request:any)=>
+      request.employee_id===employeeId
+      && request.status==="approved"
+      && request.start_date<=dateIso
+      && request.end_date>=dateIso
+      && !request.start_time
+      && !request.end_time
+    );
+  }
+  function nextTaskDateForRnr(entry:any) {
+    const employee=entry.assigned_employee_id?empMap[entry.assigned_employee_id]:null;
+    for(let i=1;i<=45;i++){
+      const date=addIsoDays(todayIso(),i);
+      if(employee){
+        const schedule=getScheduleForDate(employee,date,overrides,approvedWorkTimeChanges);
+        if((schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)))&&!isFullDayApprovedLeave(employee.id,date)) return date;
+      } else if(["mon","tue","wed","thu","fri"].includes(dayKeyFromDate(dateFromIso(date)))) {
+        return date;
+      }
+    }
+    return addIsoDays(todayIso(),1);
   }
   async function sendRnrToTodayTask(entry:any){
     const contentLines=rnrDescriptionLines(entry).map((item:string)=>`- ${item}`).join("\n");
     const targetEmployeeId=entry.assigned_employee_id||null;
-    const {error}=await supabase.from("daily_tasks").insert({
-      task_date:todayIso(),
+    const taskDate=nextTaskDateForRnr(entry);
+    const payload={
+      task_date:taskDate,
       title:rnrDisplayTitle(entry)||"오늘의 할일",
       content:contentLines,
       is_active:true,
       created_by:currentEmployee.id,
       target_employee_id:targetEmployeeId,
-    });
+      attachments:Array.isArray(entry.attachments)?entry.attachments:[],
+    };
+    let result=await supabase.from("daily_tasks").insert(payload);
+    if(result.error&&/attachments|schema cache/i.test(result.error.message)){
+      const {attachments,...fallbackPayload}=payload;
+      result=await supabase.from("daily_tasks").insert(fallbackPayload);
+    }
+    const {error}=result;
     if(error) setRnrMsg(error.message);
-    else setRnrMsg(targetEmployeeId?`${rnrAssigneeName(entry)}에게 오늘의 할일로 보냈습니다.`:"전체 직원 오늘의 할일로 보냈습니다.");
+    else setRnrMsg(targetEmployeeId?`${rnrAssigneeName(entry)}님의 다음 출근일(${taskDate}) 할일로 보냈습니다.`:`전체 직원 ${taskDate} 할일로 보냈습니다.`);
   }
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
@@ -4686,11 +4812,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
               <div className="list-row" key={r.id} style={{flexDirection:"column",alignItems:"stretch"}}>
                 <div>
                   <b>{empName(r.employee_id)}</b>
-                  <div className="subtle">{(r.periods??[]).map((p:any)=>periodRangeLabel(p)).join(" / ")} · {daysLabel(r.new_work_days??[])} · {timeRangeLabel(r.new_work_start,r.new_work_end)}</div>
+                  <div className="subtle">{(r.periods??[]).map((p:any)=>periodRangeLabel(p)).join(" / ")} · {daysLabel(workChangeEffectiveDays(r))} · {timeRangeLabel(r.new_work_start,r.new_work_end)}</div>
                 </div>
                 <div className="type-desc" style={{marginTop:8,marginBottom:0}}>
                   기존 {daysLabel(r.old_work_days??[])} · {timeRangeLabel(r.old_work_start,r.old_work_end)}<br/>
-                  변경 주 {Number(r.weekly_work_hours||0).toFixed(1)}시간 · 총 {r.total_calendar_days??0}일 / 근무 {r.total_work_days??0}일<br/>
+                  변경 주 {workChangeWeeklyHours(r).toFixed(1)}시간 · 총 {r.total_calendar_days??0}일 / 근무 {workChangeWorkDaysCount(r)}일<br/>
                   사유 {r.reason||"-"}
                 </div>
                 <div className="actions"><button className="button secondary" onClick={()=>reviewWorkTimeRequest(r.id,"approved")}>승인</button><button className="button danger" onClick={()=>reviewWorkTimeRequest(r.id,"rejected")}>반려</button></div>
@@ -4909,7 +5035,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         {rnrMsg&&<div className={`alert ${rnrMsg.includes("저장")?"success":""}`}>{rnrMsg}</div>}
         <div className="grid two">
           <div>
-            <div className="form-row"><label className="label">업무 메모</label><textarea className="textarea rnr-textarea" value={rnrInput} onChange={e=>setRnrInput(e.target.value)} placeholder="예: 내일 오전에 학교 제출용 서류 정리하고, 영수증은 민지한테 맡기고, 교육장 비품은 사무보조가 체크하게 해줘." /></div>
+            <div className="form-row"><label className="label">업무 메모</label><textarea className="textarea rnr-textarea" value={rnrInput} onChange={e=>setRnrInput(e.target.value)} onPaste={handleRnrPaste} placeholder="예: 내일 오전에 학교 제출용 서류 정리하고, 영수증은 민지한테 맡기고, 교육장 비품은 사무보조가 체크하게 해줘." /></div>
+            {rnrAttachments.length>0&&<div className="rnr-attachments">{rnrAttachments.map((attachment:any)=><button type="button" key={attachment.id} onClick={()=>setRnrAttachments(current=>current.filter(item=>item.id!==attachment.id))} title="첨부 삭제"><img src={attachment.data_url} alt={attachment.name} /></button>)}</div>}
             <button className="button" disabled={rnrBusy} onClick={suggestRnr}><i className="ti ti-sparkles" aria-hidden="true"></i>{rnrBusy?"정리 중":"AI로 정리"}</button>
           </div>
           <div className="rnr-suggestion-box">
@@ -4987,10 +5114,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                     <div className="rnr-work-category-head"><b>{group.category}</b><span>{group.entries.length}건</span></div>
                     <div className="rnr-work-list">
                       {group.entries.slice(0,6).map((entry:any)=>(
-                        <button className="rnr-person-task" key={entry.id} onClick={()=>openRnr(entry)}>
-                          <b>{rnrDisplayTitle(entry)}</b>
-                          <span>{rnrAssigneeName(entry)} · {entry.position||"직책 공통"}</span>
-                        </button>
+                        <div className="rnr-work-item" key={entry.id}>
+                          <button className="rnr-person-task" onClick={()=>openRnr(entry)}>
+                            <b>{rnrDisplayTitle(entry)}</b>
+                            <span>{rnrAssigneeName(entry)} · {entry.position||"직책 공통"}</span>
+                          </button>
+                          <button className="icon-button rnr-task-send" title="다음 출근일 할일로 보내기" onClick={()=>sendRnrToTodayTask(entry)}><i className="ti ti-clipboard-plus" aria-hidden="true"></i></button>
+                        </div>
                       ))}
                     </div>
                     {group.entries.length>6&&<small className="subtle">외 {group.entries.length-6}건</small>}
@@ -5029,6 +5159,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <div><dt>업무 분류</dt><dd>{selectedRnr.category||"기타"}</dd></div>
               </dl>
               <div className="type-desc"><b>업무 설명</b><ul className="rnr-duty-list detail">{rnrDescriptionLines(selectedRnr).map((line:string,index:number)=><li key={index}>{line}</li>)}</ul></div>
+              {Array.isArray(selectedRnr.attachments)&&selectedRnr.attachments.length>0&&<div className="rnr-attachments readonly">{selectedRnr.attachments.map((attachment:any,index:number)=>isImageAttachment(attachment)?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
             </div>
           )}
           <div className="actions rnr-modal-actions" style={{justifyContent:"flex-end",marginTop:16}}>

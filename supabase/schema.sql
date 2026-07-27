@@ -726,6 +726,7 @@ create table if not exists public.daily_tasks (
   task_date date not null default current_date,
   title text not null,
   content text not null,
+  attachments jsonb not null default '[]'::jsonb,
   is_active boolean not null default true,
   created_by uuid references public.employees(id),
   target_employee_id uuid references public.employees(id) on delete set null,
@@ -749,6 +750,7 @@ create table if not exists public.rnr_entries (
   category text,
   priority text not null default 'normal',
   checklist jsonb not null default '[]'::jsonb,
+  attachments jsonb not null default '[]'::jsonb,
   assigned_employee_id uuid references public.employees(id),
   assigned_person_name text,
   source text,
@@ -763,6 +765,8 @@ on public.rnr_entries(is_active, department, position, created_at desc);
 
 alter table public.daily_tasks enable row level security;
 alter table public.rnr_entries enable row level security;
+alter table public.daily_tasks add column if not exists attachments jsonb not null default '[]'::jsonb;
+alter table public.rnr_entries add column if not exists attachments jsonb not null default '[]'::jsonb;
 
 drop policy if exists daily_tasks_select_auth on public.daily_tasks;
 create policy daily_tasks_select_auth on public.daily_tasks
@@ -1123,6 +1127,10 @@ create table if not exists public.improvement_requests (
 
 alter table public.improvement_requests add column if not exists attachments jsonb not null default '[]'::jsonb;
 alter table public.improvement_requests add column if not exists visibility text not null default 'employee_owner';
+alter table public.improvement_requests add column if not exists github_issue_number int;
+alter table public.improvement_requests add column if not exists github_issue_url text;
+alter table public.improvement_requests add column if not exists github_issue_title text;
+alter table public.improvement_requests add column if not exists github_sent_at timestamptz;
 alter table public.improvement_requests drop constraint if exists improvement_requests_visibility_check;
 alter table public.improvement_requests add constraint improvement_requests_visibility_check check (visibility in ('employee_owner','admin_only'));
 alter table public.improvement_requests enable row level security;
