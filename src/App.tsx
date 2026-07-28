@@ -749,12 +749,10 @@ function scheduleInfoForDateWithEvents(employee:any,dateIso:string,events:any[]=
   const hours=workday?netDailyHours(start,end,schedule.break_start??"12:00",schedule.break_end??"13:00"):0;
   return {workday,start,end,hours,event,schedule};
 }
-function employeeHasWeekWork(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[]) {
-  return dates.some(date=>{
-    const schedule=getScheduleForDate(employee,date,overrides,workTimeChanges);
-    if(!(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)))) return false;
-    return !scheduleEventBlocksRoster(scheduleEventForDate(events,employee,date));
-  });
+function employeeHasWeekWork(employee:any,dates:string[],_events:any[]=[],_overrides:any[]=[],_workTimeChanges:any[]=[]) {
+  const contractStart=employeeContractStart(employee);
+  const contractEnd=employee?.contract_type==="fixed_term" ? employeeContractEnd(employee) : null;
+  return dates.some(date=>(!contractStart||date>=contractStart)&&(!contractEnd||date<=contractEnd));
 }
 function approvedWorkTimeChangeForDate(changes:any[] = [], emp:any, dateIso:string) {
   return changes.find((c:any)=>c.status==="approved" && c.employee_id===emp?.id && (c.periods??[]).some((p:any)=>dateInRange(dateIso,p.start_date,p.end_date)));
