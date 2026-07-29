@@ -6275,10 +6275,10 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
     const hourlyWage=Number(employee.hourly_wage||(monthlySalary&&monthlyStandardHours?Math.round(monthlySalary/monthlyStandardHours):0));
     const rowAbsentDays=countUnpaidAbsenceWorkdays(employee, absences, month.start, month.end, overrides, approvedWorkTimeChanges, scheduleEvents);
     const rowDeduction=monthlySalary&&monthStats.days>0?Math.round((monthlySalary/monthStats.days)*rowAbsentDays):0;
-    const estimatedPay=Math.max(0,(monthlySalary || (hourlyWage?Math.round(hourlyWage*monthStats.hours):0))-rowDeduction);
-    return {employee,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay,rowAbsentDays,rowDeduction};
+    const scheduledPay=hourlyWage?Math.round(hourlyWage*monthStats.hours):0;
+    return {employee,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,scheduledPay,rowAbsentDays,rowDeduction};
   });
-  const payrollEstimatedTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.estimatedPay||0),0);
+  const payrollScheduledPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledPay||0),0);
   return (
     <section className="card">
       <div className="section-head payroll-head">
@@ -6314,20 +6314,20 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
       </div>
       <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
       <div className="payroll-summary-list">
-        <div className="payroll-summary-head">직원별 급여·월 근무 기준 <span>{payrollMonthLabel} 월 예정시간은 직원별 주간 캘린더 요약과 같은 일정 기준으로 반영합니다.</span></div>
-        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>월 예정시간</span><span>월 급여기준</span><span>예상 급여</span><small>{payrollMonthLabel} 기준</small></div>
-        {payrollSummaryRows.map(({employee,month,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay,rowAbsentDays,rowDeduction}:any)=>(
+        <div className="payroll-summary-head">직원별 급여·월 근무 기준 <span>{payrollMonthLabel} 월 예정시간은 직원별 주간 캘린더 요약과 같은 일정 기준으로 반영하고, 월 예정급여는 월 예정시간 × 시급으로 계산합니다.</span></div>
+        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>월 예정시간</span><span>월 급여기준</span><span>월 예정급여</span><small>{payrollMonthLabel} 기준</small></div>
+        {payrollSummaryRows.map(({employee,month,monthlyStandardHours,monthlySalary,hourlyWage,scheduledPay,rowAbsentDays,rowDeduction}:any)=>(
           <div className={`payroll-summary-row ${empId===employee.id?"active":""}`} key={employee.id}>
             <button type="button" className="payroll-employee-cell payroll-employee-button" onClick={()=>setEmpId(employee.id)}><b>{employee.name}</b><small>사번 {employee.employee_no||"-"} · {employee.role==="admin"?"관리자":"직원"}</small></button>
             <span>{hourlyWage?won(hourlyWage):"-"}</span>
             <span>{monthlySalary?won(monthlySalary):"-"}</span>
             <span>{formatHourValue(month.hours)}시간</span>
             <span>{formatHourValue(monthlyStandardHours||month.hours)}시간</span>
-            <span>{estimatedPay?won(estimatedPay):"-"}</span>
-            <small>{payrollMonthLabel} 예정 {month.days}일 · 월 예정 {formatHourValue(month.hours)}시간{rowAbsentDays>0?` · 무급공제 ${rowAbsentDays}일 ${won(rowDeduction)}`:""}</small>
+            <span>{scheduledPay?won(scheduledPay):"-"}</span>
+            <small>{payrollMonthLabel} 예정 {month.days}일 · 월 예정 {formatHourValue(month.hours)}시간 × {hourlyWage?won(hourlyWage):"시급 미설정"}{rowAbsentDays>0?` · 무급공제 별도 ${rowAbsentDays}일 ${won(rowDeduction)}`:""}</small>
           </div>
         ))}
-        <div className="payroll-summary-row payroll-summary-total"><b>예상 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollEstimatedTotal)}</span><small>최종 임금 확정 전 예상 급여 합계</small></div>
+        <div className="payroll-summary-row payroll-summary-total"><b>예정급여 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollScheduledPayTotal)}</span><small>월 예정시간 × 시급 합계</small></div>
       </div>
       {empId&&emp&&<div className="payroll-selected-detail"><b>{emp.name} 급여 세부내역</b><span>{payrollMonthLabel} 기준으로 아래 공제와 예상 실수령액을 계산합니다. 최종 지급액은 회사 확인 후 확정됩니다.</span></div>}
       {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 급여기준시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)} · 주휴 포함</div>}
