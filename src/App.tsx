@@ -719,6 +719,14 @@ function scheduleEventBlocksRoster(event:any){
   const days=countDaysInclusive(event.start_date,event.end_date);
   return event.open_ended||event.end_date==="2099-12-31"||days>=28;
 }
+function workTimeChangeBlocksRoster(changes:any[] = [], emp:any, dateIso:string) {
+  const change=approvedWorkTimeChangeForDate(changes,emp,dateIso);
+  if(!change||(change.new_work_days??[]).length>0) return false;
+  const period=(change.periods??[]).find((p:any)=>dateInRange(dateIso,p.start_date,p.end_date));
+  if(!period) return false;
+  const days=countDaysInclusive(period.start_date,period.end_date);
+  return period.end_date==="2099-12-31"||days>=28;
+}
 function scheduleEventPriorityValue(event:any){
   if(event?.event_type==="hidden"&&scheduleEventIsNoWork(event)) return 60;
   if(event?.event_type==="unavailable") return 50;
@@ -741,18 +749,30 @@ function scheduleEventForDate(events:any[] = [], employee:any, dateIso:string){
 }
 function scheduleInfoForDateWithEvents(employee:any,dateIso:string,events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[]) {
   const schedule=getScheduleForDate(employee,dateIso,overrides,workTimeChanges);
+  const change=approvedWorkTimeChangeForDate(workTimeChanges,employee,dateIso);
   const event=scheduleEventForDate(events,employee,dateIso);
+  const eventOverridesSchedule=event&&!change;
   const eventIsWork=["work","am_only","pm_only"].includes(event?.event_type);
-  const workday=event ? eventIsWork : (schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(dateIso)));
-  const start=event?.start_time??schedule.work_start;
-  const end=event?.end_time??schedule.work_end;
+  const workday=eventOverridesSchedule ? eventIsWork : (schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(dateIso)));
+  const start=eventOverridesSchedule ? event?.start_time??schedule.work_start : schedule.work_start;
+  const end=eventOverridesSchedule ? event?.end_time??schedule.work_end : schedule.work_end;
   const hours=workday?netDailyHours(start,end,schedule.break_start??"12:00",schedule.break_end??"13:00"):0;
-  return {workday,start,end,hours,event,schedule};
+  return {workday,start,end,hours,event,schedule,change};
 }
-function employeeHasWeekWork(employee:any,dates:string[],_events:any[]=[],_overrides:any[]=[],_workTimeChanges:any[]=[]) {
+function employeeHasWeekWork(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[]) {
   const contractStart=employeeContractStart(employee);
   const contractEnd=employee?.contract_type==="fixed_term" ? employeeContractEnd(employee) : null;
-  return dates.some(date=>(!contractStart||date>=contractStart)&&(!contractEnd||date<=contractEnd));
+  return dates.some(date=>{
+    if((contractStart&&date<contractStart)||(contractEnd&&date>contractEnd)) return false;
+    const event=scheduleEventForDate(events,employee,date);
+    if(scheduleEventBlocksRoster(event)) return false;
+    if(workTimeChangeBlocksRoster(workTimeChanges,employee,date)) return false;
+    const dayKey=dayKeyFromDate(dateFromIso(date));
+    const schedule=getScheduleForDate(employee,date,overrides,workTimeChanges);
+    if((schedule.work_days??[]).includes(dayKey) || ["work","am_only","pm_only"].includes(event?.event_type)) return true;
+    const baseSchedule=getScheduleForDate(employee,date,overrides,[]);
+    return (baseSchedule.work_days??[]).includes(dayKey);
+  });
 }
 function approvedWorkTimeChangeForDate(changes:any[] = [], emp:any, dateIso:string) {
   return changes.find((c:any)=>c.status==="approved" && c.employee_id===emp?.id && (c.periods??[]).some((p:any)=>dateInRange(dateIso,p.start_date,p.end_date)));
@@ -799,9 +819,9 @@ function attendanceDisplay(emp:any,log:any,overrides:any[],workTimeChanges:any[]
   if(reviewStatuses.includes(log.status)||["지각","결근"].includes(log.status)) return {primary:statusText,primaryClass:badgeClass(statusText),workType,lateMinutes,scheduleStart:thresholdText};
   return {primary:lateMinutes>=1?"지각 확인 필요":"정상출근",primaryClass:lateMinutes>=1?"bad":"good",workType,lateMinutes,scheduleStart:thresholdText};
 }
-function countScheduledWorkdays(emp:any, startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
+function countScheduledWorkdays(emp:any, startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[], events:any[]=[]) {
   let count=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
-  while(d<=end){ const iso=isoDate(d); const sched=getScheduleForDate(emp, iso, overrides, workTimeChanges); if((sched.work_days??[]).includes(dayKeyFromDate(d))) count++; d=addLocalDays(d,1); }
+  while(d<=end){ const iso=isoDate(d); const info=scheduleInfoForDateWithEvents(emp, iso, events, overrides, workTimeChanges); if(info.workday) count++; d=addLocalDays(d,1); }
   return count;
 }
 function formatHourValue(value:any) {
@@ -811,33 +831,48 @@ function formatHourValue(value:any) {
   if(Math.abs(rounded)<1) return rounded.toFixed(2).replace(/0$/,"");
   return (Math.round(num*10)/10).toFixed(1);
 }
-function scheduledWorkStats(emp:any, startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
+function scheduledWorkStats(emp:any, startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[], events:any[]=[]) {
   let days=0; let hours=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
   while(d<=end){
     const iso=isoDate(d);
-    const sched=getScheduleForDate(emp, iso, overrides, workTimeChanges);
-    if((sched.work_days??[]).includes(dayKeyFromDate(d))){
+    const info=scheduleInfoForDateWithEvents(emp, iso, events, overrides, workTimeChanges);
+    if(info.workday){
       days++;
-      hours+=netDailyHours(sched.work_start,sched.work_end,sched.break_start??"12:00",sched.break_end??"13:00");
+      hours+=info.hours;
     }
     d=addLocalDays(d,1);
   }
   return {days,hours:Math.round(hours*10)/10};
 }
-function weeklyStatsForDate(emp:any, dateIso=todayIso(), overrides:any[]=[], workTimeChanges:any[]=[]) {
+function payrollScheduledWorkStats(emp:any, startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[], events:any[]=[]) {
+  let days=0; let hours=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
+  while(d<=end){
+    const iso=isoDate(d);
+    const info=scheduleInfoForDateWithEvents(emp, iso, events, overrides, workTimeChanges);
+    if(info.workday){
+      days++;
+      const configuredDailyHours=Number(emp?.daily_work_hours||0);
+      const isExplicit=!!info.event||!!info.change;
+      hours+=!isExplicit&&configuredDailyHours>0?Math.min(Number(info.hours||0),configuredDailyHours):Number(info.hours||0);
+    }
+    d=addLocalDays(d,1);
+  }
+  return {days,hours:Math.round(hours*10)/10};
+}
+function weeklyStatsForDate(emp:any, dateIso=todayIso(), overrides:any[]=[], workTimeChanges:any[]=[], events:any[]=[]) {
   const start=weekStartIso(dateIso);
-  return scheduledWorkStats(emp,start,addIsoDays(start,6),overrides,workTimeChanges);
+  return scheduledWorkStats(emp,start,addIsoDays(start,6),overrides,workTimeChanges,events);
 }
 function monthlyPaidHours(weeklyDays:number, dailyHours:number) {
   const weeklyWorkHours=weeklyDays*dailyHours;
   const weeklyHolidayHours=weeklyWorkHours>=15 ? Math.min(8,dailyHours) : 0;
   return Math.round((weeklyWorkHours+weeklyHolidayHours)*4.345);
 }
-function countUnpaidAbsenceWorkdays(emp:any, absences:any[], startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
+function countUnpaidAbsenceWorkdays(emp:any, absences:any[], startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[], events:any[]=[]) {
   let count=0;
   absences.filter((a:any)=>a.employee_id===emp?.id && a.unpaid).forEach((a:any)=>{
     let d=dateFromIso(a.start_date); const e=dateFromIso(a.end_date);
-    while(d<=e){ const iso=isoDate(d); if(iso>=startIso&&iso<=endIso){ const sched=getScheduleForDate(emp, iso, overrides, workTimeChanges); if((sched.work_days??[]).includes(dayKeyFromDate(d))) count++; } d=addLocalDays(d,1); }
+    while(d<=e){ const iso=isoDate(d); if(iso>=startIso&&iso<=endIso){ const info=scheduleInfoForDateWithEvents(emp, iso, events, overrides, workTimeChanges); if(info.workday) count++; } d=addLocalDays(d,1); }
   });
   return count;
 }
@@ -4519,7 +4554,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const selectedBreakEnd=selectedDetailEmployee?.break_end??"13:00";
   const selectedDailyHours=selectedDetailEmployee?netDailyHours(selectedDetailEmployee.work_start??"09:00",selectedDetailEmployee.work_end??"18:00",selectedBreakStart,selectedBreakEnd):0;
   const selectedWeeklyHours=selectedDetailEmployee?Math.round(selectedDailyHours*(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"]).length*10)/10:0;
-  const selectedMonthStats=selectedDetailEmployee?scheduledWorkStats(selectedDetailEmployee,payrollMonth.start,payrollMonth.end,overrides,approvedWorkTimeChanges):null;
+  const selectedMonthStats=selectedDetailEmployee?payrollScheduledWorkStats(selectedDetailEmployee,payrollMonth.start,payrollMonth.end,overrides,approvedWorkTimeChanges,[]):null;
   function toggleDay(arr:string[],day:string){return arr.includes(day)?arr.filter(d=>d!==day):[...arr,day];}
   async function updateEmployeeContract(emp:any, patch:Record<string,any>) {
     const next={...emp,...patch};
@@ -5378,7 +5413,7 @@ function SettingsPage({ currentEmployee, section="schedule", readOnly=false }: {
       <TeamScheduleBoard employees={employees} events={scheduleEvents} overrides={overrides} workTimeChanges={workTimeChanges} leaveRequests={leaveRequests} compTimeRequests={compTimeRequests} currentEmployee={currentEmployee} onChanged={load} readOnly={readOnly} />
       {!readOnly&&<ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setMsg} msg={msg} />}
     </>}
-    {section==="payroll"&&<PayrollCard employees={employees} absences={absences} overrides={overrides} workTimeChanges={workTimeChanges} />}
+    {section==="payroll"&&<PayrollCard employees={employees} absences={absences} overrides={overrides} workTimeChanges={workTimeChanges} scheduleEvents={scheduleEvents} />}
   </div>;
 }
 
@@ -5492,6 +5527,15 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
     }
     return event;
   }
+  function displayScheduleEventForDate(employee:any,event:any,date:string){
+    const shown=displayScheduleEvent(event);
+    const change=approvedWorkTimeChangeForDate(workTimeChanges,employee,date);
+    const dayKey=dayKeyFromDate(dateFromIso(date));
+    if(change&&["work","am_only","pm_only"].includes(shown?.event_type)&&(change.new_work_days??[]).includes(dayKey)){
+      return {...shown,start_time:change.new_work_start??shown.start_time,end_time:change.new_work_end??shown.end_time};
+    }
+    return shown;
+  }
   function scheduleEventsForDate(employee:any,date:string){
     return events
       .filter((event:any)=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type))
@@ -5508,13 +5552,15 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   }
   function workInfoForDate(employee:any,date:string){
     const sched=getScheduleForDate(employee,date,overrides,workTimeChanges);
+    const change=approvedWorkTimeChangeForDate(workTimeChanges,employee,date);
     const explicitEvent=explicitScheduleEventFor(employee,date);
+    const eventOverridesSchedule=explicitEvent&&!change;
     const eventIsWork=["work","am_only","pm_only"].includes(explicitEvent?.event_type);
-    const workday=explicitEvent ? eventIsWork : (sched.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
-    const start=explicitEvent?.start_time??sched.work_start;
-    const end=explicitEvent?.end_time??sched.work_end;
+    const workday=eventOverridesSchedule ? eventIsWork : (sched.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
+    const start=eventOverridesSchedule ? explicitEvent?.start_time??sched.work_start : sched.work_start;
+    const end=eventOverridesSchedule ? explicitEvent?.end_time??sched.work_end : sched.work_end;
     const hours=workday?netDailyHours(start,end,sched.break_start??"12:00",sched.break_end??"13:00"):0;
-    return {workday,start,end,hours,event:explicitEvent};
+    return {workday,start,end,hours,event:explicitEvent,change};
   }
   function scheduledWorkStatsWithEvents(employee:any,startIso:string,endIso:string){
     let days=0; let hours=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
@@ -6003,7 +6049,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
                 const shownEmployees=isAll?activeEmployees:(selectedEmployee?[selectedEmployee]:[]);
                 return shownEmployees.flatMap((employee:any,employeeIndex:number)=>{
                   const rawDayEvents=timedEvents.filter(event=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date);
-                  const dayEvents=rawDayEvents.map(displayScheduleEvent);
+                  const dayEvents=rawDayEvents.map((event:any)=>displayScheduleEventForDate(employee,event,date));
                   const leaveEvents=leaveEventsFor(employee,date);
                   const overtimeEvents=overtimeEventsFor(employee,date);
                   const shown=[...dayEvents.filter(event=>event.event_type!=="hidden"),...leaveEvents,...overtimeEvents];
@@ -6117,7 +6163,7 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
   );
 }
 
-function PayrollCard({ employees, absences, overrides, workTimeChanges }: { employees:any[]; absences:any[]; overrides:any[]; workTimeChanges:any[] }) {
+function PayrollCard({ employees, absences, overrides, workTimeChanges, scheduleEvents }: { employees:any[]; absences:any[]; overrides:any[]; workTimeChanges:any[]; scheduleEvents:any[] }) {
   const [empId,setEmpId]=useState("");
   const [pay,setPay]=useState({monthly:"",hourly:"",annual:"",weeklyDays:"",dailyHours:"",monthlyHours:""});
   const [payMsg,setPayMsg]=useState("");
@@ -6214,23 +6260,25 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
   const month=monthRangeFromValue(payrollMonthValue);
   const payrollMonthLabel=monthLabel(month.start);
   const payrollMonthOptions=monthSelectOptions(todayIso(),8,2);
-  const scheduledDays=emp?countScheduledWorkdays(emp, month.start, month.end, overrides, approvedWorkTimeChanges):0;
-  const absentDays=emp?countUnpaidAbsenceWorkdays(emp, absences, month.start, month.end, overrides, approvedWorkTimeChanges):0;
+  const scheduledDays=emp?countScheduledWorkdays(emp, month.start, month.end, overrides, approvedWorkTimeChanges, scheduleEvents):0;
+  const absentDays=emp?countUnpaidAbsenceWorkdays(emp, absences, month.start, month.end, overrides, approvedWorkTimeChanges, scheduleEvents):0;
   const dayRate=scheduledDays>0?monthly/scheduledDays:0;
   const deduction=Math.round(dayRate*absentDays);
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
   const payrollSummaryRows=localEmployees.filter(e=>e.employment_status==="active").map((employee:any)=>{
-    const week=weeklyStatsForDate(employee,todayIso(),overrides,approvedWorkTimeChanges);
-    const monthStats=scheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges);
+    const monthStats=payrollScheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges,scheduleEvents);
     const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
-    const weeklyDailyHours=week.days>0?week.hours/week.days:Number(employee.daily_work_hours||scheduleHours(employee.work_start,employee.work_end)||8);
-    const monthlyStandardHours=Math.max(savedMonthlyHours,monthlyPaidHours(week.days,weeklyDailyHours));
+    const baseWeeklyDays=Number(employee.weekly_work_days||employee.work_days?.length||0);
+    const baseDailyHours=Number(employee.daily_work_hours||scheduleHours(employee.work_start,employee.work_end)||8);
+    const monthlyStandardHours=savedMonthlyHours||monthlyPaidHours(baseWeeklyDays,baseDailyHours)||monthStats.hours;
     const monthlySalary=Number(employee.monthly_salary||0);
     const hourlyWage=Number(employee.hourly_wage||(monthlySalary&&monthlyStandardHours?Math.round(monthlySalary/monthlyStandardHours):0));
-    const estimatedPay=monthlySalary || (hourlyWage?Math.round(hourlyWage*monthStats.hours):0);
-    return {employee,week,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay};
+    const rowAbsentDays=countUnpaidAbsenceWorkdays(employee, absences, month.start, month.end, overrides, approvedWorkTimeChanges, scheduleEvents);
+    const rowDeduction=monthlySalary&&monthStats.days>0?Math.round((monthlySalary/monthStats.days)*rowAbsentDays):0;
+    const estimatedPay=Math.max(0,(monthlySalary || (hourlyWage?Math.round(hourlyWage*monthStats.hours):0))-rowDeduction);
+    return {employee,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay,rowAbsentDays,rowDeduction};
   });
   const payrollEstimatedTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.estimatedPay||0),0);
   return (
@@ -6268,17 +6316,17 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges }: { empl
       </div>
       <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
       <div className="payroll-summary-list">
-        <div className="payroll-summary-head">직원별 급여·근무 기준 <span>{payrollMonthLabel} 승인된 근무시간 변경을 반영합니다. 월급 환산은 주휴 포함 기준입니다.</span></div>
-        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>주 근무시간</span><span>월 급여기준</span><span>예상 급여</span><small>{payrollMonthLabel} 기준</small></div>
-        {payrollSummaryRows.map(({employee,week,month,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay}:any)=>(
+        <div className="payroll-summary-head">직원별 급여·월 근무 기준 <span>{payrollMonthLabel} 승인된 근무시간 변경과 직원별 일정 예외를 월 단위로 반영합니다.</span></div>
+        <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>월 예정시간</span><span>월 급여기준</span><span>예상 급여</span><small>{payrollMonthLabel} 기준</small></div>
+        {payrollSummaryRows.map(({employee,month,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay,rowAbsentDays,rowDeduction}:any)=>(
           <div className={`payroll-summary-row ${empId===employee.id?"active":""}`} key={employee.id}>
             <button type="button" className="payroll-employee-cell payroll-employee-button" onClick={()=>setEmpId(employee.id)}><b>{employee.name}</b><small>사번 {employee.employee_no||"-"} · {employee.role==="admin"?"관리자":"직원"}</small></button>
             <span>{hourlyWage?won(hourlyWage):"-"}</span>
             <span>{monthlySalary?won(monthlySalary):"-"}</span>
-            <span>{formatHourValue(week.hours)}시간</span>
+            <span>{formatHourValue(month.hours)}시간</span>
             <span>{formatHourValue(monthlyStandardHours||month.hours)}시간</span>
             <span>{estimatedPay?won(estimatedPay):"-"}</span>
-            <small>{payrollMonthLabel} 예정 {month.days}일 · 실제 기준 {formatHourValue(month.hours)}시간</small>
+            <small>{payrollMonthLabel} 예정 {month.days}일 · 월 예정 {formatHourValue(month.hours)}시간{rowAbsentDays>0?` · 무급공제 ${rowAbsentDays}일 ${won(rowDeduction)}`:""}</small>
           </div>
         ))}
         <div className="payroll-summary-row payroll-summary-total"><b>예상 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollEstimatedTotal)}</span><small>최종 임금 확정 전 예상 급여 합계</small></div>
