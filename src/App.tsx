@@ -851,9 +851,7 @@ function payrollScheduledWorkStats(emp:any, startIso:string, endIso:string, over
     const info=scheduleInfoForDateWithEvents(emp, iso, events, overrides, workTimeChanges);
     if(info.workday){
       days++;
-      const configuredDailyHours=Number(emp?.daily_work_hours||0);
-      const isExplicit=!!info.event||!!info.change;
-      hours+=!isExplicit&&configuredDailyHours>0?Math.min(Number(info.hours||0),configuredDailyHours):Number(info.hours||0);
+      hours+=Number(info.hours||0);
     }
     d=addLocalDays(d,1);
   }
@@ -6316,7 +6314,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
       </div>
       <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
       <div className="payroll-summary-list">
-        <div className="payroll-summary-head">직원별 급여·월 근무 기준 <span>{payrollMonthLabel} 승인된 근무시간 변경과 직원별 일정 예외를 월 단위로 반영합니다.</span></div>
+        <div className="payroll-summary-head">직원별 급여·월 근무 기준 <span>{payrollMonthLabel} 월 예정시간은 직원별 주간 캘린더 요약과 같은 일정 기준으로 반영합니다.</span></div>
         <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>월 예정시간</span><span>월 급여기준</span><span>예상 급여</span><small>{payrollMonthLabel} 기준</small></div>
         {payrollSummaryRows.map(({employee,month,monthlyStandardHours,monthlySalary,hourlyWage,estimatedPay,rowAbsentDays,rowDeduction}:any)=>(
           <div className={`payroll-summary-row ${empId===employee.id?"active":""}`} key={employee.id}>
