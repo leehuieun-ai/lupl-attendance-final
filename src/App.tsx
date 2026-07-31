@@ -6511,6 +6511,10 @@ function ConsentReportPage() {
   const [workRequestFilter,setWorkRequestFilter]=useState("all");
   const [correctionFilter,setCorrectionFilter]=useState("all");
   const [message,setMessage]=useState("");
+  const [deletedWorkTimeRequestIds,setDeletedWorkTimeRequestIds]=useState<string[]>(()=>{
+    try { return JSON.parse(localStorage.getItem("lupl_deleted_work_time_request_ids")??"[]"); }
+    catch { return []; }
+  });
 
   async function load(){
     const [employeeResult,consentResult,workConsentResult,workRequestResult,correctionResult]=await Promise.all([
@@ -6539,9 +6543,10 @@ function ConsentReportPage() {
   workTimeConsents.filter(consent=>consent.consent_version===ADMIN_CONFIDENTIALITY_CONSENT_VERSION).forEach(consent=>{if(!latestAdminPledgeByEmployee[consent.employee_id]) latestAdminPledgeByEmployee[consent.employee_id]=consent;});
   const employeeMap:Record<string,any>={};
   employees.forEach(employee=>{employeeMap[employee.id]=employee;});
-  const visibleConsentEmployees=employees.filter(employee=>employee.is_active&&employee.employment_status==="active");
+  const visibleConsentEmployees=employees.filter(employee=>employee.employment_status==="active"&&employee.is_active!==false);
   const visibleConsentEmployeeIds=new Set(visibleConsentEmployees.map(employee=>employee.id));
-  const visibleWorkTimeRequests=workTimeRequests.filter(request=>visibleConsentEmployeeIds.has(request.employee_id));
+  const deletedWorkTimeRequestIdSet=new Set(deletedWorkTimeRequestIds);
+  const visibleWorkTimeRequests=workTimeRequests.filter(request=>visibleConsentEmployeeIds.has(request.employee_id)&&!deletedWorkTimeRequestIdSet.has(request.id));
   const visibleAttendanceCorrections=attendanceCorrections.filter(request=>visibleConsentEmployeeIds.has(request.employee_id));
   const signedWorkTimeRequests=visibleWorkTimeRequests.filter(request=>request.signature_data);
   const signedAttendanceCorrections=visibleAttendanceCorrections.filter(request=>request.signature_data);
@@ -6625,7 +6630,17 @@ function ConsentReportPage() {
     if(result.error&&/schema cache|function|PGRST202/i.test(result.error.message)) result=await supabase.from("work_time_change_requests").delete().eq("id",request.id).eq("status","rejected");
     const {error}=result;
     if(error) setMessage(friendlySignatureDbError(error));
-    else { setMessage("반려된 근무시간 변경 요청을 삭제했습니다."); await load(); }
+    else {
+      setDeletedWorkTimeRequestIds(current=>{
+        const next=Array.from(new Set([...current,request.id]));
+        localStorage.setItem("lupl_deleted_work_time_request_ids",JSON.stringify(next));
+        return next;
+      });
+      setWorkTimeRequests(current=>current.filter(row=>row.id!==request.id));
+      setSelected(current=>current?.record?.id===request.id?null:current);
+      setMessage("반려된 근무시간 변경 요청을 삭제했습니다.");
+      await load();
+    }
   }
 
   return <div className="grid">

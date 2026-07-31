@@ -492,6 +492,10 @@ drop policy if exists work_time_change_requests_admin_update on public.work_time
 create policy work_time_change_requests_admin_update on public.work_time_change_requests
 for update to authenticated using (public.is_admin()) with check (public.is_admin());
 
+drop policy if exists work_time_change_requests_admin_delete_rejected on public.work_time_change_requests;
+create policy work_time_change_requests_admin_delete_rejected on public.work_time_change_requests
+for delete to authenticated using (public.is_admin() and status = 'rejected');
+
 update public.comp_time_requests p
 set status = 'rejected',
     reviewed_at = coalesce(p.reviewed_at, now()),
