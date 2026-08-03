@@ -1450,6 +1450,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   const [aiSummary,setAiSummary]=useState<any|null>(null);
   const [githubBusy,setGithubBusy]=useState(false);
   const [githubIssue,setGithubIssue]=useState<any|null>(null);
+  const [githubIssues,setGithubIssues]=useState<any[]>([]);
   const [expandedGithubIssue,setExpandedGithubIssue]=useState<string|null>(null);
   const isAdmin=currentEmployee?.role==="admin";
   async function load() {
@@ -1461,10 +1462,12 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   }
   useEffect(()=>{load();},[]);
   const scopedRows=isAdmin?rows:rows.filter(row=>row.created_by===currentEmployee.id&&row.visibility!=="admin_only");
-  const matchesFilters=(row:any)=>(statusFilter==="all"||row.status===statusFilter)&&(menuFilter==="all"||row.menu_id===menuFilter);
+  const matchesMenuFilter=(row:any)=>menuFilter==="all"||row.menu_id===menuFilter;
+  const matchesStatusFilter=(row:any)=>statusFilter==="all"||row.status===statusFilter;
+  const matchesFilters=(row:any)=>matchesStatusFilter(row)&&matchesMenuFilter(row);
   const isGithubSentRequest=(row:any)=>Boolean(row.github_issue_url||row.github_issue_number);
   const visible=scopedRows.filter(row=>!isGithubSentRequest(row)&&matchesFilters(row));
-  const githubSentRows=scopedRows.filter(row=>isGithubSentRequest(row)&&matchesFilters(row));
+  const githubSentRows=scopedRows.filter(row=>isGithubSentRequest(row)&&matchesMenuFilter(row)&&(statusFilter==="all"||statusFilter==="open"||matchesStatusFilter(row)));
   const githubIssueGroups=Object.values(githubSentRows.reduce((acc:any,row:any)=>{
     const key=String(row.github_issue_url||row.github_issue_number||"unknown");
     if(!acc[key]) acc[key]={key,number:row.github_issue_number,url:row.github_issue_url,title:row.github_issue_title,sentAt:row.github_sent_at||row.updated_at||row.created_at,rows:[]};
@@ -1488,8 +1491,49 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     return shown+(menus.length>4?` 외 ${menus.length-4}개`:"");
   }
   function githubGroupStatus(group:any) {
-    const counts=group.rows.reduce((acc:any,row:any)=>{acc[row.status]=(acc[row.status]??0)+1;return acc;},{});
+    return githubRowsStatus(group.rows);
+  }
+  function githubRowsStatus(items:any[]) {
+    const counts=items.reduce((acc:any,row:any)=>{acc[row.status]=(acc[row.status]??0)+1;return acc;},{});
     return Object.entries(counts).map(([status,count])=>`${IMPROVEMENT_STATUS_LABELS[status]??status} ${count}건`).join(" · ");
+  }
+  function improvementCategoryLabel(row:any) {
+    return [row.menu_label,row.submenu_label].filter(Boolean).join(" · ")||"카테고리 없음";
+  }
+  function githubGroupCategories(group:any) {
+    const categories=group.rows.reduce((acc:any,row:any)=>{
+      const key=[row.menu_id||row.menu_label||"none",row.submenu_label||""].join("|");
+      if(!acc[key]) acc[key]={key,label:improvementCategoryLabel(row),rows:[]};
+      acc[key].rows.push(row);
+      return acc;
+    },{});
+    return Object.values(categories).sort((a:any,b:any)=>String(a.label).localeCompare(String(b.label),"ko"));
+  }
+  function githubIssueCreationGroups(items:any[]) {
+    const groups=items.reduce((acc:any,row:any)=>{
+      const key=String(row.menu_id||row.menu_label||"uncategorized");
+      if(!acc[key]) acc[key]={key,label:row.menu_label||"메뉴 미지정",rows:[]};
+      acc[key].rows.push(row);
+      return acc;
+    },{});
+    return Object.values(groups).sort((a:any,b:any)=>String(a.label).localeCompare(String(b.label),"ko"));
+  }
+  function githubIssueTitle(group:any) {
+    const first=group.rows[0];
+    return `[개선함 · ${group.label}] ${improvementRequestTitle(first)}${group.rows.length>1?` 외 ${group.rows.length-1}건`:""}`;
+  }
+  function githubIssueRequestPayload(row:any) {
+    return {
+      id:row.id,
+      type:row.request_type_label||row.request_type,
+      menu:row.menu_label,
+      submenu:row.submenu_label,
+      note:row.note,
+      title:improvementRequestTitle(row),
+      status:row.status,
+      created_at:row.created_at,
+      requester:row.employees?.name,
+    };
   }
   async function updateStatus(id:string,status:string) {
     const {error}=await supabase.from("improvement_requests").update({status,updated_at:new Date().toISOString()}).eq("id",id);
@@ -1563,29 +1607,26 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     if(!isAdmin) return setMsg("GitHub Issue 전송은 관리자 승인이 필요합니다.");
     const target=visible.filter(row=>!["done","dismissed"].includes(row.status));
     if(target.length===0) return setMsg("GitHub Issue로 보낼 개선 요청이 없습니다.");
-    setMsg(""); setGithubBusy(true); setGithubIssue(null);
+    setMsg(""); setGithubBusy(true); setGithubIssue(null); setGithubIssues([]);
     try {
       const {data:sessionData}=await supabase.auth.getSession();
       const token=sessionData.session?.access_token;
       if(!token) throw new Error("로그인이 필요합니다.");
-      const response=await fetch("/api/improvement-github-issue",{
-        method:"POST",
-        headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
-        body:JSON.stringify({requests:target.slice(0,100).map(row=>({
-          id:row.id,
-          type:row.request_type_label||row.request_type,
-          menu:row.menu_label,
-          submenu:row.submenu_label,
-          note:row.note,
-          status:row.status,
-          created_at:row.created_at,
-          requester:row.employees?.name,
-        }))}),
-      });
-      const data=await response.json();
-      if(!response.ok) throw new Error(data?.error||"GitHub Issue 생성 실패");
-      const ids=target.filter(row=>row.status!=="planned").map(row=>row.id);
-      if(ids.length>0) {
+      const createdIssues:any[]=[];
+      const groups=githubIssueCreationGroups(target) as any[];
+      for(const group of groups) {
+        const response=await fetch("/api/improvement-github-issue",{
+          method:"POST",
+          headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+          body:JSON.stringify({
+            title:githubIssueTitle(group),
+            requests:group.rows.slice(0,100).map(githubIssueRequestPayload),
+          }),
+        });
+        const data=await response.json();
+        if(!response.ok) throw new Error(data?.error||"GitHub Issue 생성 실패");
+        createdIssues.push(data.issue);
+        const ids=group.rows.map((row:any)=>row.id);
         const patch={
           status:"planned",
           github_issue_number:data.issue?.number??null,
@@ -1599,8 +1640,9 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
         if(updateResult.error) throw updateResult.error;
       }
       await load();
-      setGithubIssue(data.issue);
-      setMsg(`GitHub Issue #${data.issue?.number} 생성 완료`);
+      setGithubIssues(createdIssues);
+      setGithubIssue(createdIssues[0]??null);
+      setMsg(createdIssues.length===1?`GitHub Issue #${createdIssues[0]?.number} 생성 완료`:`GitHub Issue ${createdIssues.length}개 생성 완료`);
     } catch(error:any) {
       setMsg(error.message||String(error));
     } finally {
@@ -1619,7 +1661,8 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
         <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.length===0||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button>{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={scopedRows.filter(row=>!isGithubSentRequest(row)).every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
       </div>
       {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("관리자 승인")||msg.includes("수정했습니다")?"success":"error"}`}>{msg}</div>}
-      {githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
+      {githubIssues.length>0&&<div className="alert success github-created-links">{githubIssues.map(issue=><a key={issue.number} href={issue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{issue.number} 열기</a>)}</div>}
+      {githubIssues.length===0&&githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
       <div className="improvement-summary-line">대기 {openCount}건 · GitHub 이슈 {githubIssueCount}개 / 전송 {githubCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
       <div className="grid two">
         <div className="form-row"><label className="label">상태</label><select className="select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="open">대기</option><option value="all">전체</option>{Object.entries(IMPROVEMENT_STATUS_LABELS).filter(([key])=>key!=="open").map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></div>
@@ -1632,33 +1675,47 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
         </div>
         {githubIssueGroups.map((group:any)=>{
           const expanded=expandedGithubIssue===group.key;
+          const categories=githubGroupCategories(group);
           return <article className="improvement-issue-card" key={group.key}>
             <div className="improvement-issue-card-head">
               <div>
                 <a className="github-issue-chip" href={group.url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{group.number??"-"}</a>
-                <b>{group.title||"전송된 개선 요청 묶음"}</b>
-                <small>{formatDateTime(group.sentAt)} · {group.rows.length}건 · {githubGroupStatus(group)}</small>
-                <span>{githubGroupMenus(group)||"메뉴 없음"}</span>
+                <b>{group.number?`GitHub #${group.number}`:"GitHub 이슈"} · {githubGroupMenus(group)||"개선 요청"}</b>
+                <small>{group.title||"전송된 개선 요청"} · {formatDateTime(group.sentAt)}</small>
+                <span>{categories.length}개 카테고리 · {group.rows.length}건 · {githubGroupStatus(group)}</span>
               </div>
               <div className="improvement-issue-actions">
-                {isAdmin&&<button className="button ghost compact" onClick={()=>markGithubGroupDone(group)}>묶음 완료</button>}
-                <button className="button secondary compact" onClick={()=>setExpandedGithubIssue(expanded?null:group.key)}>{expanded?"접기":"원문 보기"}</button>
+                {isAdmin&&<button className="button ghost compact" onClick={()=>markGithubGroupDone(group)}>이슈 완료</button>}
+                <button className="button secondary compact" onClick={()=>setExpandedGithubIssue(expanded?null:group.key)}>{expanded?"접기":"카테고리 보기"}</button>
               </div>
             </div>
-            {expanded&&<div className="improvement-group-items">
-              {group.rows.map((row:any)=>(
-                <div className="improvement-group-item" key={row.id}>
-                  <b>{improvementRequestTitle(row)}</b>
-                  <p>{row.note}</p>
-                  <small>{row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""} · {row.employees?.name??"작성자"} · {formatDateTime(row.created_at)}</small>
-                </div>
+            {expanded&&<div className="improvement-group-categories">
+              {categories.map((category:any)=>(
+                <details className="improvement-category-toggle" key={category.key}>
+                  <summary>
+                    <div>
+                      <b>{category.label}</b>
+                      <span>{category.rows.length}건 · {githubRowsStatus(category.rows)}</span>
+                    </div>
+                    <i className="ti ti-chevron-down" aria-hidden="true"></i>
+                  </summary>
+                  <div className="improvement-group-items">
+                    {category.rows.map((row:any)=>(
+                      <div className="improvement-group-item" key={row.id}>
+                        <b>{improvementRequestTitle(row)}</b>
+                        <p>{row.note}</p>
+                        <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)}</small>
+                      </div>
+                    ))}
+                  </div>
+                </details>
               ))}
             </div>}
           </article>;
         })}
       </div>}
       <div className="improvement-stack">
-        {visible.length===0 ? <p className="subtle">{githubIssueGroups.length>0?"개별로 처리할 개선 요청은 없습니다. GitHub로 보낸 건은 이슈별 모아보기에서 확인하세요.":"표시할 개선 요청이 없습니다."}</p> : visible.map(row=>(
+        {visible.length===0 ? <p className="subtle">{githubIssueGroups.length>0?"개별로 처리할 개선 요청은 없습니다. GitHub로 보낸 건은 이슈별 모아보기에서 카테고리별로 확인하세요.":"표시할 개선 요청이 없습니다."}</p> : visible.map(row=>(
           <article className="improvement-item" key={row.id}>
             <div className="improvement-item-head">
               <div><span>{row.request_type_label||row.request_type}</span><b>{improvementRequestTitle(row)}</b><small>{row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""}</small></div>

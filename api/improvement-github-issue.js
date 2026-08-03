@@ -7,18 +7,34 @@ function requestTitle(request) {
   return (raw.length > 46 ? `${raw.slice(0, 46)}...` : raw) || "개선 요청";
 }
 
+function categoryLabel(request) {
+  return [request.menu, request.submenu].filter(Boolean).join(" / ") || "메뉴 미지정";
+}
+
 function issueBody(requests) {
-  const items = requests.map((request, index) => [
-    `## ${index + 1}. ${requestTitle(request)}`,
-    `- 메뉴: ${request.menu || "메뉴 미지정"}${request.submenu ? ` / ${request.submenu}` : ""}`,
-    `- 유형: ${request.type || "-"}`,
-    `- 상태: ${request.status || "-"}`,
-    `- 작성자: ${request.requester || "-"}`,
-    `- 작성일: ${request.created_at || "-"}`,
-    "",
-    String(request.note || "").trim() || "-",
-  ].join("\n"));
-  return ["앱 개선함에서 생성된 이슈입니다.", "", `요청 수: ${requests.length}건`, "", ...items].join("\n\n");
+  const groups = requests.reduce((acc, request) => {
+    const label = categoryLabel(request);
+    if (!acc[label]) acc[label] = [];
+    acc[label].push(request);
+    return acc;
+  }, {});
+  let index = 0;
+  const sections = Object.entries(groups).flatMap(([label, items]) => [
+    `## ${label}`,
+    ...items.map(request => {
+      index += 1;
+      return [
+        `### ${index}. ${requestTitle(request)}`,
+        `- 유형: ${request.type || "-"}`,
+        `- 상태: ${request.status || "-"}`,
+        `- 작성자: ${request.requester || "-"}`,
+        `- 작성일: ${request.created_at || "-"}`,
+        "",
+        String(request.note || "").trim() || "-",
+      ].join("\n");
+    }),
+  ]);
+  return ["앱 개선함에서 생성된 이슈입니다.", "", `요청 수: ${requests.length}건`, "", ...sections].join("\n\n");
 }
 
 export default async function handler(req, res) {
