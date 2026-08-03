@@ -580,6 +580,10 @@ function dayKeyFromDate(d: Date) { return ["sun","mon","tue","wed","thu","fri","
 function weekStartIso(dateIso: string) { const d=dateFromIso(dateIso); const offset=(d.getDay()+6)%7; return isoDate(addLocalDays(d,-offset)); }
 function weekOfMonthLabel(dateIso: string) { const d=dateFromIso(dateIso); const first=new Date(d.getFullYear(), d.getMonth(), 1); const offset=(first.getDay()+6)%7; const nth=Math.ceil((d.getDate()+offset)/7); return `${d.getFullYear()}년 ${d.getMonth()+1}월 ${nth}째주`; }
 function dateInRange(dateIso:string, start?:string|null, end?:string|null) { if(!start) return true; if(dateIso<start) return false; if(end&&dateIso>end) return false; return true; }
+function dateRangesOverlap(startA:string, endA:string, startB?:string|null, endB?:string|null) {
+  if(!startB) return false;
+  return startB<=endA && (endB??startB)>=startA;
+}
 function countDaysInclusive(start:string, end:string) { const s=dateFromIso(start), e=dateFromIso(end); return Math.max(0, Math.round((e.getTime()-s.getTime())/86400000)+1); }
 function addIsoDays(iso:string,days:number){return isoDate(addLocalDays(dateFromIso(iso),days));}
 function minutesToTime(minutes:number){
@@ -776,6 +780,19 @@ function employeeHasWeekWork(employee:any,dates:string[],events:any[]=[],overrid
     const baseSchedule=getScheduleForDate(employee,date,overrides,[]);
     return (baseSchedule.work_days??[]).includes(dayKey);
   });
+}
+function employeeHasWeekHistory(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[],leaveRequests:any[]=[],compTimeRequests:any[]=[]) {
+  if(!employee?.id||dates.length===0) return false;
+  const weekStart=dates[0], weekEnd=dates[dates.length-1];
+  if(employeeHasWeekWork(employee,dates,events,overrides,workTimeChanges)) return true;
+  if(events.some((event:any)=>event.employee_id===employee.id&&dateRangesOverlap(weekStart,weekEnd,event.start_date,event.end_date))) return true;
+  if(leaveRequests.some((request:any)=>request.employee_id===employee.id&&request.status==="approved"&&dateRangesOverlap(weekStart,weekEnd,request.start_date,request.end_date))) return true;
+  return compTimeRequests.some((request:any)=>request.employee_id===employee.id&&dateInRange(request.work_date,weekStart,weekEnd));
+}
+function employeeVisibleInScheduleWeek(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[],leaveRequests:any[]=[],compTimeRequests:any[]=[]) {
+  if(isEmployeeActive(employee)) return employeeHasWeekWork(employee,dates,events,overrides,workTimeChanges);
+  const weekEnd=dates[dates.length-1]??todayIso();
+  return weekEnd<todayIso()&&employeeHasWeekHistory(employee,dates,events,overrides,workTimeChanges,leaveRequests,compTimeRequests);
 }
 function approvedWorkTimeChangeForDate(changes:any[] = [], emp:any, dateIso:string) {
   return changes.find((c:any)=>c.status==="approved" && c.employee_id===emp?.id && (c.periods??[]).some((p:any)=>dateInRange(dateIso,p.start_date,p.end_date)));
@@ -5483,14 +5500,13 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   const weekStart=weekStartIso(weekAnchor);
   const dates=Array.from({length:5},(_,i)=>addIsoDays(weekStart,i));
   const weekEnd=dates[4];
-  const baseActiveEmployees=employees
-    .filter(isEmployeeActive)
+  const activeEmployees=employees
+    .filter(employee=>employeeVisibleInScheduleWeek(employee,dates,events,overrides,workTimeChanges,leaveRequests,compTimeRequests))
     .sort((a,b)=>{
       const ai=employeeOrder.indexOf(a.id),bi=employeeOrder.indexOf(b.id);
       if(ai>=0||bi>=0) return (ai<0?9999:ai)-(bi<0?9999:bi);
       return String(a.employee_no??"").localeCompare(String(b.employee_no??""));
     });
-  const activeEmployees=baseActiveEmployees.filter(employee=>employeeHasWeekWork(employee,dates,events,overrides,workTimeChanges));
   const [selectedEmpId,setSelectedEmpId]=useState("all");
   const [editing,setEditing]=useState<any|null>(null);
   const [message,setMessage]=useState("");
@@ -6155,7 +6171,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         </div>
       </div>
       <p className="schedule-help"><i className="ti ti-info-circle" aria-hidden="true"></i>{readOnly?"직원 이름을 누르면 해당 직원 일정만 강조됩니다.":isAll?"요일 아래 직원별 열을 표시합니다. 이름을 누르면 개인 일정으로 이동하고, 모든 일정칸은 눌러서 수정할 수 있습니다.":"빈 시간대를 두 번 누르면 일정을 추가하고, 일정칸을 누르면 수정할 수 있습니다."} 토요일과 일요일은 표시하지 않습니다.</p>
-      {activeEmployees.length===0&&<p className="subtle">표시할 재직 직원이 없습니다.</p>}
+      {activeEmployees.length===0&&<p className="subtle">표시할 직원이 없습니다.</p>}
       {!readOnly&&editing&&<div className="modal-backdrop" onClick={()=>setEditing(null)}>
         <div className="modal-box schedule-event-modal" onClick={e=>e.stopPropagation()}>
           <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-calendar-event" aria-hidden="true"></i>{editing.id||editing.fromBase?"일정 수정":"일정 추가"}</h2><button className="modal-close" title="닫기" onClick={()=>setEditing(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
