@@ -1130,6 +1130,10 @@ body { overflow-x: hidden; }
 .worktime-page > .card { width: 100%; }
 .payroll-head .card-title { margin-bottom: 4px; }
 .payroll-month-picker { min-width: 180px; }
+.payroll-fixed-label { display: flex; align-items: center; gap: 7px; min-height: 18px; }
+.payroll-fixed-label input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+.payroll-fixed-label span { min-width: 0; }
+.payroll-fixed-label em { margin-left: auto; padding: 2px 6px; border-radius: 999px; background: #eef3fe; color: var(--blue-dark); font-size: 10px; font-style: normal; font-weight: 850; }
 .payroll-employee-cell { display: grid; gap: 3px; min-width: 0; }
 .payroll-employee-button { width: 100%; border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; }
 .payroll-employee-button:hover b { color: var(--blue-dark); }
@@ -1154,6 +1158,18 @@ body { overflow-x: hidden; }
 .payroll-copy-head b { display: block; color: var(--ink); font-size: 14px; }
 .payroll-copy-head span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; margin-top: 3px; }
 .payroll-copy-text { min-height: 132px; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.55; background: #fff; }
+.admin-permission-card { display: grid; gap: 14px; }
+.admin-permission-summary { min-height: 54px; display: grid; align-content: center; gap: 4px; border: 1px solid #dbe5f3; border-radius: 8px; background: #f8fafc; padding: 10px 12px; }
+.admin-permission-summary b { color: var(--ink); font-size: 14px; }
+.admin-permission-summary span { color: var(--muted); font-size: 12px; font-weight: 700; line-height: 1.4; }
+.permission-setting-list { display: grid; gap: 8px; }
+.permission-setting-row { display: grid; grid-template-columns: minmax(180px,1fr) auto; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 11px 12px; }
+.permission-setting-row b, .permission-setting-row span { display: block; }
+.permission-setting-row b { color: var(--ink); font-size: 14px; }
+.permission-setting-row span { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.permission-level-buttons { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.permission-level-buttons .button.active { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 6px 14px rgba(37,99,235,.18); }
+.permission-level-buttons .button.active:hover { background: var(--blue-dark); border-color: var(--blue-dark); }
 .nowrap-select { white-space: nowrap; min-width: 92px; }
 .no-wrap-checkbox { white-space: nowrap; word-break: keep-all; align-items: center; }
 

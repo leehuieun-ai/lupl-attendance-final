@@ -9,8 +9,30 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
 type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection";
+
+const ADMIN_PERMISSION_LEVEL_RANK: Record<string, number> = { none: 0, read: 1, edit: 2, all: 3 };
+const ADMIN_PERMISSION_LEVELS = [
+  { id: "none", label: "없음" },
+  { id: "read", label: "읽기" },
+  { id: "edit", label: "편집" },
+  { id: "all", label: "전체" },
+];
+const ADMIN_PERMISSION_MENUS: { id: Tab; label: string; description: string }[] = [
+  { id: "admin-dashboard", label: "오늘 관리", description: "관리자 대시보드와 당일 근무 현황" },
+  { id: "approvals", label: "승인함", description: "휴가, 추가근무, 기기, 근태 승인 처리" },
+  { id: "schedule", label: "근무 일정", description: "직원별 주간 캘린더와 출근 스케줄" },
+  { id: "employees", label: "직원 관리", description: "직원 정보, 계약사항, 연차, 계정 관리" },
+  { id: "workplaces", label: "근무지", description: "승인 근무지 등록, 수정, 삭제" },
+  { id: "reports", label: "근태 리포트", description: "월별 근태 기록과 통계 확인" },
+  { id: "payroll", label: "급여", description: "급여 기준, 세무사 제출용 정리" },
+  { id: "consents", label: "직원 동의서", description: "동의서 조회와 PDF 출력" },
+  { id: "rnr", label: "업무 R&R", description: "조직도와 부서별 업무 관리" },
+  { id: "improvements", label: "개선 요청함", description: "직원 피드백 접수와 처리 상태 관리" },
+  { id: "admin-settings", label: "권한 설정", description: "관리자별 메뉴 권한 부여" },
+];
+const PAYROLL_FIXED_FIELDS = ["monthly","hourly","annual","weeklyDays","dailyHours","monthlyHours"];
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
 const ALL_DAYS = ["mon","tue","wed","thu","fri","sat","sun"];
@@ -926,7 +948,49 @@ async function fetchCurrentEmployee() {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.user) return { session: null, employee: null };
   const { data } = await supabase.from("employees").select("*").eq("user_id", session.user.id).maybeSingle();
-  return { session, employee: data };
+  if (!data) return { session, employee: null };
+  let employee:any = data;
+  if (employee.role === "admin") {
+    const { data: permissionRows, error } = await supabase
+      .from("admin_menu_permissions")
+      .select("menu_id, access_level")
+      .eq("employee_id", employee.id);
+    if (!error) employee = { ...employee, admin_menu_permissions: permissionRows ?? [] };
+  }
+  return { session, employee };
+}
+
+function adminPermissionRows(employee:any) {
+  return Array.isArray(employee?.admin_menu_permissions) ? employee.admin_menu_permissions : [];
+}
+
+function adminCan(employee:any, menuId:Tab, minimum="read") {
+  if (employee?.role !== "admin") return false;
+  const rows = adminPermissionRows(employee);
+  if (rows.length === 0) return true;
+  const permission = rows.find((row:any)=>row.menu_id === menuId)?.access_level ?? "none";
+  return (ADMIN_PERMISSION_LEVEL_RANK[permission] ?? 0) >= (ADMIN_PERMISSION_LEVEL_RANK[minimum] ?? 1);
+}
+
+function payrollFixedState(raw:any) {
+  let values:string[] = [];
+  if (Array.isArray(raw)) values = raw;
+  else if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      values = Array.isArray(parsed) ? parsed : raw.split(",");
+    } catch {
+      values = raw.split(",");
+    }
+  }
+  return PAYROLL_FIXED_FIELDS.reduce((map:Record<string,boolean>,field)=>{
+    map[field] = values.includes(field);
+    return map;
+  },{});
+}
+
+function payrollFixedValues(state:Record<string,boolean>) {
+  return PAYROLL_FIXED_FIELDS.filter(field=>!!state[field]);
 }
 
 
@@ -1236,6 +1300,7 @@ export default function App() {
     reports:"리포트",
     consents:"동의서",
     improvements:"개선함",
+    "admin-settings":"권한 설정",
   };
   const personalMenus:{id:Tab;label:string;icon:string}[]=[
     {id:"attendance",label:"출퇴근",icon:"ti-clock"},
@@ -1259,8 +1324,12 @@ export default function App() {
   ];
   const extraMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
     {id:"rnr",label:"업무 R&R",icon:"ti-sitemap"},
+    {id:"admin-settings",label:"권한 설정",icon:"ti-shield-lock"},
   ];
-  const improvementMenuOptions=[...personalMenus,...adminMenus,...reportMenus,...extraMenus]
+  const visibleAdminMenus=adminMenus.filter(menu=>adminCan(employee,menu.id,"read"));
+  const visibleReportMenus=reportMenus.filter(menu=>adminCan(employee,menu.id,"read"));
+  const visibleExtraMenus=extraMenus.filter(menu=>adminCan(employee,menu.id,menu.id==="admin-settings"?"all":"read"));
+  const improvementMenuOptions=[...personalMenus,...visibleAdminMenus,...visibleReportMenus,...visibleExtraMenus]
     .filter((item,index,list)=>list.findIndex(other=>other.id===item.id)===index)
     .map(item=>({id:item.id,label:item.label}));
   function go(next:Tab){setTab(next);setMobileNavOpen(false);}
@@ -1279,7 +1348,7 @@ export default function App() {
         <nav className="side-nav">
           <p className="side-nav-label">내 근무</p>
           {personalMenus.map(menuButton)}
-          {isAdmin&&<><p className="side-nav-label">관리</p>{adminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{reportMenus.map(menuButton)}<p className="side-nav-label">설정</p>{extraMenus.map(menuButton)}</>}
+          {isAdmin&&<><p className="side-nav-label">관리</p>{visibleAdminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{visibleReportMenus.map(menuButton)}<p className="side-nav-label">설정</p>{visibleExtraMenus.map(menuButton)}</>}
         </nav>
         <div className="sidebar-account">
           <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{employee.employee_no} · {isAdmin?"관리자":"직원"}</small></div></div>
@@ -1302,16 +1371,17 @@ export default function App() {
           {tab==="overtime" && <LeavePage employee={employee} mode="overtime" />}
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
           {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
-          {tab==="admin-dashboard" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
-          {tab==="approvals" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
-          {tab==="employees" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
-          {tab==="rnr" && isAdmin && <AdminPage currentEmployee={employee} onChanged={load} view="rnr" onNavigate={go} />}
-          {tab==="workplaces" && isAdmin && <WorkplacePage employee={employee} />}
-          {tab==="schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={!isAdmin} />}
-          {tab==="payroll" && isAdmin && <SettingsPage currentEmployee={employee} section="payroll" />}
-          {tab==="reports" && isAdmin && <ReportsPage />}
-          {tab==="consents" && isAdmin && <ConsentReportPage />}
+          {tab==="admin-dashboard" && adminCan(employee,"admin-dashboard","read") && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
+          {tab==="approvals" && adminCan(employee,"approvals","read") && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
+          {tab==="employees" && adminCan(employee,"employees","read") && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
+          {tab==="rnr" && adminCan(employee,"rnr","read") && <AdminPage currentEmployee={employee} onChanged={load} view="rnr" onNavigate={go} />}
+          {tab==="workplaces" && adminCan(employee,"workplaces","read") && <WorkplacePage employee={employee} />}
+          {tab==="schedule" && adminCan(employee,"schedule","read") && <SettingsPage currentEmployee={employee} section="schedule" readOnly={!adminCan(employee,"schedule","edit")} />}
+          {tab==="payroll" && adminCan(employee,"payroll","read") && <SettingsPage currentEmployee={employee} section="payroll" readOnly={!adminCan(employee,"payroll","edit")} />}
+          {tab==="reports" && adminCan(employee,"reports","read") && <ReportsPage />}
+          {tab==="consents" && adminCan(employee,"consents","read") && <ConsentReportPage />}
           {tab==="improvements" && <ImprovementRequestsPage currentEmployee={employee} menuOptions={improvementMenuOptions} />}
+          {tab==="admin-settings" && adminCan(employee,"admin-settings","all") && <AdminPermissionSettings currentEmployee={employee} onChanged={load} />}
         </main>
       </div>
       <ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={pageTitles[tab]} menuOptions={improvementMenuOptions} />
@@ -5427,6 +5497,116 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
 }
 
 
+function AdminPermissionSettings({ currentEmployee, onChanged }: { currentEmployee:any; onChanged:()=>void }) {
+  const [employees,setEmployees]=useState<any[]>([]);
+  const [selectedId,setSelectedId]=useState("");
+  const [permissions,setPermissions]=useState<Record<string,string>>({});
+  const [msg,setMsg]=useState("");
+  const selected=employees.find(employee=>employee.id===selectedId);
+  const activeEmployees=employees.filter(employee=>employee.is_active!==false&&employee.employment_status!=="inactive");
+  async function loadEmployees() {
+    const {data,error}=await supabase.from("employees").select("id,name,employee_no,role,is_active,employment_status,department,position").order("employee_no",{ascending:true});
+    if(error) return setMsg(`직원 목록을 불러오지 못했습니다: ${error.message}`);
+    const list=data??[];
+    setEmployees(list);
+    setSelectedId(prev=>prev||currentEmployee?.id||list[0]?.id||"");
+  }
+  async function loadPermissions(employeeId:string) {
+    const base=ADMIN_PERMISSION_MENUS.reduce((map:Record<string,string>,menu)=>{
+      map[menu.id]="none";
+      return map;
+    },{});
+    const {data,error}=await supabase.from("admin_menu_permissions").select("menu_id, access_level").eq("employee_id",employeeId);
+    if(error) {
+      setPermissions(base);
+      setMsg(`권한 설정 DB 패치를 먼저 실행해주세요: ${error.message}`);
+      return;
+    }
+    (data??[]).forEach((row:any)=>{base[row.menu_id]=row.access_level??"none";});
+    setPermissions(base);
+    setMsg("");
+  }
+  useEffect(()=>{loadEmployees();},[]);
+  useEffect(()=>{
+    if(selectedId) loadPermissions(selectedId);
+    else setPermissions({});
+  },[selectedId]);
+  function updatePermission(menuId:Tab, level:string) {
+    setPermissions(prev=>({...prev,[menuId]:level}));
+  }
+  async function savePermissions() {
+    if(!selectedId) return setMsg("직원을 선택해주세요.");
+    const normalized={...permissions};
+    if(selectedId===currentEmployee?.id) normalized["admin-settings"]="all";
+    const rows=ADMIN_PERMISSION_MENUS.map(menu=>({
+      employee_id:selectedId,
+      menu_id:menu.id,
+      access_level:normalized[menu.id]??"none",
+      created_by:currentEmployee?.id??null,
+      updated_by:currentEmployee?.id??null,
+    }));
+    const {error}=await supabase.from("admin_menu_permissions").upsert(rows,{onConflict:"employee_id,menu_id"});
+    if(error) return setMsg(`권한 저장 실패: ${error.message}`);
+    const hasAny=rows.some(row=>row.access_level!=="none");
+    if(hasAny&&selected?.role!=="admin") {
+      const {error:roleError}=await supabase.from("employees").update({role:"admin"}).eq("id",selectedId);
+      if(roleError) return setMsg(`권한은 저장했지만 관리자 역할 변경에 실패했습니다: ${roleError.message}`);
+    }
+    setPermissions(normalized);
+    setMsg("관리자 권한 설정을 저장했습니다.");
+    await loadEmployees();
+    onChanged();
+  }
+  return (
+    <section className="card admin-permission-card">
+      <div className="section-head">
+        <div>
+          <h2 className="card-title"><i className="ti ti-shield-lock" aria-hidden="true"></i>관리자 권한 설정</h2>
+          <p className="subtle" style={{margin:0}}>직원을 선택한 뒤 메뉴별로 없음, 읽기, 편집, 전체 허용을 지정합니다. 권한이 하나라도 있으면 관리자 메뉴 접근 대상이 됩니다.</p>
+        </div>
+        <button className="button secondary" onClick={savePermissions}><i className="ti ti-device-floppy" aria-hidden="true"></i>권한 저장</button>
+      </div>
+      <div className="grid two">
+        <div className="form-row">
+          <label className="label">직원 선택</label>
+          <select className="select" value={selectedId} onChange={event=>setSelectedId(event.target.value)}>
+            <option value="">직원 선택</option>
+            {activeEmployees.map(employee=><option key={employee.id} value={employee.id}>{employee.name} · {employee.employee_no||"-"} · {employee.role==="admin"?"관리자":"직원"}</option>)}
+          </select>
+        </div>
+        <div className="admin-permission-summary">
+          <b>{selected?.name??"직원을 선택해주세요"}</b>
+          <span>{selected?`${selected.department||"부서 없음"} · ${selected.position||"직책 없음"} · ${selected.role==="admin"?"관리자":"직원"}`:"권한을 저장하면 해당 직원의 관리자 화면 노출 범위가 정리됩니다."}</span>
+        </div>
+      </div>
+      <div className="permission-setting-list">
+        {ADMIN_PERMISSION_MENUS.map(menu=>(
+          <div className="permission-setting-row" key={menu.id}>
+            <div>
+              <b>{menu.label}</b>
+              <span>{menu.description}</span>
+            </div>
+            <div className="permission-level-buttons" role="group" aria-label={`${menu.label} 권한`}>
+              {ADMIN_PERMISSION_LEVELS.map(level=>(
+                <button
+                  key={level.id}
+                  type="button"
+                  className={`button ghost compact ${(permissions[menu.id]??"none")===level.id?"active":""}`}
+                  onClick={()=>updatePermission(menu.id,level.id)}
+                >
+                  {level.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {msg&&<div className={`alert ${msg.includes("실패")||msg.includes("패치")?"error":""}`} style={{marginTop:12}}>{msg}</div>}
+    </section>
+  );
+}
+
+
 function SettingsPage({ currentEmployee, section="schedule", readOnly=false }: { currentEmployee:any; section?:"schedule"|"payroll"; readOnly?:boolean }) {
   const [employees,setEmployees]=useState<any[]>([]);
   const [empMap,setEmpMap]=useState<Record<string,any>>({});
@@ -5488,7 +5668,7 @@ function SettingsPage({ currentEmployee, section="schedule", readOnly=false }: {
       <TeamScheduleBoard employees={employees} events={scheduleEvents} overrides={overrides} workTimeChanges={workTimeChanges} leaveRequests={leaveRequests} compTimeRequests={compTimeRequests} currentEmployee={currentEmployee} onChanged={load} readOnly={readOnly} />
       {!readOnly&&<ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setMsg} msg={msg} />}
     </>}
-    {section==="payroll"&&<PayrollCard employees={employees} absences={absences} overrides={overrides} workTimeChanges={workTimeChanges} scheduleEvents={scheduleEvents} />}
+    {section==="payroll"&&<PayrollCard employees={employees} absences={absences} overrides={overrides} workTimeChanges={workTimeChanges} scheduleEvents={scheduleEvents} readOnly={readOnly} />}
   </div>;
 }
 
@@ -6246,19 +6426,23 @@ function WeekendCompCard({ employees, empMap, allLogs, compRequests, currentEmpl
   );
 }
 
-function PayrollCard({ employees, absences, overrides, workTimeChanges, scheduleEvents }: { employees:any[]; absences:any[]; overrides:any[]; workTimeChanges:any[]; scheduleEvents:any[] }) {
+function PayrollCard({ employees, absences, overrides, workTimeChanges, scheduleEvents, readOnly=false }: { employees:any[]; absences:any[]; overrides:any[]; workTimeChanges:any[]; scheduleEvents:any[]; readOnly?:boolean }) {
   const [empId,setEmpId]=useState("");
   const [pay,setPay]=useState({monthly:"",hourly:"",annual:"",weeklyDays:"",dailyHours:"",monthlyHours:""});
+  const [payFixed,setPayFixed]=useState<Record<string,boolean>>(payrollFixedState(null));
   const [payMsg,setPayMsg]=useState("");
   const [localEmployees,setLocalEmployees]=useState<any[]>(employees);
   const [payrollMonthValue,setPayrollMonthValue]=useState(todayIso().slice(0,7));
   useEffect(()=>{setLocalEmployees(employees);},[employees]);
   const emp=empId?localEmployees.find(e=>e.id===empId):null;
-  function recalc(next:any, source:string) {
+  function recalc(next:any, source:string, fixedOverride?:Record<string,boolean>) {
+    const fixed=fixedOverride??payFixed;
     const weeklyDays=numberValue(next.weeklyDays);
     const dailyHours=numberValue(next.dailyHours);
     const calculatedMonthlyHours=weeklyDays>0&&dailyHours>0?monthlyPaidHours(weeklyDays,dailyHours):0;
-    const monthlyHours=source==="monthlyHours"?numberValue(next.monthlyHours):(calculatedMonthlyHours||numberValue(next.monthlyHours));
+    const monthlyHours=fixed.monthlyHours&&source!=="monthlyHours"
+      ? numberValue(next.monthlyHours)
+      : source==="monthlyHours"?numberValue(next.monthlyHours):(calculatedMonthlyHours||numberValue(next.monthlyHours));
     let monthly=numberValue(next.monthly);
     let hourly=numberValue(next.hourly);
     let annual=numberValue(next.annual);
@@ -6272,7 +6456,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
       annual=monthly*12;
       hourly=monthlyHours>0?Math.round(monthly/monthlyHours):hourly;
     }
-    return {
+    const result:any = {
       monthly: monthly?monthly.toLocaleString("ko-KR"):"",
       hourly: hourly?hourly.toLocaleString("ko-KR"):"",
       annual: annual?annual.toLocaleString("ko-KR"):"",
@@ -6280,6 +6464,10 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
       dailyHours: next.dailyHours,
       monthlyHours: monthlyHours?String(monthlyHours):"",
     };
+    PAYROLL_FIXED_FIELDS.forEach(field=>{
+      if(fixed[field]&&field!==source) result[field]=next[field]??result[field];
+    });
+    return result;
   }
   function setPayField(field:string, raw:string) {
     const value=["monthly","hourly","annual"].includes(field)?moneyInput(raw):raw.replace(/[^0-9.]/g,"");
@@ -6287,6 +6475,8 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   }
   useEffect(()=>{
     if(emp){
+      const fixed=payrollFixedState(emp.payroll_fixed_basis);
+      setPayFixed(fixed);
       const weeklyDays=Number(emp.weekly_work_days||emp.work_days?.length||5);
       const dailyHours=Number(emp.daily_work_hours||scheduleHours(emp.work_start,emp.work_end)||8);
       const monthlyHours=Math.max(Number(emp.monthly_standard_hours||0),monthlyPaidHours(weeklyDays,dailyHours));
@@ -6300,12 +6490,13 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
         weeklyDays:String(weeklyDays),
         dailyHours:String(dailyHours),
         monthlyHours:String(monthlyHours),
-      },"monthly"));
+      },"monthly",fixed));
       setPayMsg("");
     }
   },[empId]);
   async function saveSalary() {
     setPayMsg("");
+    if(readOnly) return setPayMsg("읽기 권한만 있어 급여 설정을 저장할 수 없습니다.");
     if(!empId) return setPayMsg("직원을 선택해주세요.");
     const monthly=numberValue(pay.monthly);
     const hourly=numberValue(pay.hourly);
@@ -6313,14 +6504,24 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
     const weeklyDays=numberValue(pay.weeklyDays);
     const dailyHours=numberValue(pay.dailyHours);
     const monthlyHours=numberValue(pay.monthlyHours);
-    const {error}=await supabase.from("employees").update({
+    const fixedBasis=payrollFixedValues(payFixed);
+    const payload:any={
       monthly_salary:monthly,
       hourly_wage:hourly,
       annual_salary:annual,
       weekly_work_days:weeklyDays,
       daily_work_hours:dailyHours,
       monthly_standard_hours:monthlyHours,
-    }).eq("id",empId);
+      payroll_fixed_basis:fixedBasis,
+    };
+    let fixedBasisSaved=true;
+    let {error}=await supabase.from("employees").update(payload).eq("id",empId);
+    if(error&&/payroll_fixed_basis|schema cache|column/i.test(error.message)){
+      fixedBasisSaved=false;
+      const {payroll_fixed_basis,...fallbackPayload}=payload;
+      const fallback=await supabase.from("employees").update(fallbackPayload).eq("id",empId);
+      error=fallback.error;
+    }
     if(error) setPayMsg(`급여 설정 저장 실패: ${error.message}`);
     else {
       setLocalEmployees(list=>list.map(employee=>employee.id===empId?{
@@ -6331,9 +6532,23 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
         weekly_work_days:weeklyDays,
         daily_work_hours:dailyHours,
         monthly_standard_hours:monthlyHours,
+        payroll_fixed_basis:fixedBasis,
       }:employee));
-      setPayMsg("급여 설정이 저장되었습니다.");
+      setPayMsg(fixedBasisSaved?"급여 설정과 고정 기준이 저장되었습니다.":"급여 설정은 저장되었습니다. 고정 기준은 Supabase 패치 적용 후 저장됩니다.");
     }
+  }
+  function togglePayFixed(field:string) {
+    if(readOnly) return;
+    setPayFixed(prev=>({...prev,[field]:!prev[field]}));
+  }
+  function fixedLabel(field:string,label:string) {
+    return (
+      <label className="label payroll-fixed-label">
+        <input type="checkbox" checked={!!payFixed[field]} disabled={readOnly} onChange={()=>togglePayFixed(field)} />
+        <span>{label}</span>
+        {payFixed[field]&&<em>고정</em>}
+      </label>
+    );
   }
   const monthly=numberValue(pay.monthly);
   const hourly=numberValue(pay.hourly);
@@ -6410,18 +6625,18 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
             {payrollSelectableEmployees.map(e=><option key={e.id} value={e.id}>{e.name}{!isEmployeeActive(e)?" · 과거 근무":""}</option>)}
           </select>
         </div>
-        <div className="form-row"><label className="label">월급 (원)</label><input className="input" value={pay.monthly} onChange={e=>setPayField("monthly",e.target.value)} placeholder="예: 2,500,000" /></div>
+        <div className="form-row">{fixedLabel("monthly","월급 (원)")}<input className="input" value={pay.monthly} disabled={readOnly} onChange={e=>setPayField("monthly",e.target.value)} placeholder="예: 2,500,000" /></div>
       </div>
       <div className="grid three">
-        <div className="form-row"><label className="label">시급 (원)</label><input className="input" value={pay.hourly} onChange={e=>setPayField("hourly",e.target.value)} placeholder="예: 11,000" /></div>
-        <div className="form-row"><label className="label">연봉 (원)</label><input className="input" value={pay.annual} onChange={e=>setPayField("annual",e.target.value)} placeholder="예: 30,000,000" /></div>
-        <div className="form-row"><label className="label">월 급여기준시간</label><input className="input" value={pay.monthlyHours} onChange={e=>setPayField("monthlyHours",e.target.value)} placeholder="예: 209" /></div>
+        <div className="form-row">{fixedLabel("hourly","시급 (원)")}<input className="input" value={pay.hourly} disabled={readOnly} onChange={e=>setPayField("hourly",e.target.value)} placeholder="예: 11,000" /></div>
+        <div className="form-row">{fixedLabel("annual","연봉 (원)")}<input className="input" value={pay.annual} disabled={readOnly} onChange={e=>setPayField("annual",e.target.value)} placeholder="예: 30,000,000" /></div>
+        <div className="form-row">{fixedLabel("monthlyHours","월 급여기준시간")}<input className="input" value={pay.monthlyHours} disabled={readOnly} onChange={e=>setPayField("monthlyHours",e.target.value)} placeholder="예: 209" /></div>
       </div>
       <div className="grid two">
-        <div className="form-row"><label className="label">주 근무일</label><input className="input" value={pay.weeklyDays} onChange={e=>setPayField("weeklyDays",e.target.value)} placeholder="예: 5" /></div>
-        <div className="form-row"><label className="label">일 근무시간</label><input className="input" value={pay.dailyHours} onChange={e=>setPayField("dailyHours",e.target.value)} placeholder="예: 8" /></div>
+        <div className="form-row">{fixedLabel("weeklyDays","주 근무일")}<input className="input" value={pay.weeklyDays} disabled={readOnly} onChange={e=>setPayField("weeklyDays",e.target.value)} placeholder="예: 5" /></div>
+        <div className="form-row">{fixedLabel("dailyHours","일 근무시간")}<input className="input" value={pay.dailyHours} disabled={readOnly} onChange={e=>setPayField("dailyHours",e.target.value)} placeholder="예: 8" /></div>
       </div>
-      <div className="actions" style={{marginBottom:10}}><button className="button secondary" onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
+      <div className="actions" style={{marginBottom:10}}><button className="button secondary" disabled={readOnly} onClick={saveSalary}>급여 설정 저장</button>{payMsg&&<span className={`subtle ${payMsg.includes("실패")?"":""}`} style={{color:payMsg.includes("실패")?"var(--red)":"var(--green)"}}>{payMsg}</span>}</div>
       <div className="payroll-summary-list">
         <div className="payroll-summary-head">직원별 급여·월 근무 기준 <span>{payrollMonthLabel} 월 예정시간은 직원별 주간 캘린더 요약과 같은 일정 기준으로 반영하고, 세후 금액은 무급공제와 4대보험 추정 공제를 반영합니다.</span></div>
         <div className="payroll-summary-row payroll-summary-columns"><b>직원</b><span>시급</span><span>월급</span><span>월 예정시간</span><span>월 급여기준</span><span>월 예정급여(세전)</span><span>월 예정급여(세후)</span><small>{payrollMonthLabel} 기준</small></div>
