@@ -6350,7 +6350,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
-  const payrollSummaryRows=localEmployees.filter(isEmployeeActive).map((employee:any)=>{
+  const payrollSummaryRows=localEmployees.map((employee:any)=>{
     const monthStats=payrollScheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges,scheduleEvents);
     const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
     const baseWeeklyDays=Number(employee.weekly_work_days||employee.work_days?.length||0);
@@ -6364,7 +6364,11 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
     const scheduledNetBase=Math.max(0,scheduledGrossPay-rowDeduction);
     const scheduledNetPay=scheduledNetBase?Math.max(0,scheduledNetBase-calcInsurance(scheduledNetBase).employee):0;
     return {employee,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,scheduledGrossPay,scheduledNetPay,rowAbsentDays,rowDeduction};
-  });
+  }).filter((row:any)=>Number(row.month?.hours||0)>0||Number(row.month?.days||0)>0);
+  const payrollSummaryEmployeeIds=new Set(payrollSummaryRows.map((row:any)=>row.employee.id));
+  const payrollSelectableEmployees=localEmployees
+    .filter((employee:any)=>isEmployeeActive(employee)||payrollSummaryEmployeeIds.has(employee.id))
+    .sort(sortEmployeesBySeniority);
   const payrollScheduledGrossPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledGrossPay||0),0);
   const payrollScheduledNetPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledNetPay||0),0);
   const payrollScheduledHoursTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.month?.hours||0),0);
@@ -6403,7 +6407,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
         <div className="form-row"><label className="label">직원</label>
           <select className="select" value={empId} onChange={e=>setEmpId(e.target.value)}>
             <option value="">직원 선택</option>
-            {localEmployees.filter(isEmployeeActive).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+            {payrollSelectableEmployees.map(e=><option key={e.id} value={e.id}>{e.name}{!isEmployeeActive(e)?" · 과거 근무":""}</option>)}
           </select>
         </div>
         <div className="form-row"><label className="label">월급 (원)</label><input className="input" value={pay.monthly} onChange={e=>setPayField("monthly",e.target.value)} placeholder="예: 2,500,000" /></div>
@@ -6433,6 +6437,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
             <small>{payrollMonthLabel} 예정 {month.days}일 · 월 예정 {formatHourValue(month.hours)}시간 × {hourlyWage?won(hourlyWage):"시급 미설정"}{rowAbsentDays>0?` · 무급공제 반영 ${rowAbsentDays}일 ${won(rowDeduction)}`:""}</small>
           </div>
         ))}
+        {payrollSummaryRows.length===0&&<p className="subtle" style={{margin:"10px 0"}}>{payrollMonthLabel}에 급여 계산 대상 근무시간이 있는 직원이 없습니다.</p>}
         <div className="payroll-summary-row payroll-summary-total"><b>예정급여 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollScheduledGrossPayTotal)}</span><span>{won(payrollScheduledNetPayTotal)}</span><small>세전/세후 예정급여 합계</small></div>
       </div>
       <div className="payroll-copy-panel">
