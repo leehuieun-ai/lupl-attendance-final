@@ -6953,8 +6953,18 @@ function ReportsPage() {
     return {...info,leave};
   }
   const calendarScheduleMap=calendarEmployee?Object.fromEntries(calendarDates.map(date=>[date,reportScheduleInfoForDate(calendarEmployee,date)])):{};
-  const calendarDayKeys=ALL_DAYS.slice(0,5);
-  const calendarVisibleDates=calendarDates.filter(date=>!["sat","sun"].includes(dayKeyFromDate(dateFromIso(date))));
+  function calendarDateHasScheduleSignal(date:string){
+    const info:any=(calendarScheduleMap as any)[date];
+    const logs=calendarLogMap[date]??[];
+    const workEvent=["work","am_only","pm_only"].includes(info?.event?.event_type);
+    return logs.length>0||!!info?.workday||!!info?.leave||workEvent;
+  }
+  const calendarHasWeekendSignal=calendarDates.some(date=>{
+    const dayKey=dayKeyFromDate(dateFromIso(date));
+    return ["sat","sun"].includes(dayKey)&&calendarDateHasScheduleSignal(date);
+  });
+  const calendarDayKeys=calendarHasWeekendSignal?ALL_DAYS:ALL_DAYS.slice(0,5);
+  const calendarVisibleDates=calendarDates.filter(date=>calendarHasWeekendSignal||!["sat","sun"].includes(dayKeyFromDate(dateFromIso(date))));
   const calendarOffset=Math.max(0,calendarDayKeys.indexOf(dayKeyFromDate(dateFromIso(calendarVisibleDates[0]??calendarMonthStart))));
   const calendarCells=Array.from({length:Math.ceil((calendarOffset+calendarVisibleDates.length)/calendarDayKeys.length)*calendarDayKeys.length},(_,index)=>calendarVisibleDates[index-calendarOffset]??null);
   const calendarToday=todayIso();
@@ -6964,6 +6974,7 @@ function ReportsPage() {
   const calendarReportHours=calendarScheduleEntries.reduce((sum:number,[,info]:any)=>sum+Number(info.hours||0),0);
   function dayWorkLabel(dayLogs:any[],info:any,date:string) {
     if(info?.workday&&!info?.leave) return `${formatHourValue(info.hours)}시간`;
+    if(!dayLogs.length&&info?.event) return info.event.title || "출근 안 함";
     if(!dayLogs.length) return "미출근";
     const minutes=dayLogs.reduce((sum:number,log:any)=>sum+(reportWorkedMinutes(log)??0),0);
     if(minutes>0) return `${formatHourValue(minutes/60)}시간`;
