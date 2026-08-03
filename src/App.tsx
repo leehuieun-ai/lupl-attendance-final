@@ -617,6 +617,9 @@ function daysLabel(days:string[] = []) {
   const ordered=orderedDays(days);
   return ordered.length ? ordered.map((d:string)=>DAY_LABELS[d]??d).join(", ") : "-";
 }
+function isEmployeeActive(employee:any) {
+  return employee?.employment_status==="active"&&employee?.is_active!==false;
+}
 function imageFileToAttachment(file:File, prefix="att") {
   return new Promise<any>((resolve,reject)=>{
     const reader=new FileReader();
@@ -4367,7 +4370,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const filtered=employees
     .filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?e.employment_status!=="active":e.employment_status==="active")
     .sort(sortEmployeesBySeniority);
-  const activeEmployees=employees.filter(e=>e.employment_status==="active"&&!isTestEmployee(e)).sort(sortEmployeesBySeniority);
+  const activeEmployees=employees.filter(e=>isEmployeeActive(e)&&!isTestEmployee(e)).sort(sortEmployeesBySeniority);
   useEffect(()=>{
     if(activeEmployees.length===0) { if(selectedDetailEmployeeId) setSelectedDetailEmployeeId(""); return; }
     if(!selectedDetailEmployeeId || !activeEmployees.some((employee:any)=>employee.id===selectedDetailEmployeeId)) {
@@ -5132,7 +5135,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           <table>
             <thead><tr><th>직원</th><th>총 부여</th><th>사용</th><th>잔여</th><th>보상휴가</th><th>관리</th></tr></thead>
             <tbody>
-              {employees.filter(e=>e.employment_status==="active").map(e=>{
+              {employees.filter(isEmployeeActive).map(e=>{
                 const lv=leaveForEmployee(e.id); if(!lv) return null;
                 return (<tr key={e.id}><td><b>{e.name}</b><br /><span className="subtle">{e.employee_no}</span>{e.no_annual_leave&&<><br/><span className="badge warn">연차 없음</span></>}</td><td>{lv.total.toFixed(1)}일</td><td>{lv.used.toFixed(1)}일</td><td><b style={{color:lv.remain<3?"var(--red)":"inherit"}}>{lv.remain.toFixed(1)}일</b></td><td>{formatHourValue(lv.compRemainH)}시간</td><td><button className="button secondary" onClick={()=>setLeaveModalEmp(e)}>연차 관리</button></td></tr>);
               })}
@@ -5159,7 +5162,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <div className="form-row"><label className="label">담당 직원</label>
                   <select className="select" value={rnrAssigneeId} onChange={e=>setRnrAssigneeId(e.target.value)}>
                     <option value="">직책 기준으로 저장</option>
-                    {employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name} {e.department||e.position?`· ${e.department??""} ${e.position??""}`:""}</option>)}
+                    {employees.filter(isEmployeeActive).map(e=><option key={e.id} value={e.id}>{e.name} {e.department||e.position?`· ${e.department??""} ${e.position??""}`:""}</option>)}
                   </select>
                 </div>
                 <ul className="rnr-checklist">{(rnrSuggestion.checklist??[]).map((item:string,index:number)=><li key={index}>{item}</li>)}</ul>
@@ -5258,7 +5261,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <div className="form-row"><label className="label">직책</label><select className="select" value={editingRnr.position??""} onChange={e=>setEditingRnr({...editingRnr,position:e.target.value})}>{POSITION_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"공통"}</option>)}</select></div>
                 <div className="form-row"><label className="label">업무 분류</label><select className="select" value={editingRnr.category??""} onChange={e=>setEditingRnr({...editingRnr,category:e.target.value})}>{RNR_CATEGORY_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"미분류"}</option>)}</select></div>
               </div>
-              <div className="form-row"><label className="label">담당 직원</label><select className="select" value={editingRnr.assigned_employee_id??""} onChange={e=>setEditingRnr({...editingRnr,assigned_employee_id:e.target.value})}><option value="">직책 기준</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+              <div className="form-row"><label className="label">담당 직원</label><select className="select" value={editingRnr.assigned_employee_id??""} onChange={e=>setEditingRnr({...editingRnr,assigned_employee_id:e.target.value})}><option value="">직책 기준</option>{employees.filter(isEmployeeActive).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
               <div className="form-row"><label className="label">업무 설명</label><textarea className="textarea" value={editingRnr.summary??""} onChange={e=>setEditingRnr({...editingRnr,summary:e.target.value})} /></div>
               <div className="form-row"><label className="label">체크리스트</label><textarea className="textarea compact-textarea" value={editingRnr.checklistText??""} onChange={e=>setEditingRnr({...editingRnr,checklistText:e.target.value})} placeholder={"한 줄에 하나씩 입력"} /></div>
             </div>
@@ -5424,7 +5427,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   const dates=Array.from({length:5},(_,i)=>addIsoDays(weekStart,i));
   const weekEnd=dates[4];
   const baseActiveEmployees=employees
-    .filter(e=>e.employment_status==="active")
+    .filter(isEmployeeActive)
     .sort((a,b)=>{
       const ai=employeeOrder.indexOf(a.id),bi=employeeOrder.indexOf(b.id);
       if(ai>=0||bi>=0) return (ai<0?9999:ai)-(bi<0?9999:bi);
@@ -5557,14 +5560,21 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
     const workday=eventOverridesSchedule ? eventIsWork : (sched.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
     const start=eventOverridesSchedule ? explicitEvent?.start_time??sched.work_start : sched.work_start;
     const end=eventOverridesSchedule ? explicitEvent?.end_time??sched.work_end : sched.work_end;
-    const hours=workday?netDailyHours(start,end,sched.break_start??"12:00",sched.break_end??"13:00"):0;
-    return {workday,start,end,hours,event:explicitEvent,change};
+    const scheduleForLeave={...sched,work_start:start,work_end:end};
+    const employeeLeaveRequests=leaveRequests.filter((request:any)=>request.employee_id===employee.id&&request.status==="approved"&&date>=request.start_date&&date<=request.end_date);
+    const scheduledMinutes=workday?Math.round(netDailyHours(start,end,sched.break_start??"12:00",sched.break_end??"13:00")*60):0;
+    const leaveMinutes=workday?approvedLeaveMinutesForDate(employeeLeaveRequests,date,scheduleForLeave):0;
+    const remainingMinutes=Math.max(0,scheduledMinutes-leaveMinutes);
+    const leave=employeeLeaveRequests.find((request:any)=>request.request_type==="comp_leave_use"||LEAVE_TYPE_META[request.request_type]?.usesLeave)??null;
+    const fullLeave=!!leave&&scheduledMinutes>0&&remainingMinutes<=0;
+    const hours=workday?Math.round((remainingMinutes/60)*10)/10:0;
+    return {workday,start,end,hours,scheduledHours:scheduledMinutes/60,leave,leaveMinutes,fullLeave,event:explicitEvent,change};
   }
   function scheduledWorkStatsWithEvents(employee:any,startIso:string,endIso:string){
     let days=0; let hours=0; let d=dateFromIso(startIso); const end=dateFromIso(endIso);
     while(d<=end){
       const info=workInfoForDate(employee,isoDate(d));
-      if(info.workday){days++;hours+=info.hours;}
+      if(info.workday&&info.hours>0){days++;hours+=info.hours;}
       d=addLocalDays(d,1);
     }
     return {days,hours:Math.round(hours*10)/10};
@@ -6000,10 +6010,12 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
                 <button type="button" className={`team-week-employee ${focusEmployeeId===employee.id?"focused":""} ${focusActive&&focusEmployeeId!==employee.id?"dimmed":""}`} key={`${employee.id}-name`} onClick={()=>setFocusEmployeeId(current=>current===employee.id?"":employee.id)} title={`${employee.name} 일정 집중 보기`}><i style={{background:color}}></i><div><b>{employee.name}</b><small>{[employee.department,employee.position].filter(Boolean).join(" · ")||employee.employee_no}</small><small className="team-week-month">{dateFromIso(monthRange.start).getMonth()+1}월 / 근무일수 {monthStats.days}일 / 근무시간 {formatHourValue(monthStats.hours)}시간</small></div></button>,
                 ...dates.map(date=>{
                   const info=workInfoForDate(employee,date);
-                  const offLabel=info.event?.title&&!info.workday?info.event.title:"휴무";
-                  return <div className={`team-week-cell ${info.workday?"":"off"} ${focusActive&&focusEmployeeId!==employee.id?"dimmed":""}`} key={`${employee.id}-${date}`} style={{"--employee-color":color} as React.CSSProperties}>
-                    <b>{info.workday?`${timeLabel(info.start)}~${timeLabel(info.end)}`:offLabel}</b>
-                    <small>{info.workday?`실근무 ${formatHourValue(info.hours)}시간`:"근무 없음"}</small>
+                  const leaveLabel=info.leave?leaveTypeDisplayLabel(info.leave):"";
+                  const offLabel=info.fullLeave ? leaveLabel : info.event?.title&&!info.workday?info.event.title:"휴무";
+                  const hasWork=info.workday&&info.hours>0;
+                  return <div className={`team-week-cell ${hasWork?"":"off"} ${focusActive&&focusEmployeeId!==employee.id?"dimmed":""}`} key={`${employee.id}-${date}`} style={{"--employee-color":color} as React.CSSProperties}>
+                    <b>{hasWork?`${timeLabel(info.start)}~${timeLabel(info.end)}`:offLabel}</b>
+                    <small>{hasWork?`실근무 ${formatHourValue(info.hours)}시간${leaveLabel?` · ${leaveLabel}`:""}`:info.fullLeave?"근무 없음 · 휴가":"근무 없음"}</small>
                   </div>;
                 }),
               ];
@@ -6265,7 +6277,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
-  const payrollSummaryRows=localEmployees.filter(e=>e.employment_status==="active").map((employee:any)=>{
+  const payrollSummaryRows=localEmployees.filter(isEmployeeActive).map((employee:any)=>{
     const monthStats=payrollScheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges,scheduleEvents);
     const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
     const baseWeeklyDays=Number(employee.weekly_work_days||employee.work_days?.length||0);
@@ -6282,6 +6294,23 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   });
   const payrollScheduledGrossPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledGrossPay||0),0);
   const payrollScheduledNetPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledNetPay||0),0);
+  const payrollScheduledHoursTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.month?.hours||0),0);
+  const payrollCopyTitle=`[${dateFromIso(month.start).getMonth()+1}월 근무 정리표]`;
+  const payrollAccountantText=[
+    payrollCopyTitle,
+    "이름 / 근무시간 / 세전월급여",
+    ...payrollSummaryRows.map((row:any)=>`${row.employee.name} / ${formatHourValue(row.month.hours)}시간 / ${won(row.scheduledGrossPay)}`),
+    "",
+    `합계 / ${formatHourValue(payrollScheduledHoursTotal)}시간 / ${won(payrollScheduledGrossPayTotal)}`,
+  ].join("\n");
+  async function copyPayrollAccountantText(){
+    try{
+      await navigator.clipboard.writeText(payrollAccountantText);
+      setPayMsg("세무사 제출용 근무 정리표를 복사했습니다.");
+    }catch{
+      setPayMsg("자동 복사에 실패했습니다. 아래 정리표를 직접 선택해서 복사해주세요.");
+    }
+  }
   return (
     <section className="card">
       <div className="section-head payroll-head">
@@ -6301,7 +6330,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
         <div className="form-row"><label className="label">직원</label>
           <select className="select" value={empId} onChange={e=>setEmpId(e.target.value)}>
             <option value="">직원 선택</option>
-            {localEmployees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+            {localEmployees.filter(isEmployeeActive).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
           </select>
         </div>
         <div className="form-row"><label className="label">월급 (원)</label><input className="input" value={pay.monthly} onChange={e=>setPayField("monthly",e.target.value)} placeholder="예: 2,500,000" /></div>
@@ -6332,6 +6361,13 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
           </div>
         ))}
         <div className="payroll-summary-row payroll-summary-total"><b>예정급여 합산</b><span></span><span></span><span></span><span></span><span>{won(payrollScheduledGrossPayTotal)}</span><span>{won(payrollScheduledNetPayTotal)}</span><small>세전/세후 예정급여 합계</small></div>
+      </div>
+      <div className="payroll-copy-panel">
+        <div className="payroll-copy-head">
+          <div><b>세무사 제출용 근무 정리표</b><span>{payrollCopyTitle} 형식으로 직원별 근무시간과 세전월급여를 바로 복사합니다.</span></div>
+          <button className="button secondary compact" onClick={copyPayrollAccountantText}><i className="ti ti-copy" aria-hidden="true"></i>복사</button>
+        </div>
+        <textarea className="textarea payroll-copy-text" readOnly value={payrollAccountantText} />
       </div>
       {empId&&emp&&<div className="payroll-selected-detail"><b>{emp.name} 급여 세부내역</b><span>{payrollMonthLabel} 기준으로 아래 공제와 예상 실수령액을 계산합니다. 최종 지급액은 회사 확인 후 확정됩니다.</span></div>}
       {empId&&monthly>0&&<div className="alert" style={{marginBottom:10}}>계산 기준: 시급 {won(hourly)} · 월 급여기준시간 {monthlyHours||0}시간 · 월급 {won(monthly)} · 연봉 {won(annual)} · 주휴 포함</div>}
@@ -6460,7 +6496,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
       <CollapsibleSection title="특정 기간 미출근 설정" icon="ti-calendar-off">
       <p className="subtle" style={{marginBottom:10}}>특정 월·일부터 며칠간 출근하지 않는 경우 등록합니다. 결근 판단에서 제외되고, 무급이면 급여 계산에 반영됩니다.</p>
       <div className="grid four">
-        <div className="form-row"><label className="label">직원</label><select className="select" value={absEmpId} onChange={e=>setAbsEmpId(e.target.value)}><option value="">선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+        <div className="form-row"><label className="label">직원</label><select className="select" value={absEmpId} onChange={e=>setAbsEmpId(e.target.value)}><option value="">선택</option>{employees.filter(isEmployeeActive).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
         <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={absStart} onChange={e=>setAbsStart(e.target.value)} /></div>
         <div className="form-row"><label className="label">종료일</label><input className="input" type="date" value={absEnd} onChange={e=>setAbsEnd(e.target.value)} /></div>
         <div className="form-row"><label className="label">급여</label><select className="select" value={absUnpaid?"unpaid":"paid"} onChange={e=>setAbsUnpaid(e.target.value==="unpaid")}><option value="unpaid">무급</option><option value="paid">유급</option></select></div>
@@ -6475,7 +6511,7 @@ function ScheduleCard({ employees, empMap, overrides, absences, currentEmployee,
       <CollapsibleSection title="주간 스케줄 변경" icon="ti-refresh">
       <p className="subtle" style={{marginBottom:10}}>특정 주에만 출근 요일·시간이 다를 때 사용합니다. 해당 주에만 기본 스케줄을 덮어씁니다.</p>
       <div className="grid two">
-        <div className="form-row"><label className="label">직원</label><select className="select" value={ovEmpId} onChange={e=>{setOvEmpId(e.target.value);const emp=empMap[e.target.value];if(emp){setOvDays(emp.work_days??["mon","tue","wed","thu","fri"]);setOvStart(emp.work_start??"09:00");setOvEnd(emp.work_end??"18:00");}}}><option value="">직원 선택</option>{employees.filter(e=>e.employment_status==="active").map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+        <div className="form-row"><label className="label">직원</label><select className="select" value={ovEmpId} onChange={e=>{setOvEmpId(e.target.value);const emp=empMap[e.target.value];if(emp){setOvDays(emp.work_days??["mon","tue","wed","thu","fri"]);setOvStart(emp.work_start??"09:00");setOvEnd(emp.work_end??"18:00");}}}><option value="">직원 선택</option>{employees.filter(isEmployeeActive).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
         <div className="form-row"><label className="label">해당 주 날짜 (아무 날)</label><input className="input" type="date" value={ovWeek} onChange={e=>setOvWeek(e.target.value)} /><p className="subtle" style={{marginTop:6}}>{weekOfMonthLabel(ovWeek)} · 주 시작일 {weekStartIso(ovWeek)}</p></div>
       </div>
       <div className="form-row"><label className="label">이 주 출근 요일</label><div className="days-grid">{ALL_DAYS.map(d=><button key={d} type="button" className={`day-btn ${ovDays.includes(d)?"active":""}`} onClick={()=>setOvDays(days=>toggleDay(days,d))}>{DAY_LABELS[d]}</button>)}</div></div>
