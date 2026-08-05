@@ -41,23 +41,55 @@ const COMPANY_SUMMER_HOLIDAY = {
   end: "2026-08-24",
   description: "전 직원 공통 여름휴가 · 자동 근무 일정 반영",
 };
+const ATTENDANCE_RULE_SECTIONS = [
+  {
+    title: "출근",
+    items: [
+      "정해진 출근 기준시각 이후 기록은 지각으로 확인될 수 있습니다.",
+      "월 2회 이상 지각 시 직원 화면에 안내가 표시됩니다.",
+      "월 3회 이상 반복되면 경위서 작성 대상이 될 수 있습니다.",
+    ],
+  },
+  {
+    title: "퇴근",
+    items: [
+      "근무 종료 후 바로 퇴근 기록을 남겨 주세요.",
+      "퇴근 누락은 관리자 확인 후 정정 서명을 통해 보완합니다.",
+      "출근 정정과 퇴근 정정은 각각 구분해 처리합니다.",
+    ],
+  },
+  {
+    title: "조퇴·결근·무단결근",
+    items: [
+      "휴가·일정 승인 여부와 실제 근무기록을 함께 확인합니다.",
+      "사전 승인 없이 근무하지 않은 경우 인사 검토 대상이 될 수 있습니다.",
+      "반복성, 무단성, 업무 영향을 종합적으로 확인합니다.",
+    ],
+  },
+  {
+    title: "출퇴근 기록 정정",
+    items: [
+      "기록이 누락되거나 실제와 다르면 관리자가 정정 요청을 만듭니다.",
+      "직원 전자서명 후 정정 내용이 반영됩니다.",
+      "정정 기록은 근태 확인 및 분쟁 예방 자료로 보관됩니다.",
+    ],
+  },
+  {
+    title: "인사 검토 절차",
+    items: [
+      "소명 내용, 기존 안내 여부, 업무 영향을 함께 검토합니다.",
+      "필요 시 구두 안내, 서면 경고, 경위서 순으로 진행할 수 있습니다.",
+      "중대하거나 반복되는 경우 인사위원회 검토 대상이 될 수 있습니다.",
+    ],
+  },
+];
 const ATTENDANCE_RULE_DETAIL_TEXT = [
   "출퇴근 기록은 근무시간 확인 기준입니다. 출근·퇴근 시 바로 기록해 주세요.",
-  "",
-  "1. 출근",
-  "정해진 출근 기준시각 이후 출근 기록이 남으면 지각으로 확인될 수 있습니다. 월 2회 이상 지각 시 직원 화면에서 안내가 표시되고, 월 3회 이상 반복되면 경위서 작성 대상이 될 수 있습니다.",
-  "",
-  "2. 퇴근",
-  "근무 종료 후 바로 퇴근 기록을 남겨 주세요. 퇴근 누락은 관리자 확인 후 정정 서명을 통해 보완합니다.",
-  "",
-  "3. 조퇴·결근·무단결근",
-  "조퇴, 결근, 무단결근은 휴가·일정 승인 여부와 실제 근무기록을 함께 확인합니다. 사전 승인 없이 근무하지 않은 경우 인사 검토 대상이 될 수 있습니다.",
-  "",
-  "4. 출퇴근 기록 정정",
-  "출근 또는 퇴근 기록이 누락되거나 실제와 다르면 관리자가 정정 요청을 만들고, 직원 전자서명 후 반영합니다. 출근 정정과 퇴근 정정은 각각 구분해 처리합니다.",
-  "",
-  "5. 인사 검토 절차",
-  "반복성, 무단성, 업무 영향, 소명 내용, 기존 안내 여부를 종합 검토합니다. 필요한 경우 구두 안내, 서면 경고, 경위서, 인사위원회 검토 순으로 진행할 수 있습니다.",
+  ...ATTENDANCE_RULE_SECTIONS.flatMap((section,index)=>[
+    "",
+    `${index+1}. ${section.title}`,
+    ...section.items.map(item=>`- ${item}`),
+  ]),
 ].join("\n");
 
 const DAY_LABELS: Record<string, string> = { mon:"월", tue:"화", wed:"수", thu:"목", fri:"금", sat:"토", sun:"일" };
@@ -2208,9 +2240,18 @@ function AttendanceRuleConsentModal({ employee, onDone }: { employee:any; onDone
       <div className="modal-box work-consent-modal attendance-rule-modal" onClick={e=>e.stopPropagation()}>
         <div className="popup-mark"><i className="ti ti-clipboard-check" aria-hidden="true"></i></div>
         <h2 className="card-title" style={{display:"block",marginBottom:8}}>근태 기준 안내</h2>
-        <p className="body-text">출퇴근 기록 기준과 지각·조퇴·결근 처리 절차를 확인해 주세요. 규칙이 바뀌면 다시 서명 안내가 표시됩니다.</p>
-        <div className="type-desc work-time-detail work-time-detail-space" style={{whiteSpace:"pre-wrap",marginTop:13}}>{ATTENDANCE_RULE_DETAIL_TEXT}</div>
-        <div style={{marginTop:14}}>
+        <p className="body-text attendance-rule-intro">출퇴근 기록 기준과 지각·조퇴·결근 처리 절차를 확인해 주세요. 규칙이 바뀌면 다시 서명 안내가 표시됩니다.</p>
+        <div className="attendance-rule-list" aria-label="근태 기준 상세">
+          {ATTENDANCE_RULE_SECTIONS.map(section=>(
+            <section className="attendance-rule-section" key={section.title}>
+              <h3>{section.title}</h3>
+              <ul>
+                {section.items.map(item=><li key={item}>{item}</li>)}
+              </ul>
+            </section>
+          ))}
+        </div>
+        <div className="attendance-rule-signature">
           <label className="label">전자서명</label>
           <SignaturePad canvasRef={canvasRef} />
         </div>
