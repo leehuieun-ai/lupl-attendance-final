@@ -5107,40 +5107,89 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(/휴대|전화|연락|phone|mobile/.test(key)) return "phone";
     return "";
   }
+  function emptyBulkEmployeeRow(source:string,index:number) {
+    return {name:"",department:"",position:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,no_annual_leave:false,is_unpaid:false,work_days:["mon","tue","wed","thu","fri"],source,index};
+  }
+  function finalizeBulkEmployeeRow(row:any) {
+    const next={...row};
+    next.name=String(next.name??"").trim();
+    next.department=String(next.department??"").trim();
+    next.position=String(next.position??"").trim();
+    next.employee_no=String(next.employee_no??"").replace(/\D/g,"").slice(0,8);
+    next.phone=formatPhone(String(next.phone??""));
+    if(next.position==="인턴") {
+      next.is_unpaid=true;
+      next.no_annual_leave=true;
+    }
+    next.valid=!!next.name&&!!next.department&&!!next.position&&/^\d{8}$/.test(next.employee_no)&&String(next.phone??"").replace(/\D/g,"").length>=10;
+    return next;
+  }
+  function bulkLineLabelValue(line:string) {
+    const match=line.match(/^(이름|성명|부서|소속|직책|직함|역할|사번|휴대전화|휴대폰|전화번호|연락처|전화|name|department|dept|position|title|employee\s*no|id|phone|mobile)\s*[:：-]?\s*(.+)$/i);
+    if(!match) return null;
+    const key=normalizeBulkHeader(match[1]);
+    const value=match[2].trim();
+    return key&&value ? {[key]:key==="phone"?formatPhone(value):key==="employee_no"?value.replace(/\D/g,"").slice(0,8):value} : null;
+  }
+  function parseBulkEmployeeFreeformLine(line:string) {
+    const labeled=bulkLineLabelValue(line);
+    if(labeled) return labeled;
+    const parts=line.split(/\t|,|\s+/).map(part=>part.trim()).filter(Boolean);
+    const remaining=[...parts];
+    const row:any={};
+    const employeeNoIndex=remaining.findIndex(part=>/^\d{8}$/.test(part.replace(/\D/g,"")));
+    if(employeeNoIndex>=0) row.employee_no=remaining.splice(employeeNoIndex,1)[0].replace(/\D/g,"").slice(0,8);
+    const phoneIndex=remaining.findIndex(part=>{
+      const digits=part.replace(/\D/g,"");
+      return /^0\d{9,10}$/.test(digits);
+    });
+    if(phoneIndex>=0) row.phone=formatPhone(remaining.splice(phoneIndex,1)[0]);
+    const positionIndex=remaining.findIndex(part=>POSITION_OPTIONS.filter(Boolean).includes(part)||/대표|본부장|책임|선임|매니저|인턴|담당자|팀장|실장|부장|차장|과장|대리|주임|사원/.test(part));
+    if(positionIndex>=0) row.position=remaining.splice(positionIndex,1)[0];
+    const departmentIndex=remaining.findIndex(part=>DEPARTMENT_OPTIONS.filter(Boolean).includes(part)||/부서$/.test(part));
+    if(departmentIndex>=0) row.department=remaining.splice(departmentIndex,1)[0];
+    if(remaining.length>0) row.name=remaining.join(" ");
+    return row;
+  }
+  function bulkRowHasAny(row:any) {
+    return !!(row?.name||row?.department||row?.position||row?.employee_no||row?.phone);
+  }
+  function bulkRowIsComplete(row:any) {
+    return !!row?.name&&!!row?.department&&!!row?.position&&/^\d{8}$/.test(String(row.employee_no??""))&&String(row.phone??"").replace(/\D/g,"").length>=10;
+  }
   function parseBulkEmployeeRows(text:string) {
     const lines=text.split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
     if(lines.length===0) return [];
-    const splitLine=(line:string)=>line.split(/\t|,|\s{2,}/).map(part=>part.trim()).filter(Boolean);
+    const splitLine=(line:string)=>line.split(/\t|,|\s+/).map(part=>part.trim()).filter(Boolean);
     const first=splitLine(lines[0]);
     const headerKeys=first.map(normalizeBulkHeader);
     const hasHeader=headerKeys.filter(Boolean).length>=2;
     const dataLines=hasHeader?lines.slice(1):lines;
-    return dataLines.map((line,index)=>{
+    if(hasHeader) return dataLines.map((line,index)=>{
       const parts=splitLine(line);
-      const row:any={name:"",department:"",position:"",employee_no:"",phone:"",joined_at:todayIso(),work_start_date:todayIso(),role:"employee",device_limit:3,no_annual_leave:false,is_unpaid:false,work_days:["mon","tue","wed","thu","fri"],source:line,index};
-      if(hasHeader){
-        parts.forEach((part,i)=>{const key=headerKeys[i]; if(key) row[key]=key==="phone"?formatPhone(part):part;});
-      } else {
-        const remaining=[...parts];
-        const employeeNoIndex=remaining.findIndex(part=>/^\d{8}$/.test(part.replace(/\D/g,"")));
-        if(employeeNoIndex>=0) row.employee_no=remaining.splice(employeeNoIndex,1)[0].replace(/\D/g,"");
-        const phoneIndex=remaining.findIndex(part=>/^0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}$/.test(part.replace(/[()]/g,"")));
-        if(phoneIndex>=0) row.phone=formatPhone(remaining.splice(phoneIndex,1)[0]);
-        const positionIndex=remaining.findIndex(part=>POSITION_OPTIONS.filter(Boolean).includes(part)||/대표|본부장|책임|선임|매니저|인턴/.test(part));
-        if(positionIndex>=0) row.position=remaining.splice(positionIndex,1)[0];
-        const departmentIndex=remaining.findIndex(part=>DEPARTMENT_OPTIONS.filter(Boolean).includes(part)||/부서$/.test(part));
-        if(departmentIndex>=0) row.department=remaining.splice(departmentIndex,1)[0];
-        row.name=remaining.shift()??"";
-        if(!row.department&&remaining.length>0) row.department=remaining.shift()??"";
-        if(!row.position&&remaining.length>0) row.position=remaining.shift()??"";
-      }
-      if(row.position==="인턴") {
-        row.is_unpaid=true;
-        row.no_annual_leave=true;
-      }
-      row.valid=!!row.name&&/^\d{8}$/.test(String(row.employee_no??""))&&String(row.phone??"").replace(/\D/g,"").length>=10;
-      return row;
+      const row:any=emptyBulkEmployeeRow(line,index);
+      parts.forEach((part,i)=>{const key=headerKeys[i]; if(key) row[key]=key==="phone"?formatPhone(part):key==="employee_no"?part.replace(/\D/g,"").slice(0,8):part;});
+      return finalizeBulkEmployeeRow(row);
     });
+    const rows:any[]=[];
+    let current:any|null=null;
+    dataLines.forEach((line,index)=>{
+      const partial=parseBulkEmployeeFreeformLine(line);
+      if(!bulkRowHasAny(partial)) return;
+      if(bulkRowIsComplete(partial)) {
+        if(current&&bulkRowHasAny(current)) rows.push(finalizeBulkEmployeeRow(current));
+        rows.push(finalizeBulkEmployeeRow({...emptyBulkEmployeeRow(line,index),...partial}));
+        current=null;
+        return;
+      }
+      if(partial.name&&current&&bulkRowHasAny(current)&&bulkRowIsComplete(current)) {
+        rows.push(finalizeBulkEmployeeRow(current));
+        current=null;
+      }
+      current={...(current??emptyBulkEmployeeRow(line,index)),...partial,source:[current?.source,line].filter(Boolean).join("\n")};
+    });
+    if(current&&bulkRowHasAny(current)) rows.push(finalizeBulkEmployeeRow(current));
+    return rows;
   }
   function changeBulkEmployeeText(text:string) {
     setBulkEmployeeText(text);
@@ -5148,7 +5197,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   async function createBulkEmployees() {
     const validRows=bulkEmployeeRows.filter(row=>row.valid);
-    if(validRows.length===0) return setMessage("생성할 직원 정보를 붙여넣어 주세요. 이름, 부서, 직책, 사번 8자리, 휴대전화가 필요합니다.");
+    if(validRows.length===0) return setMessage("생성할 직원 정보를 붙여넣어 주세요. 이름, 부서, 직함/직책, 사번 8자리, 휴대전화가 모두 필요합니다.");
     setBulkCreating(true);
     const results:string[]=[];
     for(const row of validRows) {
@@ -6094,11 +6143,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             <div className="section-head">
               <div>
                 <h3 className="mini-title">여러 직원 붙여넣기 생성</h3>
-                <p className="subtle">이름, 부서, 직책, 사번 8자리, 휴대전화를 표 형태로 붙여넣으면 순서대로 계정을 생성합니다.</p>
+                <p className="subtle">한 줄에 직원 1명으로 붙여넣거나, 이름/직함/사번/전화번호를 한 줄씩 적어도 자동으로 묶어서 생성합니다.</p>
               </div>
               <button className="button secondary compact" disabled={bulkCreating||bulkEmployeeRows.filter(row=>row.valid).length===0} onClick={createBulkEmployees}>{bulkCreating?"생성 중":`${bulkEmployeeRows.filter(row=>row.valid).length}명 생성`}</button>
             </div>
-            <textarea className="textarea compact-textarea" value={bulkEmployeeText} onChange={e=>changeBulkEmployeeText(e.target.value)} placeholder={"이름\t부서\t직책\t사번\t휴대전화\n조하빈\tAI부서\t인턴\t26081001\t010-0000-0000"} />
+            <textarea className="textarea compact-textarea" value={bulkEmployeeText} onChange={e=>changeBulkEmployeeText(e.target.value)} placeholder={"배병윤 개발부서 매니저 25110301 01025153673\n\n또는\n홍길동 디자인부서\n직함 담당자\n사번 22061201\n전화번호 01012345678"} />
             {bulkEmployeeRows.length>0&&<div className="bulk-employee-preview">
               {bulkEmployeeRows.slice(0,8).map(row=><div className={`bulk-employee-row ${row.valid?"":"invalid"}`} key={`${row.index}-${row.employee_no||row.name}`}>
                 <b>{row.name||"이름 없음"}</b><span>{row.department||"부서 없음"} · {row.position||"직책 없음"}{row.is_unpaid?" · 무급":""}</span><small>{row.employee_no||"사번 없음"} · {row.phone||"휴대전화 없음"}</small>
