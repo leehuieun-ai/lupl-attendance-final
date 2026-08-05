@@ -6533,6 +6533,17 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
     }
     return event;
   }
+  function isPrivateEmployeeScheduleEvent(event:any) {
+    return !event?.base && !event?.leave && !event?.readonly && ["hidden","unavailable","info"].includes(event?.event_type);
+  }
+  function scheduleEventTitleForViewer(event:any) {
+    if(!showAdminScheduleDetails&&isPrivateEmployeeScheduleEvent(event)) return "개인 사유";
+    return event?.title||"일정 확인";
+  }
+  function scheduleEventNoteForViewer(event:any) {
+    if(!showAdminScheduleDetails&&isPrivateEmployeeScheduleEvent(event)) return "휴가/일정 확인";
+    return event?.note??"";
+  }
   function displayScheduleEventForDate(employee:any,event:any,date:string){
     const shown=displayScheduleEvent(event);
     const change=approvedWorkTimeChangeForDate(workTimeChanges,employee,date);
@@ -6948,7 +6959,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
       events.filter((event:any)=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date&&event.event_type==="info").forEach((event:any)=>chips.push({
         key:`info-${event.id}-${date}`,
         type:"info",
-        title:event.title||"일정 확인",
+        title:showAdminScheduleDetails ? event.title||"일정 확인" : `${employee.name} · 개인 사유`,
         detail:showAdminScheduleDetails?event.note??"": "해당일은 일정 확인이 필요한 날입니다.",
       }));
     });
@@ -7074,7 +7085,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
                 ...dates.map(date=>{
                   const info=workInfoForDate(employee,date);
                   const leaveLabel=info.leave?leaveTypeDisplayLabel(info.leave):"";
-                  const offLabel=info.fullLeave ? leaveLabel : info.event?.title&&!info.workday?info.event.title:"휴무";
+                  const offLabel=info.fullLeave ? leaveLabel : info.event?.title&&!info.workday?scheduleEventTitleForViewer(info.event):"휴무";
                   const hasWork=info.workday&&info.hours>0;
                   return <div className={`team-week-cell ${hasWork?"":"off"} ${focusActive&&focusEmployeeId!==employee.id?"dimmed":""}`} key={`${employee.id}-${date}`} style={{"--employee-color":color} as React.CSSProperties}>
                     <b>{hasWork?`${timeLabel(info.start)}~${timeLabel(info.end)}`:offLabel}</b>
@@ -7108,7 +7119,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
                 if(!visible.length) return null;
                 const owner=activeEmployees.find(emp=>emp.id===event.employee_id);
                 const color=owner?employeeColorFromList(activeEmployees,owner.id):selectedColor;
-                return <button key={event.id} draggable={!readOnly} className="week-all-day-event" style={{gridColumn:`${visible[0].index+1} / span ${visible.length}`,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{if(readOnly){e.preventDefault();return;}setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>!readOnly&&setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{event.title}</b><span>{event.note??`${event.start_date}~${event.end_date}`}</span></button>;
+                return <button key={event.id} draggable={!readOnly} className="week-all-day-event" style={{gridColumn:`${visible[0].index+1} / span ${visible.length}`,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{if(readOnly){e.preventDefault();return;}setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={()=>!readOnly&&setEditing({...event,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??""})}><b>{scheduleEventTitleForViewer(event)}</b><span>{scheduleEventNoteForViewer(event)||`${event.start_date}~${event.end_date}`}</span></button>;
               })}
             </div>
           </div>}
@@ -7137,6 +7148,8 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
                     const meta=SCHEDULE_EVENT_META[event.event_type]??SCHEDULE_EVENT_META.info;
                     const gridColumn=isAll?index*employeeCount+employeeIndex+1:index+1;
                     const canEditEvent=!readOnly&&!event.leave&&!event.readonly;
+                    const eventTitle=scheduleEventTitleForViewer(event);
+                    const eventNote=scheduleEventNoteForViewer(event);
                     const openEditor=()=>{
                       if(!canEditEvent) return;
                       if(Date.now()<timeDragClickGuard.current) return;
@@ -7147,10 +7160,10 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
                       }
                       setEditing({...event,original_title:event.title,start_time:event.start_time?.slice(0,5)??"",end_time:event.end_time?.slice(0,5)??"",apply_all:false});
                     };
-                    return <button key={`${event.id}-${date}`} title={`${employee.name} · ${event.title||"빈 일정"} · ${pos.label}${event.leave?" · 승인된 휴가":event.readonly||readOnly?"":" · 눌러서 수정"}`} draggable={canEditEvent&&!event.base} className={`week-time-event event-${event.event_type} ${event.overtimeStatus?`overtime-${event.overtimeStatus}`:""} ${isAll?"team-lane-event":""} ${focusActive&&focusEmployeeId!==employee.id?"focus-dimmed":focusActive?"focus-live":""}`} style={{gridColumn,gridRow:`${pos.row} / span ${pos.span}`,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{if(!canEditEvent||event.base){e.preventDefault();return;}setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={openEditor}>
+                    return <button key={`${event.id}-${date}`} title={`${employee.name} · ${eventTitle||"빈 일정"} · ${pos.label}${event.leave?" · 승인된 휴가":event.readonly||readOnly?"":" · 눌러서 수정"}`} draggable={canEditEvent&&!event.base} className={`week-time-event event-${event.event_type} ${event.overtimeStatus?`overtime-${event.overtimeStatus}`:""} ${isAll?"team-lane-event":""} ${focusActive&&focusEmployeeId!==employee.id?"focus-dimmed":focusActive?"focus-live":""}`} style={{gridColumn,gridRow:`${pos.row} / span ${pos.span}`,"--employee-color":color} as React.CSSProperties} onDragStart={e=>{if(!canEditEvent||event.base){e.preventDefault();return;}setDraggingId(event.id);e.dataTransfer.effectAllowed="move";}} onDragEnd={()=>setDraggingId(null)} onClick={openEditor}>
                       {canEditEvent&&<><span className="time-resize-handle top" title="시작 시간 드래그" onPointerDown={e=>beginTimeDrag(e,event,employee,date,"start")} onPointerUp={finishTimeDrag}></span>
                       <span className="time-resize-handle move" title="일정 시간 이동" onPointerDown={e=>beginTimeDrag(e,event,employee,date,"move")} onPointerUp={finishTimeDrag}><i className="ti ti-grip-horizontal" aria-hidden="true"></i></span></>}
-                      {event.title&&<b>{!isAll&&<i className={`ti ${meta.icon}`} aria-hidden="true"></i>}{event.title}</b>}<span className="event-time-label"><em>{pos.start}</em><i>~</i><em>{pos.end}</em></span>{event.note&&<small>{event.note}</small>}
+                      {eventTitle&&<b>{!isAll&&<i className={`ti ${meta.icon}`} aria-hidden="true"></i>}{eventTitle}</b>}<span className="event-time-label"><em>{pos.start}</em><i>~</i><em>{pos.end}</em></span>{eventNote&&<small>{eventNote}</small>}
                       {canEditEvent&&<span className="time-resize-handle bottom" title="종료 시간 드래그" onPointerDown={e=>beginTimeDrag(e,event,employee,date,"end")} onPointerUp={finishTimeDrag}></span>}
                     </button>;
                   });
