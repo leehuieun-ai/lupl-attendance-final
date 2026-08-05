@@ -84,7 +84,14 @@ Deno.serve(async (req) => {
         .eq("id", employeeId)
         .single();
       if (empError || !emp) return json({ error: "직원 정보를 찾을 수 없습니다." }, 404);
-      if (!emp.user_id) return json({ error: "직원 계정의 Auth 연결 정보가 없습니다." }, 400);
+      if (!emp.user_id) {
+        const { error: updateOnlyError } = await adminClient
+          .from("employees")
+          .update({ employee_no: newEmployeeNo, internal_email: email })
+          .eq("id", employeeId);
+        if (updateOnlyError) return json({ error: updateOnlyError.message }, 400);
+        return json({ ok: true, employee_no: newEmployeeNo, auth_updated: false });
+      }
       const password = initialPassword(emp.phone);
       const { error } = await adminClient.auth.admin.updateUserById(emp.user_id, { password });
       if (error) return json({ error: error.message }, 400);
@@ -133,6 +140,7 @@ Deno.serve(async (req) => {
     const department = String(body.department ?? "").trim();
     const position = String(body.position ?? "").trim();
     const noAnnualLeave = !!body.no_annual_leave;
+    const isUnpaid = !!body.is_unpaid || position === "인턴";
     const workDays = normalizeWorkDays(body.work_days);
     if (!name || !employeeNo || !phone) return json({ error: "이름, 사번, 휴대폰 번호는 필수입니다." }, 400);
 
@@ -168,25 +176,30 @@ Deno.serve(async (req) => {
       if (updateAuthError) return json({ error: updateAuthError.message }, 400);
     }
 
-    const { error: insertError } = await adminClient.from("employees").insert(
-      {
-        user_id: authUser.id,
-        employee_no: employeeNo,
-        name,
-        phone,
-        internal_email: email,
-        role,
-        device_limit: deviceLimit,
-        department,
-        position,
-        no_annual_leave: noAnnualLeave,
-        work_days: workDays,
-        joined_at: joinedAt,
-        work_start_date: workStartDate,
-        employment_status: "active",
-        is_active: true,
-      }
-    );
+    const payload = {
+      user_id: authUser.id,
+      employee_no: employeeNo,
+      name,
+      phone,
+      internal_email: email,
+      role,
+      device_limit: deviceLimit,
+      department,
+      position,
+      no_annual_leave: noAnnualLeave || isUnpaid,
+      is_unpaid: isUnpaid,
+      work_days: workDays,
+      joined_at: joinedAt,
+      work_start_date: workStartDate,
+      employment_status: "active",
+      is_active: true,
+    };
+    let { error: insertError } = await adminClient.from("employees").insert(payload);
+    if (insertError && /is_unpaid|schema cache|column/i.test(insertError.message)) {
+      const { is_unpaid, ...fallbackPayload } = payload;
+      const fallback = await adminClient.from("employees").insert(fallbackPayload);
+      insertError = fallback.error;
+    }
     if (insertError) return json({ error: insertError.message }, 400);
 
     return json({ ok: true, employee_no: employeeNo, initial_password: password });

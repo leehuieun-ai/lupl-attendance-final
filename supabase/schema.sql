@@ -62,6 +62,7 @@ alter table public.employees add column if not exists no_annual_leave boolean no
 alter table public.employees add column if not exists no_annual_leave_reason text;
 alter table public.employees add column if not exists department text;
 alter table public.employees add column if not exists position text;
+alter table public.employees add column if not exists is_unpaid boolean not null default false;
 alter table public.workplaces add column if not exists visibility text not null default 'public';
 alter table public.workplaces drop constraint if exists workplaces_visibility_check;
 alter table public.workplaces add constraint workplaces_visibility_check check (visibility in ('public','private'));
@@ -755,6 +756,7 @@ create table if not exists public.rnr_entries (
   priority text not null default 'normal',
   checklist jsonb not null default '[]'::jsonb,
   attachments jsonb not null default '[]'::jsonb,
+  is_sensitive boolean not null default false,
   assigned_employee_id uuid references public.employees(id),
   assigned_person_name text,
   source text,
@@ -771,6 +773,7 @@ alter table public.daily_tasks enable row level security;
 alter table public.rnr_entries enable row level security;
 alter table public.daily_tasks add column if not exists attachments jsonb not null default '[]'::jsonb;
 alter table public.rnr_entries add column if not exists attachments jsonb not null default '[]'::jsonb;
+alter table public.rnr_entries add column if not exists is_sensitive boolean not null default false;
 
 drop policy if exists daily_tasks_select_auth on public.daily_tasks;
 create policy daily_tasks_select_auth on public.daily_tasks
@@ -801,7 +804,9 @@ for select to authenticated using (
     is_active = true
     and (
       assigned_employee_id = public.current_employee_id()
-      or exists (
+      or (
+        coalesce(rnr_entries.is_sensitive, false) = false
+        and exists (
         select 1
         from public.employees e
         where e.id = public.current_employee_id()
@@ -809,6 +814,7 @@ for select to authenticated using (
             (coalesce(rnr_entries.department, '') <> '' and e.department = rnr_entries.department)
             or (coalesce(rnr_entries.position, '') <> '' and e.position = rnr_entries.position)
           )
+        )
       )
     )
   )
