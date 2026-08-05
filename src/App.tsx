@@ -39,7 +39,7 @@ const COMPANY_SUMMER_HOLIDAY = {
   title: "회사 여름휴가",
   start: "2026-08-20",
   end: "2026-08-24",
-  description: "전 직원 공통 유급휴가 · 자동 근무 일정 반영",
+  description: "전 직원 공통 여름휴가 · 자동 근무 일정 반영",
 };
 const ATTENDANCE_RULE_DETAIL_TEXT = [
   "출퇴근 기록은 근무시간 확인 기준입니다. 출근·퇴근 시 바로 기록해 주세요.",
@@ -844,7 +844,7 @@ function isUnderAnnualLeaveThreshold(emp:any) {
 }
 function annualLeaveThresholdNotice(emp:any) {
   const hours=weeklyScheduledHours(emp);
-  return `현재 등록된 주 소정근로시간은 약 ${hours.toFixed(1)}시간입니다. 4주 평균 1주 소정근로시간이 15시간 미만인 경우 근로기준법 제18조에 따라 제60조 연차유급휴가 규정 적용 제외가 가능합니다.`;
+  return `현재 등록된 주 소정근로시간은 약 ${hours.toFixed(1)}시간입니다. 4주 평균 1주 소정근로시간이 15시간 미만인 경우 근로기준법 제18조에 따라 제60조 연차 규정 적용 제외가 가능합니다.`;
 }
 function annualLeaveEligibilityNote(emp:any) {
   const hours=weeklyScheduledHours(emp);
@@ -6479,7 +6479,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   }
   function teamMonthIssueChips(date:string) {
     const chips:any[]=[];
-    if(isCompanySummerHolidayDate(date)) chips.push({key:`holiday-${date}`,type:"holiday",title:COMPANY_SUMMER_HOLIDAY.title,detail:"공통 유급휴가"});
+    if(isCompanySummerHolidayDate(date)) chips.push({key:`holiday-${date}`,type:"holiday",title:COMPANY_SUMMER_HOLIDAY.title,detail:"공통 여름휴가"});
     visibleEmployees.forEach((employee:any)=>{
       const info=workInfoForDate(employee,date);
       if(info.leave&&info.leave.request_type!=="company_holiday") {
@@ -6998,13 +6998,13 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
       },
     ],{
       title:`${payrollMonthLabel} 세무사 제출용 근무 정리표`,
-      subtitle:"월 예정시간은 직원별 주간 캘린더 요약 기준이며, 유급휴가는 예정급여 차감 대상이 아닙니다.",
+      subtitle:"월 예정시간은 직원별 주간 캘린더 요약 기준이며, 휴가 일정은 급여 기준 확인 후 반영합니다.",
     });
   }
   function printPayrollAccountantPdf(){
     const rows=payrollAccountantRows.map(row=>`<tr><td>${escapeHtml(row.이름)}</td><td>${escapeHtml(row.사번)}</td><td>${escapeHtml(row.월예정시간)}</td><td>${escapeHtml(row.월예정급여세전)}</td><td>${escapeHtml(row.월예정급여세후)}</td><td>${escapeHtml(row.무급공제액)}</td></tr>`).join("");
     const bodyHtml=[
-      `<p>${escapeHtml(payrollMonthLabel)} 근무 정리표입니다. 월 예정시간은 직원별 주간 캘린더 요약 기준으로 산정하며, 연차·시간차·회사 공통 유급휴가는 예정급여 차감 대상에서 제외합니다.</p>`,
+      `<p>${escapeHtml(payrollMonthLabel)} 근무 정리표입니다. 월 예정시간은 직원별 주간 캘린더 요약 기준으로 산정하며, 연차·시간차·회사 공통 휴가 일정은 급여 기준 확인 후 반영합니다.</p>`,
       `<table class="consent-table"><thead><tr><th>직원</th><th>사번</th><th>월 예정시간</th><th>월 예정급여(세전)</th><th>월 예정급여(세후)</th><th>무급공제</th></tr></thead><tbody>${rows}<tr><th colspan="2">합계</th><th>${escapeHtml(`${formatHourValue(payrollScheduledHoursTotal)}시간`)}</th><th>${escapeHtml(won(payrollScheduledGrossPayTotal))}</th><th>${escapeHtml(won(payrollScheduledNetPayTotal))}</th><th>-</th></tr></tbody></table>`,
     ].join("");
     const ok=openOfficialPrintWindow({

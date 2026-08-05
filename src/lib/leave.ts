@@ -14,7 +14,7 @@ export function calculateCompTimeEarnedDays(adjs:LeaveAdjustment[]){return adjs.
 // ── 휴가 유형 메타 (시간/설명) ──────────────────────────────
 export type LeaveTypeMeta = { label: string; time?: string; desc: string; usesLeave: boolean; fixedDays?: number };
 export const LEAVE_TYPE_META: Record<string, LeaveTypeMeta> = {
-  annual:      { label: "연차",       desc: "법정 연차 유급휴가입니다. 잔여 연차에서 차감됩니다.", usesLeave: true },
+  annual:      { label: "연차",       desc: "법정 연차입니다. 잔여 연차에서 차감됩니다.", usesLeave: true },
   half_am:     { label: "오전 반차",   time: "09:00 ~ 14:00", desc: "오전 근무를 쉽니다. 연차 0.5일이 차감됩니다.", usesLeave: true, fixedDays: 0.5 },
   half_pm:     { label: "오후 반차",   time: "14:00 ~ 18:00", desc: "오후 근무를 쉽니다. 연차 0.5일이 차감됩니다.", usesLeave: true, fixedDays: 0.5 },
   hourly:      { label: "시간차",     desc: "시간 단위로 사용하는 휴가입니다. 회사 휴가 기준에 따라 차감됩니다.", usesLeave: true },
