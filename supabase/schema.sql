@@ -1038,7 +1038,7 @@ as $$
             contract_type, contract_start, contract_end, department, position,
             weekly_work_days, daily_work_hours, monthly_standard_hours
           from public.employees
-          where is_active = true and employment_status = 'active'
+          where is_active is distinct from false and employment_status = 'active'
         ) e
       ), '[]'::jsonb),
       'weekly_schedule_overrides', coalesce((
@@ -1046,7 +1046,7 @@ as $$
         from public.weekly_schedule_overrides o
         where exists (
           select 1 from public.employees e
-          where e.id = o.employee_id and e.is_active = true and e.employment_status = 'active'
+          where e.id = o.employee_id and e.is_active is distinct from false and e.employment_status = 'active'
         )
       ), '[]'::jsonb),
       'work_time_change_requests', coalesce((
@@ -1071,7 +1071,7 @@ as $$
         where w.status = 'approved'
           and exists (
             select 1 from public.employees e
-            where e.id = w.employee_id and e.is_active = true and e.employment_status = 'active'
+            where e.id = w.employee_id and e.is_active is distinct from false and e.employment_status = 'active'
           )
       ), '[]'::jsonb),
       'employee_absences', '[]'::jsonb,
@@ -1080,7 +1080,7 @@ as $$
         from public.employee_schedule_events s
         where exists (
           select 1 from public.employees e
-          where e.id = s.employee_id and e.is_active = true and e.employment_status = 'active'
+          where e.id = s.employee_id and e.is_active is distinct from false and e.employment_status = 'active'
         )
       ), '[]'::jsonb),
       'attendance_requests', coalesce((
@@ -1089,7 +1089,7 @@ as $$
         where r.status = 'approved'
           and exists (
             select 1 from public.employees e
-            where e.id = r.employee_id and e.is_active = true and e.employment_status = 'active'
+            where e.id = r.employee_id and e.is_active is distinct from false and e.employment_status = 'active'
           )
       ), '[]'::jsonb),
       'comp_time_requests', coalesce((
@@ -1098,7 +1098,7 @@ as $$
         where c.status in ('pending','approved')
           and exists (
             select 1 from public.employees e
-            where e.id = c.employee_id and e.is_active = true and e.employment_status = 'active'
+            where e.id = c.employee_id and e.is_active is distinct from false and e.employment_status = 'active'
           )
       ), '[]'::jsonb)
     )

@@ -804,6 +804,11 @@ function daysLabel(days:string[] = []) {
 function isEmployeeActive(employee:any) {
   return employee?.employment_status==="active"&&employee?.is_active!==false;
 }
+function isTestEmployee(employee:any) {
+  const name=String(employee?.name??"").trim().toLowerCase();
+  const no=String(employee?.employee_no??"").trim().toLowerCase();
+  return name==="test"||no.startsWith("test");
+}
 function imageFileToAttachment(file:File, prefix="att") {
   return new Promise<any>((resolve,reject)=>{
     const reader=new FileReader();
@@ -970,7 +975,17 @@ function employeeHasWeekHistory(employee:any,dates:string[],events:any[]=[],over
   return compTimeRequests.some((request:any)=>request.employee_id===employee.id&&dateInRange(request.work_date,weekStart,weekEnd));
 }
 function employeeVisibleInScheduleWeek(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[],leaveRequests:any[]=[],compTimeRequests:any[]=[]) {
-  if(isEmployeeActive(employee)) return employeeHasWeekWork(employee,dates,events,overrides,workTimeChanges);
+  if(isTestEmployee(employee)) return false;
+  if(isEmployeeActive(employee)) {
+    if(employeeHasWeekWork(employee,dates,events,overrides,workTimeChanges)) return true;
+    const contractEnd=employee?.contract_type==="fixed_term" ? employeeContractEnd(employee) : null;
+    if(contractEnd&&dates[0]&&dates[0]>contractEnd) return false;
+    const blockedEveryDay=dates.length>0&&dates.every(date=>{
+      const event=scheduleEventForDate(events,employee,date);
+      return scheduleEventBlocksRoster(event)||workTimeChangeBlocksRoster(workTimeChanges,employee,date);
+    });
+    return !blockedEveryDay;
+  }
   const weekEnd=dates[dates.length-1]??todayIso();
   return weekEnd<todayIso()&&employeeHasWeekHistory(employee,dates,events,overrides,workTimeChanges,leaveRequests,compTimeRequests);
 }
@@ -1931,6 +1946,8 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     }
   }
   const visibleCategoryGroups=improvementRequestGroups(visible);
+  const completedRows=scopedRows.filter(row=>row.status==="done"&&matchesMenuFilter(row));
+  const completedCategoryGroups=improvementRequestGroups(completedRows);
   function renderImprovementActions(row:any) {
     if(!(isAdmin||(row.created_by===currentEmployee.id&&row.status==="open"))) return null;
     return <div className="actions improvement-inline-actions">
@@ -1998,6 +2015,37 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
           </details>
         ))}
       </div>}
+      {completedCategoryGroups.length>0&&<details className="improvement-completed-toggle">
+        <summary>
+          <div>
+            <b>완료된 요청</b>
+            <span>{completedCategoryGroups.length}개 카테고리 · {completedRows.length}건</span>
+          </div>
+          <i className="ti ti-chevron-down" aria-hidden="true"></i>
+        </summary>
+        <div className="improvement-group-categories">
+          {completedCategoryGroups.map((group:any)=>(
+            <details className="improvement-category-toggle" key={group.key}>
+              <summary>
+                <div>
+                  <b>{group.label}</b>
+                  <span>{group.rows.length}건</span>
+                </div>
+                <i className="ti ti-chevron-down" aria-hidden="true"></i>
+              </summary>
+              <div className="improvement-group-items">
+                {group.rows.map((row:any)=>(
+                  <div className="improvement-group-item" key={row.id}>
+                    <b>{improvementRequestTitle(row)}</b>
+                    <p>{row.note}</p>
+                    <small>{row.employees?.name??"작성자"} · {formatDateTime(row.updated_at||row.created_at)}</small>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ))}
+        </div>
+      </details>}
       {githubIssueGroups.length>0&&<div className="improvement-issue-groups">
         <div className="improvement-subhead">
           <h3>GitHub 이슈별 모아보기</h3>
@@ -6926,7 +6974,11 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const [localEmployees,setLocalEmployees]=useState<any[]>(employees);
   const [payrollMonthValue,setPayrollMonthValue]=useState(todayIso().slice(0,7));
   useEffect(()=>{setLocalEmployees(employees);},[employees]);
-  const emp=empId?localEmployees.find(e=>e.id===empId):null;
+  const payrollEligibleEmployees=localEmployees.filter((employee:any)=>isEmployeeActive(employee)&&!isTestEmployee(employee));
+  const emp=empId?payrollEligibleEmployees.find(e=>e.id===empId):null;
+  useEffect(()=>{
+    if(empId&&!payrollEligibleEmployees.some((employee:any)=>employee.id===empId)) setEmpId("");
+  },[empId,localEmployees.length]);
   function recalc(next:any, source:string, fixedOverride?:Record<string,boolean>) {
     const fixed=fixedOverride??payFixed;
     const weeklyDays=numberValue(next.weeklyDays);
@@ -7057,7 +7109,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
-  const payrollSummaryRows=localEmployees.map((employee:any)=>{
+  const payrollSummaryRows=payrollEligibleEmployees.map((employee:any)=>{
     const monthStats=payrollScheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges,scheduleEvents);
     const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
     const baseWeeklyDays=Number(employee.weekly_work_days||employee.work_days?.length||0);
@@ -7073,7 +7125,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
     return {employee,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,scheduledGrossPay,scheduledNetPay,rowAbsentDays,rowDeduction};
   }).filter((row:any)=>Number(row.month?.hours||0)>0||Number(row.month?.days||0)>0);
   const payrollSummaryEmployeeIds=new Set(payrollSummaryRows.map((row:any)=>row.employee.id));
-  const payrollSelectableEmployees=localEmployees
+  const payrollSelectableEmployees=payrollEligibleEmployees
     .filter((employee:any)=>isEmployeeActive(employee)||payrollSummaryEmployeeIds.has(employee.id))
     .sort(sortEmployeesBySeniority);
   const payrollScheduledGrossPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledGrossPay||0),0);
