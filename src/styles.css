@@ -1023,9 +1023,11 @@ body { overflow-x: hidden; }
 .employee-identity { display: grid; gap: 2px; min-width: 0; }
 .employee-identity b { color: #182235; font-size: 14px; }
 .employee-identity span, .employee-identity small { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.employee-status-badge, .employee-status-action { white-space: nowrap; }
+.employee-status-badge, .employee-status-action, .employee-delete-action { white-space: nowrap; }
 .employee-account-actions { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; }
 .employee-account-actions .button.compact { font-size: 12px; padding: 8px 10px; min-height: 36px; }
+.employee-row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.employee-row-actions .button.compact { min-height: 36px; padding: 8px 10px; font-size: 12px; }
 .leave-source { display: inline-flex; align-items: center; width: fit-content; padding: 5px 8px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap; }
 .leave-source.annual { color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; }
 .leave-source.comp { color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; }
@@ -1363,7 +1365,8 @@ body { overflow-x: hidden; }
     min-width: 0;
   }
 
-  .employee-account-actions {
+  .employee-account-actions,
+  .employee-row-actions {
     flex-wrap: wrap;
   }
 

@@ -4812,6 +4812,36 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:{action:"reset_password",employee_id:emp.id}});
     if(error) setMessage(error.message); else if(data?.error) setMessage(data.error); else setMessage(`${emp.name} 비밀번호가 초기화되었습니다. 초기 비밀번호: ${data.initial_password}`);
   }
+  async function deleteInactiveEmployee(emp:any){
+    if(emp.employment_status==="active"||emp.is_active) return setMessage("재직 중인 직원은 먼저 비활성화한 뒤 삭제할 수 있습니다.");
+    if(emp.id===currentEmployee.id) return setMessage("현재 로그인한 관리자 계정은 삭제할 수 없습니다.");
+    const preview=await supabase.functions.invoke("admin-create-employee",{body:{action:"delete_employee",employee_id:emp.id,dry_run:true}});
+    if(preview.error) return setMessage(preview.error.message);
+    if(preview.data?.error) return setMessage(preview.data.error);
+    const count=Number(preview.data?.related_count??0);
+    const details=Array.isArray(preview.data?.related_counts)
+      ? preview.data.related_counts.filter((row:any)=>Number(row.count)>0).map((row:any)=>`${row.label} ${row.count}건`).join(" / ")
+      : "";
+    const warning=[
+      `${emp.name} 비활성 직원을 완전히 삭제할까요?`,
+      "",
+      "로그인 계정과 연결된 직원 데이터가 함께 삭제됩니다.",
+      count>0?`연결 기록: ${details||`${count}건`}`:"연결 기록은 확인되지 않았습니다.",
+      "",
+      "테스트/오등록 계정 정리용으로만 사용해주세요.",
+    ].join("\n");
+    if(!window.confirm(warning)) return;
+    const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:{action:"delete_employee",employee_id:emp.id}});
+    if(error) setMessage(error.message);
+    else if(data?.error) setMessage(data.error);
+    else {
+      setSelectedEmployeeCopyIds(current=>current.filter(id=>id!==emp.id));
+      if(selectedDetailEmployeeId===emp.id) setSelectedDetailEmployeeId("");
+      setMessage(`${emp.name} 비활성 직원 계정을 삭제했습니다.`);
+      await load();
+      onChanged();
+    }
+  }
   async function reviewWorkplace(id:string,status:string,type?:string){
     const patch:any={approval_status:status,is_active:status==="approved",updated_at:new Date().toISOString()};
     if(status==="approved") patch.approved_by=currentEmployee.id;
@@ -6118,7 +6148,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   <td data-label="출근 시작일"><input className="input" type="date" value={e.work_start_date??e.joined_at??""} onChange={ev=>updateEmployee(e.id,{work_start_date:ev.target.value})} /></td>
                   <td data-label="연차"><label className="checkbox no-wrap-checkbox" title={annualLeaveEligibilityNote(e)} style={{margin:0}}><input type="checkbox" checked={!!e.no_annual_leave} onChange={ev=>{if(ev.target.checked) setMessage(annualLeaveEligibilityNote(e)); updateEmployee(e.id,{no_annual_leave:ev.target.checked});}} /> 없음</label></td>
                   <td data-label="계정"><div className="employee-account-actions"><button className="button ghost compact" onClick={()=>resetEmployeeNo(e)}>사번 변경</button><button className="button ghost compact" onClick={()=>resetPassword(e)}>비번 초기화</button></div></td>
-                  <td data-label="처리"><button className={`${e.employment_status==="active"?"button danger":"button secondary"} compact employee-status-action`} onClick={()=>toggleEmployee(e.id,e.employment_status)}>{e.employment_status==="active"?"비활성화":"활성화"}</button></td>
+                  <td data-label="처리"><div className="employee-row-actions"><button className={`${e.employment_status==="active"?"button danger":"button secondary"} compact employee-status-action`} onClick={()=>toggleEmployee(e.id,e.employment_status)}>{e.employment_status==="active"?"비활성화":"활성화"}</button>{e.employment_status!=="active"&&<button className="button danger compact employee-delete-action" onClick={()=>deleteInactiveEmployee(e)}><i className="ti ti-trash" aria-hidden="true"></i>삭제</button>}</div></td>
                 </tr>
               ))}
             </tbody>
@@ -6824,7 +6854,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
           end_time:end,
           note:request.request_type==="company_holiday"
             ? COMPANY_SUMMER_HOLIDAY.description
-            : currentEmployee.role==="admin" ? request.reason??"" : "개인 사유",
+            : showAdminScheduleDetails ? request.reason??"" : "개인 사유",
           leave:true,
           request_type:request.request_type,
         };
@@ -6856,8 +6886,8 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         chips.push({
           key:`leave-${employee.id}-${date}`,
           type:"leave",
-          title:`${employee.name} · ${currentEmployee.role==="admin"?leaveTypeDisplayLabel(info.leave):"개인 사유"}`,
-          detail:currentEmployee.role==="admin"?`${timeLabel(info.start)}~${timeLabel(info.end)} ${info.leave.reason??""}`:"휴가/일정 확인",
+          title:`${employee.name} · ${showAdminScheduleDetails?leaveTypeDisplayLabel(info.leave):"개인 사유"}`,
+          detail:showAdminScheduleDetails?`${timeLabel(info.start)}~${timeLabel(info.end)} ${info.leave.reason??""}`:"휴가/일정 확인",
         });
       }
       overtimeEventsFor(employee,date).forEach((event:any)=>chips.push({
@@ -6870,7 +6900,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         key:`info-${event.id}-${date}`,
         type:"info",
         title:event.title||"일정 확인",
-        detail:currentEmployee.role==="admin"?event.note??"": "해당일은 일정 확인이 필요한 날입니다.",
+        detail:showAdminScheduleDetails?event.note??"": "해당일은 일정 확인이 필요한 날입니다.",
       }));
     });
     return chips.slice(0,5);
