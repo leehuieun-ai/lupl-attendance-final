@@ -84,14 +84,7 @@ Deno.serve(async (req) => {
         .eq("id", employeeId)
         .single();
       if (empError || !emp) return json({ error: "직원 정보를 찾을 수 없습니다." }, 404);
-      if (!emp.user_id) {
-        const { error: updateOnlyError } = await adminClient
-          .from("employees")
-          .update({ employee_no: newEmployeeNo, internal_email: email })
-          .eq("id", employeeId);
-        if (updateOnlyError) return json({ error: updateOnlyError.message }, 400);
-        return json({ ok: true, employee_no: newEmployeeNo, auth_updated: false });
-      }
+      if (!emp.user_id) return json({ error: "직원 계정의 Auth 연결 정보가 없습니다." }, 400);
       const password = initialPassword(emp.phone);
       const { error } = await adminClient.auth.admin.updateUserById(emp.user_id, { password });
       if (error) return json({ error: error.message }, 400);
@@ -109,11 +102,27 @@ Deno.serve(async (req) => {
         .eq("id", employeeId)
         .single();
       if (empError || !emp) return json({ error: "직원 정보를 찾을 수 없습니다." }, 404);
-      if (!emp.user_id) return json({ error: "직원 계정의 Auth 연결 정보가 없습니다." }, 400);
+
+      const { data: duplicateEmployee, error: duplicateEmployeeError } = await adminClient
+        .from("employees")
+        .select("id, name")
+        .eq("employee_no", newEmployeeNo)
+        .neq("id", employeeId)
+        .maybeSingle();
+      if (duplicateEmployeeError) return json({ error: duplicateEmployeeError.message }, 400);
+      if (duplicateEmployee) return json({ error: `이미 ${duplicateEmployee.name} 직원이 사용 중인 사번입니다. 다른 사번을 입력해주세요.` }, 400);
 
       const existingUser = await findAuthUserByEmail(adminClient, email);
       if (existingUser && existingUser.id !== emp.user_id) {
         return json({ error: "이미 사용 중인 사번입니다. 다른 사번을 입력해주세요." }, 400);
+      }
+      if (!emp.user_id) {
+        const { error: updateOnlyError } = await adminClient
+          .from("employees")
+          .update({ employee_no: newEmployeeNo, internal_email: email })
+          .eq("id", employeeId);
+        if (updateOnlyError) return json({ error: updateOnlyError.message }, 400);
+        return json({ ok: true, employee_no: newEmployeeNo, auth_updated: false });
       }
       const { error: authError } = await adminClient.auth.admin.updateUserById(emp.user_id, {
         email,
