@@ -6371,6 +6371,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   const timeDragRef=useRef<any|null>(null);
   const timeDragClickGuard=useRef(0);
   const monthRange=monthRangeFor(weekAnchor);
+  const showAdminScheduleDetails=currentEmployee.role==="admin"&&!readOnly;
   const isAll=selectedEmpId==="all";
   const employeeCount=Math.max(1,activeEmployees.length);
   const teamColumnCount=dates.length*employeeCount;
@@ -6960,13 +6961,14 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         <div className="team-month-issue-calendar">
           <div className="team-month-title">
             <b>{dateFromIso(monthRange.start).getFullYear()}년 {dateFromIso(monthRange.start).getMonth()+1}월</b>
-            <span>{currentEmployee.role==="admin"?"휴가·추가근무·운영 공백만 표시합니다.":"휴가·추가근무·일정 확인이 필요한 날만 표시합니다."}</span>
+            <span>{showAdminScheduleDetails?"휴가·추가근무·운영 공백만 표시합니다.":"휴가·추가근무·일정 확인이 필요한 날만 표시합니다."}</span>
           </div>
           <div className="team-month-grid">
-            {teamMonthDayKeys.map(day=><div className="team-month-head" key={day}>{DAY_LABELS[day]}</div>)}
+            {teamMonthDayKeys.map(day=><div className={`team-month-head ${day==="sun"||day==="sat"?"weekend":""}`} key={day}>{DAY_LABELS[day]}</div>)}
             {teamMonthCells.map((date,index)=>{
               const chips=date?teamMonthIssueChips(date):[];
-              return <div className={`team-month-cell ${date?"":"empty"} ${date===todayIso()?"today":""}`} key={date??`empty-${index}`}>
+              const weekend=date?[0,6].includes(dateFromIso(date).getDay()):false;
+              return <div className={`team-month-cell ${date?"":"empty"} ${date===todayIso()?"today":""} ${weekend?"weekend":""}`} key={date??`empty-${index}`}>
                 {date&&<><b>{Number(date.slice(8))}</b>{chips.map(chip=><span className={`team-month-chip ${chip.type}`} key={chip.key} title={chip.detail}>{chip.title}<small>{chip.detail}</small></span>)}</>}
               </div>;
             })}
@@ -6989,7 +6991,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
               const color=employeeColorFromList(activeEmployees,employee.id);
               const monthStats=scheduledWorkStatsWithEvents(employee,monthRange.start,monthRange.end);
               return [
-                <button type="button" className={`team-week-employee ${focusEmployeeId===employee.id?"focused":""} ${focusActive&&focusEmployeeId!==employee.id?"dimmed":""}`} key={`${employee.id}-name`} onClick={()=>setFocusEmployeeId(current=>current===employee.id?"":employee.id)} title={`${employee.name} 일정 집중 보기`}><i style={{background:color}}></i><div><b>{employee.name}</b><small>{[employee.department,employee.position].filter(Boolean).join(" · ")||employee.employee_no}</small>{currentEmployee.role==="admin"&&<small className="team-week-month">{dateFromIso(monthRange.start).getMonth()+1}월 / 근무일수 {monthStats.days}일 / 근무시간 {formatHourValue(monthStats.hours)}시간</small>}</div></button>,
+                <button type="button" className={`team-week-employee ${focusEmployeeId===employee.id?"focused":""} ${focusActive&&focusEmployeeId!==employee.id?"dimmed":""}`} key={`${employee.id}-name`} onClick={()=>setFocusEmployeeId(current=>current===employee.id?"":employee.id)} title={`${employee.name} 일정 집중 보기`}><i style={{background:color}}></i><div><b>{employee.name}</b><small>{[employee.department,employee.position].filter(Boolean).join(" · ")||employee.employee_no}</small>{showAdminScheduleDetails&&<small className="team-week-month">{dateFromIso(monthRange.start).getMonth()+1}월 / 근무일수 {monthStats.days}일 / 근무시간 {formatHourValue(monthStats.hours)}시간</small>}</div></button>,
                 ...dates.map(date=>{
                   const info=workInfoForDate(employee,date);
                   const leaveLabel=info.leave?leaveTypeDisplayLabel(info.leave):"";
