@@ -178,7 +178,14 @@ Deno.serve(async (req) => {
         email_confirm: true,
         user_metadata: { name: emp.name, employee_no: newEmployeeNo, phone: emp.phone },
       });
-      if (authError) return json({ error: authError.message }, 400);
+      if (authError) {
+        const { error: updateOnlyError } = await adminClient
+          .from("employees")
+          .update({ employee_no: newEmployeeNo, internal_email: email })
+          .eq("id", employeeId);
+        if (updateOnlyError) return json({ error: `${authError.message} / DB 사번 변경 실패: ${updateOnlyError.message}` }, 400);
+        return json({ ok: true, employee_no: newEmployeeNo, auth_updated: false, auth_error: authError.message });
+      }
 
       const { error: updateError } = await adminClient
         .from("employees")

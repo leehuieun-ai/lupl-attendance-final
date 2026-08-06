@@ -875,16 +875,13 @@ for select to authenticated using (
   public.is_admin()
   or (
     is_active = true
-    and coalesce(rnr_entries.is_sensitive, false) = false
     and coalesce(rnr_entries.is_public, false) = true
   )
   or (
     is_active = true
     and (
       assigned_employee_id = public.current_employee_id()
-      or (
-        coalesce(rnr_entries.is_sensitive, false) = false
-        and exists (
+      or exists (
         select 1
         from public.employees e
         where e.id = public.current_employee_id()
@@ -892,7 +889,6 @@ for select to authenticated using (
             (coalesce(rnr_entries.department, '') <> '' and e.department = rnr_entries.department)
             or (coalesce(rnr_entries.position, '') <> '' and e.position = rnr_entries.position)
           )
-        )
       )
     )
   )

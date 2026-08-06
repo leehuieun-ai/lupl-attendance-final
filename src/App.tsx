@@ -4093,7 +4093,7 @@ function rnrFlowLines(entry:any) {
   return (lines.length?lines:rnrDescriptionLines(entry)).filter(Boolean);
 }
 function rnrIsPublicBoardEntry(entry:any) {
-  return entry?.is_active!==false && entry?.is_public!==false && !rnrIsSensitive(entry);
+  return entry?.is_active!==false && entry?.is_public!==false;
 }
 function splitWorkTimePromptSegments(text:string) {
   return text.split(/\s*(?:[,，、;；]|\r?\n+|\s+\/\s+|\s+그리고\s+|\s+또는\s+)\s*/).map(part=>part.trim()).filter(Boolean);
@@ -5304,7 +5304,6 @@ function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
       .select("*")
       .eq("is_active",true)
       .eq("is_public",true)
-      .eq("is_sensitive",false)
       .order("department",{ascending:true})
       .order("work_group",{ascending:true})
       .order("created_at",{ascending:false})
@@ -5713,8 +5712,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     };
     const sensitive=rnrIsSensitive(payload);
     (payload as any).is_sensitive=sensitive;
-    if(sensitive) (payload as any).is_public=false;
-    if(sensitive&&!window.confirm("이 업무에는 급여, 개인정보, 세무 또는 계약 자료가 포함될 수 있습니다.\n담당자와 관리 권한이 있는 사람에게만 배정하고 열람 범위를 확인해주세요.\n이대로 저장할까요?")) return;
+    if(sensitive&&!window.confirm("이 업무에는 급여, 개인정보, 세무 또는 계약 자료가 포함될 수 있습니다.\n공개 업무분장표 표시 여부를 다시 확인해주세요.\n이대로 저장할까요?")) return;
     let result=await supabase.from("rnr_entries").insert(payload);
     if(result.error&&/attachments|is_sensitive|display_title|work_group|flow_notes|target_scope|is_public|public_note|schema cache/i.test(result.error.message)){
       const {attachments,is_sensitive,display_title,work_group,flow_notes,target_scope,is_public,public_note,...fallbackPayload}=payload as any;
@@ -5755,7 +5753,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     };
     const sensitive=rnrIsSensitive(payload);
     (payload as any).is_sensitive=sensitive;
-    if(sensitive) (payload as any).is_public=false;
     const insertResult=await supabase.from("rnr_entries").insert(payload).select("id").single();
     if(insertResult.error) return setRnrMsg(insertResult.error.message);
     const updateResult=await supabase.from("rnr_review_requests").update({
@@ -5839,8 +5836,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     };
     const sensitive=rnrIsSensitive(payload);
     (payload as any).is_sensitive=sensitive;
-    if(sensitive) (payload as any).is_public=false;
-    if(sensitive&&!window.confirm("이 업무에는 급여, 개인정보, 세무 또는 계약 자료가 포함될 수 있습니다.\n담당자와 관리 권한이 있는 사람에게만 배정하고 열람 범위를 확인해주세요.\n이대로 수정할까요?")) return;
+    if(sensitive&&!window.confirm("이 업무에는 급여, 개인정보, 세무 또는 계약 자료가 포함될 수 있습니다.\n공개 업무분장표 표시 여부를 다시 확인해주세요.\n이대로 수정할까요?")) return;
     let result=await supabase.from("rnr_entries").update(payload).eq("id",editingRnr.id).select().single();
     if(result.error&&/attachments|is_sensitive|display_title|work_group|flow_notes|target_scope|is_public|public_note|schema cache/i.test(result.error.message)){
       const {attachments,is_sensitive,display_title,work_group,flow_notes,target_scope,is_public,public_note,...fallbackPayload}=payload as any;
@@ -6008,9 +6004,23 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
-    if(!nw||nw===emp.employee_no) return;
-    const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:{action:"reset_employee_no",employee_id:emp.id,new_employee_no:nw.trim()}});
-    if(error) setMessage(error.message); else if(data?.error) setMessage(data.error); else { setMessage(`사번이 ${data.employee_no}(으)로 변경되었습니다. 새 로그인 아이디로 안내해주세요.`); await load(); }
+    const nextNo=String(nw??"").trim();
+    if(!nextNo||nextNo===emp.employee_no) return;
+    const duplicate=employees.find((employee:any)=>employee.id!==emp.id&&String(employee.employee_no??"").trim().toLowerCase()===nextNo.toLowerCase());
+    if(duplicate) return setMessage(`이미 ${duplicate.name} 직원이 사용 중인 사번입니다. 다른 사번을 입력해주세요.`);
+    const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:{action:"reset_employee_no",employee_id:emp.id,new_employee_no:nextNo}});
+    if(!error&&!data?.error) {
+      setMessage(data?.auth_updated===false
+        ? `사번 표시는 ${data.employee_no}(으)로 변경했습니다. 로그인 아이디는 기존 사번일 수 있습니다. 함수 오류: ${data.auth_error??"Auth 이메일 미변경"}`
+        : `사번이 ${data.employee_no}(으)로 변경되었습니다. 새 로그인 아이디로 안내해주세요.`);
+      await load();
+      return;
+    }
+    const reason=error?.message||data?.error||"Edge Function 처리 실패";
+    const fallback=await supabase.from("employees").update({employee_no:nextNo,internal_email:internalEmail(nextNo)}).eq("id",emp.id);
+    if(fallback.error) return setMessage(`${reason} / DB 사번 변경도 실패했습니다: ${fallback.error.message}`);
+    setMessage(`사번 표시는 ${nextNo}(으)로 변경했습니다. 단, 로그인 아이디까지 바꾸려면 Supabase 함수 배포/시크릿 확인이 필요합니다. 함수 오류: ${reason}`);
+    await load();
   }
   async function resetPassword(emp:any){
     if(!window.confirm(`${emp.name}의 비밀번호를 초기화할까요? (lupl + 휴대폰 뒤4자리)`)) return;
