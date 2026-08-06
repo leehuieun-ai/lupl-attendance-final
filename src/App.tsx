@@ -1538,12 +1538,12 @@ export default function App() {
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"team-schedule",label:"팀 일정",icon:"ti-calendar-week"},
-    {id:"kpi",label:"KPI",icon:"ti-target-arrow"},
     {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
     {id:"admin-dashboard",label:"오늘",icon:"ti-layout-dashboard"},
     {id:"approvals",label:"승인함",icon:"ti-inbox",badge:pendingCount},
+    {id:"kpi",label:"KPI",icon:"ti-target-arrow"},
     {id:"schedule",label:"일정",icon:"ti-calendar-time"},
     {id:"employees",label:"직원",icon:"ti-users"},
     {id:"workplaces",label:"근무지",icon:"ti-map-pin"},
@@ -1602,7 +1602,7 @@ export default function App() {
           {tab==="overtime" && <LeavePage employee={employee} mode="overtime" />}
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
           {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
-          {tab==="kpi" && <KpiDashboardPage currentEmployee={employee} />}
+          {tab==="kpi" && adminCan(employee,"kpi","read") && <KpiDashboardPage currentEmployee={employee} />}
           {tab==="admin-dashboard" && adminCan(employee,"admin-dashboard","read") && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
           {tab==="approvals" && adminCan(employee,"approvals","read") && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
           {tab==="employees" && adminCan(employee,"employees","read") && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
