@@ -787,6 +787,12 @@ body { overflow-x: hidden; }
 .today-task-view h3 { margin: 0 0 10px; font-size: 20px; }
 .today-task-due { display: inline-flex; width: fit-content; margin: -2px 0 10px; padding: 5px 9px; border-radius: 999px; background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 850; }
 .today-task-view p { white-space: pre-wrap; color: #364154; line-height: 1.65; margin: 0 0 18px; }
+.role-guide-toggle { width: 100%; border: 0; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0; color: inherit; text-align: left; cursor: pointer; }
+.role-guide-toggle span { min-width: 0; overflow-wrap: anywhere; }
+.role-guide-toggle i { color: #8a95a8; font-size: 16px; }
+.role-guide-detail { display: grid; gap: 7px; margin-top: 8px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fbfdff; padding: 10px; }
+.role-guide-detail small { color: #64748b; font-size: 11px; font-weight: 800; }
+.role-guide-detail ol { margin: 0; padding-left: 18px; color: #344054; font-size: 12px; line-height: 1.55; }
 .today-task-list { display: grid; gap: 7px; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
 .today-task-list > b { color: #5a6475; font-size: 12px; }
 .today-task-mini { width: 100%; border: 1px solid #e2e8f0; background: #fff; border-radius: 10px; padding: 8px 10px; text-align: left; }
@@ -1206,6 +1212,7 @@ body { overflow-x: hidden; }
 .rnr-review-row b { display: block; margin-top: 3px; color: #172033; font-size: 15px; }
 .rnr-review-row p { margin: 6px 0 5px; color: #364154; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rnr-review-actions { justify-content: flex-end; flex-wrap: nowrap; }
+.rnr-review-edit { display: grid; gap: 10px; border: 1px solid #cfe0f8; border-radius: 8px; background: #fbfdff; padding: 14px; margin: -4px 0 16px; }
 .rnr-ai-grid { align-items: stretch; }
 .rnr-input-box { height: 100%; display: flex; flex-direction: column; min-width: 0; }
 .rnr-input-box .form-row { flex: 1; display: flex; flex-direction: column; }
@@ -1239,12 +1246,17 @@ body { overflow-x: hidden; }
 .rnr-review-preview { display: grid; align-content: start; gap: 8px; color: #596579; }
 .rnr-review-preview > b { color: #182235; font-size: 15px; }
 .rnr-review-preview p { margin: 0; color: #596579; font-size: 13px; line-height: 1.55; }
+.rnr-review-owner { display: grid; grid-template-columns: auto auto minmax(0,1fr); gap: 7px; align-items: center; width: fit-content; max-width: 100%; border: 1px solid #e2e8f0; border-radius: 999px; background: #f8fafc; padding: 7px 10px; }
+.rnr-review-owner span { color: #64748b; font-size: 11px; font-weight: 850; }
+.rnr-review-owner b { color: #172033; font-size: 13px; font-weight: 850; }
+.rnr-review-owner em { min-width: 0; color: #475569; font-size: 12px; font-style: normal; font-weight: 750; overflow-wrap: anywhere; }
 .rnr-review-result { display: grid; gap: 5px; }
 .rnr-review-result strong { color: #172033; font-size: 15px; }
 .rnr-review-result span { color: #64748b; font-size: 12px; font-weight: 800; line-height: 1.45; }
 .rnr-review-history { display: flex; flex-wrap: wrap; gap: 7px; }
 .rnr-review-history span { border: 1px solid #e2e8f0; border-radius: 999px; background: #f8fafc; color: #475569; padding: 6px 9px; font-size: 12px; font-weight: 800; }
 .work-map-overview { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-bottom: 14px; }
+.work-map-help { margin: 0; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; color: #475569; padding: 10px 12px; font-size: 13px; font-weight: 750; line-height: 1.45; }
 .work-map-overview div { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 14px 16px; text-align: center; }
 .work-map-overview span, .work-map-overview b { display: block; }
 .work-map-overview span { color: #64748b; font-size: 12px; font-weight: 800; }
@@ -1269,6 +1281,11 @@ body { overflow-x: hidden; }
 .work-map-task li { counter-increment: flow; position: relative; padding-left: 26px; overflow-wrap: anywhere; }
 .work-map-task li::before { content: counter(flow); position: absolute; left: 0; top: 1px; width: 18px; height: 18px; border-radius: 999px; background: #eef2f7; color: #64748b; display: grid; place-items: center; font-size: 10px; font-weight: 900; }
 .work-map-task small { display: inline-flex; align-items: center; max-width: 100%; border-radius: 999px; background: #f1f5f9; color: #64748b; padding: 5px 8px; font-size: 12px; font-weight: 800; overflow-wrap: anywhere; }
+.work-map-detail-modal { max-width: min(720px, calc(100vw - 32px)); }
+.work-map-detail-meta { display: flex; flex-wrap: wrap; gap: 7px; margin: 8px 0 12px; }
+.work-map-detail-meta span { border: 1px solid #e2e8f0; border-radius: 999px; background: #f8fafc; color: #475569; padding: 6px 9px; font-size: 12px; font-weight: 800; }
+.work-map-detail-steps { margin: 8px 0 0; padding-left: 22px; color: #364154; line-height: 1.6; }
+.work-map-detail-steps li { margin-bottom: 5px; overflow-wrap: anywhere; }
 .rnr-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 16px; }
 .rnr-entry { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; }
 .rnr-entry-button { width: 100%; text-align: left; cursor: pointer; }
@@ -1413,6 +1430,7 @@ body { overflow-x: hidden; }
   }
   .rnr-review-actions {
     justify-content: flex-start;
+    flex-wrap: wrap;
   }
   .rnr-task-date-control {
     width: 100%;
