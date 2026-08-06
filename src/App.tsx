@@ -3942,6 +3942,61 @@ function parseKoreanDateRanges(text:string) {
   if(ranges.length>0) return ranges;
   return null;
 }
+function parseScheduleCommandDateRanges(text:string) {
+  const source=(text.split(/(?:아니라|정정|수정)/).pop()||text).trim();
+  const year=new Date().getFullYear();
+  const firstMonth=source.match(/(?:(\d{4})년\s*)?(\d{1,2})월/);
+  const initialYear=Number(firstMonth?.[1]??year);
+  const initialMonth=firstMonth ? Number(firstMonth[2]) : null;
+  const ranges:any[]=[];
+  const occupied:{start:number;end:number}[]=[];
+  const seen=new Set<string>();
+  function addRange(start:string|null,end:string|null,span?:{start:number;end:number}) {
+    if(!start||!end||end<start) return;
+    const key=`${start}|${end}`;
+    if(seen.has(key)) return;
+    seen.add(key);
+    ranges.push({id:`p${Date.now()}-${ranges.length}`,start_date:start,end_date:end});
+    if(span) occupied.push(span);
+  }
+  let currentYear=initialYear;
+  let currentMonth=initialMonth;
+  const rangePattern=/(?:(\d{4})년\s*)?(?:(\d{1,2})월\s*)?(\d{1,2})일?\s*(?:부터|에서|~|-)\s*(?:(?:(\d{4})년\s*)?(\d{1,2})월\s*)?(\d{1,2})일?/g;
+  Array.from(source.matchAll(rangePattern)).forEach(match=>{
+    const y1=Number(match[1]??currentYear??year);
+    const m1=Number(match[2]??currentMonth??match[5]);
+    const d1=Number(match[3]);
+    const y2=Number(match[4]??y1);
+    const m2=Number(match[5]??m1);
+    const d2=Number(match[6]);
+    const start=datePartsToIso(y1,m1,d1);
+    const end=datePartsToIso(y2,m2,d2);
+    addRange(start,end,{start:match.index??0,end:(match.index??0)+match[0].length});
+    currentYear=y2;
+    currentMonth=m2;
+  });
+  currentYear=initialYear;
+  currentMonth=initialMonth;
+  const singlePattern=/(?:(\d{4})년\s*)?(?:(\d{1,2})월\s*)?(\d{1,2})일/g;
+  Array.from(source.matchAll(singlePattern)).forEach(match=>{
+    const start=match.index??0;
+    const end=start+match[0].length;
+    if(occupied.some(span=>start>=span.start&&end<=span.end)) {
+      if(match[1]) currentYear=Number(match[1]);
+      if(match[2]) currentMonth=Number(match[2]);
+      return;
+    }
+    const y=Number(match[1]??currentYear??year);
+    const m=Number(match[2]??currentMonth);
+    const d=Number(match[3]);
+    const iso=datePartsToIso(y,m,d);
+    addRange(iso,iso);
+    currentYear=y;
+    currentMonth=m;
+  });
+  if(ranges.length===0) return null;
+  return ranges.sort((a:any,b:any)=>String(a.start_date).localeCompare(String(b.start_date))||String(a.end_date).localeCompare(String(b.end_date)));
+}
 function koreanNumberToInt(value:string) {
   const raw=value.trim().replace(/\s/g,"");
   if(!raw) return null;
@@ -7058,16 +7113,20 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
     if(!raw) return setMessage("변경할 일정을 한 줄로 입력해주세요. 예: 홍준기 월화수 09:00~18:00");
     const employee=commandTargetEmployee(raw);
     if(!employee) return setMessage("직원 이름을 찾지 못했습니다. 예: 홍준기 월화수 09:00~18:00");
-    const noWork=/출근\s*안|근무\s*안|일\s*안|안\s*함|휴무|쉬는|쉼/.test(raw);
-    const dateRange=parseKoreanDateRange(raw,0)??(noWork?parseOpenEndedDateRange(raw,0):null);
+    const noWork=/출근\s*(?:안|못|불가)|근무\s*(?:안|못|불가)|일\s*(?:안|못)|안\s*함|못\s*(?:나오|나|함)|휴무|쉬는|쉼/.test(raw);
+    const parsedDateRanges=parseScheduleCommandDateRanges(raw);
+    const fallbackDateRange=parseKoreanDateRange(raw,0)??(noWork?parseOpenEndedDateRange(raw,0):null);
+    const commandDateRanges=parsedDateRanges??(fallbackDateRange?[fallbackDateRange]:null);
+    const dateRange=commandDateRanges?.[0]??null;
     const parsedTimeRanges=parsePromptTimeRanges(raw);
     const parsedTime=parsedTimeRanges[0]??parsePromptTimeRange(raw);
     const singleTime=parsedTime?null:parsePromptSingleTime(raw);
     if(dateRange){
+      const dateRangeList=commandDateRanges??[dateRange];
       const schedule=getScheduleForDate(employee,dateRange.start_date,overrides,workTimeChanges);
       let nextStart=String(schedule.work_start??employee.work_start??"09:00").slice(0,5);
       let nextEnd=String(schedule.work_end??employee.work_end??"18:00").slice(0,5);
-      const periodLabel=dateRange.start_date===dateRange.end_date?dateRange.start_date:periodRangeLabel(dateRange);
+      const periodLabel=dateRangeList.map((period:any)=>period.start_date===period.end_date?period.start_date:periodRangeLabel(period)).join(" / ");
       if(!noWork&&parsedTimeRanges.length>1){
         const ranges=parsedTimeRanges.map((range:any,index:number)=>{
           let end=range.end;
@@ -7086,28 +7145,27 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         if(!window.confirm(preview)) return;
         const existingTimeChanges=events.filter((event:any)=>
           event.employee_id===employee.id
-          && event.start_date===dateRange.start_date
-          && event.end_date===dateRange.end_date
+          && dateRangeList.some((period:any)=>event.start_date===period.start_date&&event.end_date===period.end_date)
           && event.event_type==="work"
           && /^시간 변경 근무(?: \d+)?$/.test(String(event.title??""))
         );
-        const results=await Promise.all(ranges.map((range:any,index:number)=>{
+        const results=await Promise.all(dateRangeList.flatMap((period:any)=>ranges.map((range:any,index:number)=>{
           const payload={
             employee_id:employee.id,
             title:range.title,
             event_type:"work",
-            start_date:dateRange.start_date,
-            end_date:dateRange.end_date,
+            start_date:period.start_date,
+            end_date:period.end_date,
             start_time:range.start,
             end_time:range.end,
             note:null,
             updated_at:new Date().toISOString(),
           };
-          const existing=existingTimeChanges.find((event:any)=>event.title===range.title)??(index===0?existingTimeChanges.find((event:any)=>event.title==="시간 변경 근무"):null);
+          const existing=existingTimeChanges.find((event:any)=>event.start_date===period.start_date&&event.end_date===period.end_date&&event.title===range.title)??(index===0?existingTimeChanges.find((event:any)=>event.start_date===period.start_date&&event.end_date===period.end_date&&event.title==="시간 변경 근무"):null);
           return existing?.id
             ? supabase.from("employee_schedule_events").update(payload).eq("id",existing.id)
             : supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
-        }));
+        })));
         const failed=results.find((result:any)=>result.error);
         if(failed?.error) return setMessage(`일정 변경 실패: ${failed.error.message}`);
         const keepTitles=new Set(ranges.map((range:any)=>range.title));
@@ -7137,24 +7195,40 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         "이 일정대로 반영할까요?"
       ].join("\n");
       if(!window.confirm(preview)) return;
-      const payload={
-        employee_id:employee.id,
-        title,
-        event_type:noWork?"unavailable":"work",
-        start_date:dateRange.start_date,
-        end_date:dateRange.end_date,
-        start_time:noWork?"09:00":nextStart,
-        end_time:noWork?"19:00":nextEnd,
-        note:null,
-        updated_at:new Date().toISOString(),
-      };
-      const existing=events.find((event:any)=>event.employee_id===employee.id&&event.start_date===dateRange.start_date&&event.end_date===dateRange.end_date&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type));
-      const result=existing?.id
-        ? await supabase.from("employee_schedule_events").update(payload).eq("id",existing.id)
-        : await supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
-      if(result.error) return setMessage(`일정 변경 실패: ${result.error.message}`);
+      const replaceOverlappingNoWork=noWork&&dateRangeList.length>1;
+      const replacedIds=new Set<string>();
+      if(replaceOverlappingNoWork){
+        const overlapIds=events
+          .filter((event:any)=>event.employee_id===employee.id&&["hidden","unavailable"].includes(event.event_type)&&dateRangeList.some((period:any)=>dateRangesOverlap(period.start_date,period.end_date,event.start_date,event.end_date)))
+          .map((event:any)=>event.id)
+          .filter(Boolean);
+        if(overlapIds.length>0){
+          const cleanup=await supabase.from("employee_schedule_events").delete().in("id",overlapIds);
+          if(cleanup.error) return setMessage(`기존 일정 정리 실패: ${cleanup.error.message}`);
+          overlapIds.forEach((id:string)=>replacedIds.add(id));
+        }
+      }
+      const results=await Promise.all(dateRangeList.map((period:any)=>{
+        const payload={
+          employee_id:employee.id,
+          title,
+          event_type:noWork?"unavailable":"work",
+          start_date:period.start_date,
+          end_date:period.end_date,
+          start_time:noWork?"09:00":nextStart,
+          end_time:noWork?"19:00":nextEnd,
+          note:null,
+          updated_at:new Date().toISOString(),
+        };
+        const existing=events.find((event:any)=>!replacedIds.has(event.id)&&event.employee_id===employee.id&&event.start_date===period.start_date&&event.end_date===period.end_date&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type));
+        return existing?.id
+          ? supabase.from("employee_schedule_events").update(payload).eq("id",existing.id)
+          : supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
+      }));
+      const failed=results.find((result:any)=>result.error);
+      if(failed?.error) return setMessage(`일정 변경 실패: ${failed.error.message}`);
       setScheduleCommand("");
-      setMessage(`${employee.name} ${periodLabel} 일정을 변경했습니다.`);
+      setMessage(`${employee.name} ${periodLabel} 일정을 ${dateRangeList.length}건 변경했습니다.`);
       await onChanged();
       return;
     }
