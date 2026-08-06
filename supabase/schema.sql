@@ -754,6 +754,12 @@ create table if not exists public.rnr_entries (
   raw_input text not null,
   title text not null,
   summary text not null,
+  display_title text,
+  work_group text,
+  flow_notes jsonb not null default '[]'::jsonb,
+  target_scope text not null default 'role',
+  is_public boolean not null default false,
+  public_note text,
   department text,
   position text,
   category text,
@@ -778,12 +784,21 @@ alter table public.rnr_entries enable row level security;
 alter table public.daily_tasks add column if not exists attachments jsonb not null default '[]'::jsonb;
 alter table public.rnr_entries add column if not exists attachments jsonb not null default '[]'::jsonb;
 alter table public.rnr_entries add column if not exists is_sensitive boolean not null default false;
+alter table public.rnr_entries add column if not exists display_title text;
+alter table public.rnr_entries add column if not exists work_group text;
+alter table public.rnr_entries add column if not exists flow_notes jsonb not null default '[]'::jsonb;
+alter table public.rnr_entries add column if not exists target_scope text not null default 'role';
+alter table public.rnr_entries add column if not exists is_public boolean not null default false;
+alter table public.rnr_entries add column if not exists public_note text;
 alter table public.daily_tasks
 add column if not exists source_rnr_entry_id uuid references public.rnr_entries(id) on delete set null;
 
 create index if not exists daily_tasks_rnr_source_idx
 on public.daily_tasks(source_rnr_entry_id, task_date desc)
 where source_rnr_entry_id is not null;
+
+create index if not exists rnr_entries_public_board_idx
+on public.rnr_entries(is_public, is_active, department, work_group, created_at desc);
 
 drop policy if exists daily_tasks_select_auth on public.daily_tasks;
 create policy daily_tasks_select_auth on public.daily_tasks
@@ -810,6 +825,11 @@ drop policy if exists rnr_entries_select_auth on public.rnr_entries;
 create policy rnr_entries_select_auth on public.rnr_entries
 for select to authenticated using (
   public.is_admin()
+  or (
+    is_active = true
+    and coalesce(rnr_entries.is_sensitive, false) = false
+    and coalesce(rnr_entries.is_public, false) = true
+  )
   or (
     is_active = true
     and (

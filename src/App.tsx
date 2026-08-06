@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel, exportWorkbookToXlsx } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "kpi" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "work-map" | "kpi" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
 type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection" | "attendancePolicy";
 
 const ADMIN_PERMISSION_LEVEL_RANK: Record<string, number> = { none: 0, read: 1, edit: 2, all: 3 };
@@ -214,6 +214,7 @@ const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
   overtime:["추가근무 신청","추가근무 내역","보상휴가 적립"],
   worktime:["근무 일정 확인","기존 근무조건","변경 사유","상세 설명","서명","요청 내역"],
   "team-schedule":["직원별 주간 캘린더","캘린더 요약"],
+  "work-map":["공개 업무 분장표","부서별 업무 흐름"],
   kpi:["직원별 달성률","데일리 KPI","주간 KPI","월별 KPI","웍스 공유"],
   "admin-dashboard":["승인 대기","일일 직원 근무 현황","기록 마감","확인 완료"],
   employees:["추가근무 적립 내역","근무시간 변경 요청","근무시간 변경 기록","직원 연차 소진내용","직원 연차 현황","직원 계정 생성","직원 관리"],
@@ -1520,6 +1521,7 @@ export default function App() {
     overtime:"추가근무",
     worktime:"근무 일정 확인",
     "team-schedule":"팀 일정",
+    "work-map":"업무 분장표",
     kpi:"KPI",
     "admin-dashboard":"오늘 관리",
     approvals:"승인함",
@@ -1538,6 +1540,7 @@ export default function App() {
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"team-schedule",label:"팀 일정",icon:"ti-calendar-week"},
+    {id:"work-map",label:"업무 분장표",icon:"ti-hierarchy-3"},
     {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
@@ -1602,6 +1605,7 @@ export default function App() {
           {tab==="overtime" && <LeavePage employee={employee} mode="overtime" />}
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
           {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
+          {tab==="work-map" && <PublicWorkMapPage currentEmployee={employee} />}
           {tab==="kpi" && adminCan(employee,"kpi","read") && <KpiDashboardPage currentEmployee={employee} />}
           {tab==="admin-dashboard" && adminCan(employee,"admin-dashboard","read") && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
           {tab==="approvals" && adminCan(employee,"approvals","read") && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
@@ -3856,14 +3860,18 @@ function rnrTitleFromText(text:any) {
   return String(text??"").trim().split(/\r?\n/).map(line=>line.trim()).find(Boolean)||"";
 }
 function rnrDisplayTitle(entry:any) {
-  return rnrTitleFromText(entry?.raw_input)||String(entry?.title??"").trim()||rnrTitleFromText(entry?.summary)||"업무 R&R";
+  return String(entry?.display_title??"").trim()||String(entry?.title??"").trim()||rnrTitleFromText(entry?.raw_input)||rnrTitleFromText(entry?.summary)||"업무 R&R";
 }
 function rnrIsSensitive(entry:any) {
   return /세무|급여|임금|정산|회계|개인정보|계약|계좌|주민|원천세|부가세|민감|비밀/.test([
     entry?.title,
+    entry?.display_title,
     entry?.summary,
     entry?.raw_input,
+    entry?.work_group,
+    entry?.public_note,
     entry?.category,
+    ...stringListFromUnknown(entry?.flow_notes),
     ...(Array.isArray(entry?.checklist)?entry.checklist:[]),
   ].filter(Boolean).join(" "));
 }
@@ -3883,6 +3891,72 @@ function rnrDescriptionLines(entry:any) {
   const checklist=Array.isArray(entry?.checklist) ? entry.checklist.map(rnrDutyLine).filter(Boolean) : [];
   const merged=[...(descriptionLines.length?descriptionLines:[title]),...checklist.filter((item:string)=>!descriptionLines.includes(item))];
   return merged.filter(Boolean);
+}
+const RNR_TARGET_SCOPE_LABELS:Record<string,string>={common:"공통",department:"부서",role:"직책",employee:"담당자"};
+function stringListFromUnknown(value:any) {
+  if(Array.isArray(value)) return value.map(item=>String(item??"").trim()).filter(Boolean);
+  if(typeof value==="string") return value.split(/\r?\n|[,;]+/).map(item=>item.trim()).filter(Boolean);
+  return [];
+}
+function inferRnrWorkGroup(text:any, category:any) {
+  const source=String(text??"");
+  if(/부가가치세|부가세|국세|지방세|원천세|세금|신고/.test(source)) return "세금 및 신고";
+  if(/현금영수증|강사|프리랜서|급여|지급/.test(source)) return "지급 및 증빙";
+  if(/노션|문서|자료|OJT|온보딩|매뉴얼/.test(source)) return "문서 관리";
+  if(/블로그|인스타|SNS|홍보|기사|언론/.test(source)) return "콘텐츠·홍보";
+  if(/명단|시장|운영|사생대회|행사|교육/.test(source)) return "운영 기획";
+  return String(category??"업무").trim()||"업무";
+}
+function inferRnrFlowLines(text:any, category:any) {
+  const source=String(text??"").trim();
+  const lines=source.split(/\r?\n|[.;]/).map(rnrDutyLine).filter(Boolean);
+  if(/부가가치세|부가세/.test(source)) return ["부가가치세 확정을 위한 세부 서류 준비","국세·지방세 납부 확인과 증빙 정리","납부 결과를 내부 문서 관리와 연계"];
+  if(/국세|지방세|납부/.test(source)) return ["세금 납부 대상과 기한 확인","납부 처리 및 영수증 보관","회계·문서 관리 내역에 연결"];
+  if(/현금영수증|강사|프리랜서/.test(source)) return ["강사별 지급 내역 확인","현금영수증 발급 및 증빙 수집","프리랜서 급여 지급 서류로 보관"];
+  if(/OJT|온보딩|신입|사무보조/.test(source)) return ["신입이 반복 업무를 따라 할 수 있게 자료 구성","부서별 체크리스트와 담당자 연결","공통 교육 자료로 배포 후 보완"];
+  if(/블로그|인스타|SNS|홍보/.test(source)) return ["홍보 자료의 목적과 채널 확인","블로그·인스타 등 채널별 검수","게시 후 성과와 수정 필요사항 기록"];
+  if(/기사|언론|송부/.test(source)) return ["보도자료 핵심 메시지 정리","언론 송부 대상 확인","송부 결과와 후속 응대 기록"];
+  if(/시장|명단|사생대회/.test(source)) return ["대상 명단 수집 기준 정리","운영 일정과 담당자 연결","행사 운영 자료로 반영"];
+  return (lines.length?lines:stringListFromUnknown(category)).slice(0,3);
+}
+function inferRnrTargetScope(text:any, assigneeName:any) {
+  const source=String(text??"");
+  if(/공통|모두|전체|전 직원|신입|OJT|온보딩/.test(source)) return "common";
+  if(String(assigneeName??"").trim()) return "employee";
+  return "department";
+}
+function enrichRnrSuggestion(suggestion:any, text:string) {
+  const category=suggestion?.category||classifyRnrCategory(text);
+  const title=String(suggestion?.title??"").trim()||professionalRnrTitle(text,category);
+  const summary=String(suggestion?.summary??text??title).trim();
+  const displayTitle=String(suggestion?.display_title??suggestion?.public_title??"").trim()||title;
+  const workGroup=String(suggestion?.work_group??suggestion?.category_group??"").trim()||inferRnrWorkGroup(`${text}\n${summary}`,category);
+  const flowNotes=stringListFromUnknown(suggestion?.flow_notes).length
+    ? stringListFromUnknown(suggestion?.flow_notes)
+    : inferRnrFlowLines(`${text}\n${summary}`,category);
+  const targetScope=String(suggestion?.target_scope??inferRnrTargetScope(`${text}\n${summary}`,suggestion?.assigned_person_name)).trim();
+  const draft={...suggestion,title,summary,display_title:displayTitle,work_group:workGroup,flow_notes:flowNotes,target_scope:targetScope,category};
+  return {...draft,is_public:suggestion?.is_public===false?false:!rnrIsSensitive(draft),public_note:String(suggestion?.public_note??"").trim()};
+}
+function rnrPublicTitle(entry:any) {
+  return String(entry?.display_title??"").trim()||rnrDisplayTitle(entry);
+}
+function rnrWorkGroup(entry:any) {
+  return String(entry?.work_group??entry?.category??"업무").trim()||"업무";
+}
+function rnrTargetScope(entry:any) {
+  const scope=String(entry?.target_scope??"").trim();
+  return RNR_TARGET_SCOPE_LABELS[scope]?scope:(entry?.assigned_employee_id?"employee":entry?.department?"department":"common");
+}
+function rnrPublicDepartment(entry:any) {
+  return rnrTargetScope(entry)==="common" ? "공통" : (String(entry?.department??"").trim()||"공통");
+}
+function rnrFlowLines(entry:any) {
+  const lines=stringListFromUnknown(entry?.flow_notes);
+  return (lines.length?lines:rnrDescriptionLines(entry)).filter(Boolean);
+}
+function rnrIsPublicBoardEntry(entry:any) {
+  return entry?.is_active!==false && entry?.is_public!==false && !rnrIsSensitive(entry);
 }
 function splitWorkTimePromptSegments(text:string) {
   return text.split(/\s*(?:[,，、;；]|\r?\n+|\s+\/\s+|\s+그리고\s+|\s+또는\s+)\s*/).map(part=>part.trim()).filter(Boolean);
@@ -5009,6 +5083,100 @@ function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmp
   );
 }
 
+function WorkMapBoard({ entries, employees=[], onOpen }: { entries:any[]; employees?:any[]; onOpen?:(entry:any)=>void }) {
+  const employeeById=new Map(employees.map((employee:any)=>[employee.id,employee]));
+  const cards=Array.from(entries.filter(rnrIsPublicBoardEntry).reduce((deptMap:Map<string,any>,entry:any)=>{
+    const department=rnrPublicDepartment(entry);
+    const groupName=rnrWorkGroup(entry);
+    if(!deptMap.has(department)) deptMap.set(department,{department,entries:[],groups:new Map<string,any>()});
+    const dept=deptMap.get(department);
+    dept.entries.push(entry);
+    if(!dept.groups.has(groupName)) dept.groups.set(groupName,{name:groupName,entries:[]});
+    dept.groups.get(groupName).entries.push(entry);
+    return deptMap;
+  },new Map<string,any>()).values()).sort((a:any,b:any)=>{
+    if(a.department==="공통") return -1;
+    if(b.department==="공통") return 1;
+    return String(a.department).localeCompare(String(b.department));
+  });
+  if(cards.length===0) return <p className="rnr-empty-work">아직 공개된 업무 분장표가 없습니다. 관리자 업무 R&R에서 공개 항목을 저장하면 이곳에 표시됩니다.</p>;
+  return <div className="work-map-board">
+    {cards.map((card:any)=>(
+      <article className="work-map-card" key={card.department}>
+        <div className="work-map-card-head">
+          <div><b>{card.department}</b><span>{card.entries.length}개 업무</span></div>
+          <i className="ti ti-hierarchy-3" aria-hidden="true"></i>
+        </div>
+        <div className="work-map-groups">
+          {Array.from(card.groups.values()).map((group:any)=>(
+            <div className="work-map-group" key={`${card.department}-${group.name}`}>
+              <div className="work-map-group-title"><b>{group.name}</b><span>{group.entries.length}건</span></div>
+              {group.entries.map((entry:any)=> {
+                const assignee=entry.assigned_person_name||employeeById.get(entry.assigned_employee_id)?.name||"공동";
+                const task=<div className="work-map-task">
+                  <strong>{rnrPublicTitle(entry)}</strong>
+                  <ul>{rnrFlowLines(entry).slice(0,4).map((line:string,index:number)=><li key={index}>{line}</li>)}</ul>
+                  <small>{RNR_TARGET_SCOPE_LABELS[rnrTargetScope(entry)]} · 담당 {assignee}</small>
+                </div>;
+                return onOpen
+                  ? <button type="button" className="work-map-task-button" key={entry.id} onClick={()=>onOpen(entry)}>{task}</button>
+                  : <div key={entry.id}>{task}</div>;
+              })}
+            </div>
+          ))}
+        </div>
+      </article>
+    ))}
+  </div>;
+}
+
+function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
+  const [entries,setEntries]=useState<any[]>([]);
+  const [loading,setLoading]=useState(true);
+  const [message,setMessage]=useState("");
+  useEffect(()=>{
+    let alive=true;
+    async function load(){
+      setLoading(true); setMessage("");
+      let result=await supabase
+        .from("rnr_entries")
+        .select("*")
+        .eq("is_active",true)
+        .eq("is_public",true)
+        .eq("is_sensitive",false)
+        .order("department",{ascending:true})
+        .order("work_group",{ascending:true})
+        .order("created_at",{ascending:false})
+        .limit(300);
+      if(result.error&&/is_public|is_sensitive|work_group|schema cache/i.test(result.error.message)){
+        result=await supabase
+          .from("rnr_entries")
+          .select("*")
+          .eq("is_active",true)
+          .order("created_at",{ascending:false})
+          .limit(300);
+      }
+      if(!alive) return;
+      const {data,error}=result;
+      if(error) setMessage(error.message);
+      setEntries(data??[]);
+      setLoading(false);
+    }
+    load();
+    return ()=>{alive=false;};
+  },[currentEmployee?.id]);
+  return <section className="card work-map-page">
+    <div className="section-head">
+      <div>
+        <h2 className="card-title"><i className="ti ti-hierarchy-3" aria-hidden="true"></i>업무 분장표</h2>
+        <p className="subtle">부서별로 해야 할 일과 연결 업무 흐름을 공개용으로 정리해 둔 화면입니다.</p>
+      </div>
+    </div>
+    {message&&<div className="alert error">{message}</div>}
+    {loading ? <p className="subtle">불러오는 중...</p> : <WorkMapBoard entries={entries} />}
+  </section>;
+}
+
 function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }: { currentEmployee: any; onChanged: () => void; view?:"dashboard"|"approvals"|"employees"|"rnr"; onNavigate?:(tab:Tab)=>void }) {
   const [employees,setEmployees]=useState<any[]>([]);
   const [empMap,setEmpMap]=useState<Record<string,any>>({});
@@ -5085,11 +5253,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
-  const rnrAssigneeName=(entry:any)=>entry?.assigned_person_name||(
+  const rnrAssigneeName=(entry:any)=>rnrTargetScope(entry)==="common"?"공통":(entry?.assigned_person_name||(
     entry?.assigned_employee_id&&empMap[entry.assigned_employee_id]?.name
       ? empMap[entry.assigned_employee_id].name
       : "직책 기준"
-  );
+  ));
   const rnrTitleSet=new Set(rnrEntries.map((entry:any)=>rnrDisplayTitle(entry)));
   const rnrTodayTaskRows=dailyTasks
     .filter((task:any)=>task.source_rnr_entry_id||(
@@ -5184,7 +5352,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const normalized=text.toLowerCase();
     const picked=RNR_BASELINE_ROLES.find(role=>role.keywords.some(keyword=>normalized.includes(keyword.toLowerCase())))??RNR_BASELINE_ROLES[0];
     const category=classifyRnrCategory(text);
-    return {
+    return enrichRnrSuggestion({
       title:professionalRnrTitle(text,category),
       summary:text.trim(),
       department:picked.department,
@@ -5193,7 +5361,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       priority:"normal",
       checklist:picked.duties,
       assigned_person_name:"",
-    };
+    }, text);
   }
   async function handleRnrPaste(event:any) {
     const files=Array.from(event.clipboardData?.files??[]).filter((file:any)=>String(file.type??"").startsWith("image/")) as File[];
@@ -5228,7 +5396,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       });
       const data=await response.json();
       if(!response.ok) throw new Error(data?.error||"AI 정리 실패");
-      const suggestion=data?.suggestion??localRnrSuggestion(raw);
+      const suggestion=enrichRnrSuggestion(data?.suggestion??localRnrSuggestion(raw),raw);
       setRnrSuggestion(suggestion);
       const matched=employees.find((e:any)=>e.name&&suggestion.assigned_person_name&&String(suggestion.assigned_person_name).includes(e.name));
       if(matched) setRnrAssigneeId(matched.id);
@@ -5245,17 +5413,25 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const category=rnrSuggestion.category||classifyRnrCategory(`${rnrInput} ${rnrSuggestion.summary??""}`);
     const rawTitle=rnrTitleFromText(rnrInput)||String(rnrSuggestion.title??"").trim()||"이미지 첨부 업무";
     const summary=String(rnrSuggestion.summary||rnrInput.trim()||rawTitle).trim();
+    const targetScope=String(rnrSuggestion.target_scope??inferRnrTargetScope(`${rnrInput}\n${summary}`,rnrSuggestion.assigned_person_name)).trim();
+    const displayTitle=String(rnrSuggestion.display_title??rnrSuggestion.title??rawTitle).trim()||rawTitle;
     const payload={
       raw_input:rnrInput.trim()||rawTitle,
       title:rawTitle,
       summary,
-      department:rnrSuggestion.department||assignee?.department||"",
-      position:rnrSuggestion.position||assignee?.position||"",
+      display_title:displayTitle,
+      work_group:String(rnrSuggestion.work_group??"").trim()||inferRnrWorkGroup(`${rnrInput}\n${summary}`,category),
+      flow_notes:stringListFromUnknown(rnrSuggestion.flow_notes).length?stringListFromUnknown(rnrSuggestion.flow_notes):inferRnrFlowLines(`${rnrInput}\n${summary}`,category),
+      target_scope:targetScope,
+      is_public:rnrSuggestion.is_public!==false,
+      public_note:String(rnrSuggestion.public_note??"").trim()||null,
+      department:targetScope==="common"?"공통":(rnrSuggestion.department||assignee?.department||""),
+      position:targetScope==="common"?"":(rnrSuggestion.position||assignee?.position||""),
       category,
       priority:rnrSuggestion.priority||"normal",
       checklist:Array.isArray(rnrSuggestion.checklist)?rnrSuggestion.checklist:[],
-      assigned_employee_id:rnrAssigneeId||null,
-      assigned_person_name:assignee?.name||rnrSuggestion.assigned_person_name||"",
+      assigned_employee_id:targetScope==="common"?null:(rnrAssigneeId||null),
+      assigned_person_name:targetScope==="common"?"공통":(assignee?.name||rnrSuggestion.assigned_person_name||""),
       created_by:currentEmployee.id,
       source:"admin_note",
       attachments:rnrAttachments,
@@ -5263,10 +5439,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     };
     const sensitive=rnrIsSensitive(payload);
     (payload as any).is_sensitive=sensitive;
+    if(sensitive) (payload as any).is_public=false;
     if(sensitive&&!window.confirm("이 업무에는 급여, 개인정보, 세무 또는 계약 자료가 포함될 수 있습니다.\n담당자와 관리 권한이 있는 사람에게만 배정하고 열람 범위를 확인해주세요.\n이대로 저장할까요?")) return;
     let result=await supabase.from("rnr_entries").insert(payload);
-    if(result.error&&/attachments|is_sensitive|schema cache/i.test(result.error.message)){
-      const {attachments,is_sensitive,...fallbackPayload}=payload as any;
+    if(result.error&&/attachments|is_sensitive|display_title|work_group|flow_notes|target_scope|is_public|public_note|schema cache/i.test(result.error.message)){
+      const {attachments,is_sensitive,display_title,work_group,flow_notes,target_scope,is_public,public_note,...fallbackPayload}=payload as any;
       result=await supabase.from("rnr_entries").insert(fallbackPayload);
     }
     const {error}=result;
@@ -5284,6 +5461,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       summary:String(entry.summary??entry.raw_input??""),
       assigned_employee_id:entry.assigned_employee_id??"",
       checklistText:Array.isArray(entry.checklist)?entry.checklist.join("\n"):"",
+      display_title:rnrPublicTitle(entry),
+      work_group:rnrWorkGroup(entry),
+      flowNotesText:rnrFlowLines(entry).join("\n"),
+      target_scope:rnrTargetScope(entry),
+      is_public:entry.is_public!==false,
+      public_note:String(entry.public_note??""),
     });
   }
   async function saveEditedRnr(){
@@ -5293,25 +5476,34 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const category=editingRnr.category||classifyRnrCategory(`${editingRnr.title} ${editingRnr.summary}`);
     const title=String(editingRnr.title??"").trim()||rnrDisplayTitle(editingRnr);
     const summary=String(editingRnr.summary??"").trim()||title;
+    const targetScope=String(editingRnr.target_scope??inferRnrTargetScope(`${title}\n${summary}`,editingRnr.assigned_person_name)).trim();
+    const flowNotes=String(editingRnr.flowNotesText??"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
     const payload={
       raw_input:title,
       title,
       summary,
-      department:editingRnr.department||assignee?.department||"",
-      position:editingRnr.position||assignee?.position||"",
+      display_title:String(editingRnr.display_title??title).trim()||title,
+      work_group:String(editingRnr.work_group??"").trim()||inferRnrWorkGroup(`${title}\n${summary}`,category),
+      flow_notes:flowNotes.length?flowNotes:inferRnrFlowLines(`${title}\n${summary}`,category),
+      target_scope:targetScope,
+      is_public:editingRnr.is_public!==false,
+      public_note:String(editingRnr.public_note??"").trim()||null,
+      department:targetScope==="common"?"공통":(editingRnr.department||assignee?.department||""),
+      position:targetScope==="common"?"":(editingRnr.position||assignee?.position||""),
       category,
       checklist,
       attachments:Array.isArray(editingRnr.attachments)?editingRnr.attachments:[],
-      assigned_employee_id:editingRnr.assigned_employee_id||null,
-      assigned_person_name:assignee?.name||editingRnr.assigned_person_name||"",
+      assigned_employee_id:targetScope==="common"?null:(editingRnr.assigned_employee_id||null),
+      assigned_person_name:targetScope==="common"?"공통":(assignee?.name||editingRnr.assigned_person_name||""),
       updated_at:new Date().toISOString(),
     };
     const sensitive=rnrIsSensitive(payload);
     (payload as any).is_sensitive=sensitive;
+    if(sensitive) (payload as any).is_public=false;
     if(sensitive&&!window.confirm("이 업무에는 급여, 개인정보, 세무 또는 계약 자료가 포함될 수 있습니다.\n담당자와 관리 권한이 있는 사람에게만 배정하고 열람 범위를 확인해주세요.\n이대로 수정할까요?")) return;
     let result=await supabase.from("rnr_entries").update(payload).eq("id",editingRnr.id).select().single();
-    if(result.error&&/attachments|is_sensitive|schema cache/i.test(result.error.message)){
-      const {attachments,is_sensitive,...fallbackPayload}=payload as any;
+    if(result.error&&/attachments|is_sensitive|display_title|work_group|flow_notes|target_scope|is_public|public_note|schema cache/i.test(result.error.message)){
+      const {attachments,is_sensitive,display_title,work_group,flow_notes,target_scope,is_public,public_note,...fallbackPayload}=payload as any;
       result=await supabase.from("rnr_entries").update(fallbackPayload).eq("id",editingRnr.id).select().single();
     }
     const {data,error}=result;
@@ -5350,12 +5542,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     return addIsoDays(todayIso(),1);
   }
   async function sendRnrToTodayTask(entry:any){
-    const contentLines=rnrDescriptionLines(entry).map((item:string)=>`- ${item}`).join("\n");
+    const contentLines=rnrFlowLines(entry).map((item:string)=>`- ${item}`).join("\n");
     const targetEmployeeId=entry.assigned_employee_id||null;
     const taskDate=nextTaskDateForRnr(entry);
     const payload={
       task_date:taskDate,
-      title:rnrDisplayTitle(entry)||"오늘의 할일",
+      title:rnrPublicTitle(entry)||"오늘의 할일",
       content:contentLines,
       is_active:true,
       created_by:currentEmployee.id,
@@ -5988,7 +6180,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const rnrDepartmentNames=Array.from(new Set([
     ...baseRnrDepartments,
     ...activeEmployees.map((employee:any)=>String(employee.department??"").trim()).filter(Boolean),
-    ...rnrEntries.map((entry:any)=>String(entry.department??"").trim()).filter(Boolean),
+    ...rnrEntries.map((entry:any)=>rnrPublicDepartment(entry)).filter(Boolean),
     ...(rnrEntries.some((entry:any)=>!String(entry.department??"").trim())||activeEmployees.some((employee:any)=>!String(employee.department??"").trim())?["공통"]:[]),
   ])).sort((a:string,b:string)=>{
     const ai=baseRnrDepartments.indexOf(a);
@@ -6004,9 +6196,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const members=activeEmployees
       .filter((employee:any)=>employeeDepartmentLabel(employee)===department)
       .sort((a:any,b:any)=>String(a.name??"").localeCompare(String(b.name??"")));
-    const entries=rnrEntries.filter((entry:any)=>(String(entry.department??"").trim()||"공통")===department);
+    const entries=rnrEntries.filter((entry:any)=>rnrPublicDepartment(entry)===department);
     const workGroups=Array.from(entries.reduce((map:Map<string,any>,entry:any)=>{
-      const category=entry.category||"업무";
+      const category=rnrWorkGroup(entry);
       const key=`${department}|${category}`;
       if(!map.has(key)) map.set(key,{key,category,entries:[]});
       map.get(key).entries.push(entry);
@@ -6601,6 +6793,15 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
               <>
                 <div className="rnr-result-head"><b>{professionalRnrTitle(rnrSuggestion.title||rnrInput,rnrSuggestion.category||classifyRnrCategory(rnrInput))}</b><span>{rnrSuggestion.department||"부서 미정"} · {rnrSuggestion.position||"직책 미정"} · {rnrSuggestion.category||"업무분류 미정"}</span></div>
                 <p>{rnrSuggestion.summary}</p>
+                <div className="grid two">
+                  <div className="form-row"><label className="label">공개 업무명</label><input className="input" value={rnrSuggestion.display_title??""} onChange={e=>setRnrSuggestion({...rnrSuggestion,display_title:e.target.value})} /></div>
+                  <div className="form-row"><label className="label">업무 묶음</label><input className="input" value={rnrSuggestion.work_group??""} onChange={e=>setRnrSuggestion({...rnrSuggestion,work_group:e.target.value})} /></div>
+                </div>
+                <div className="grid two">
+                  <div className="form-row"><label className="label">공개 범위</label><select className="select" value={rnrSuggestion.target_scope??"department"} onChange={e=>setRnrSuggestion({...rnrSuggestion,target_scope:e.target.value})}><option value="common">공통</option><option value="department">부서</option><option value="role">직책</option><option value="employee">담당자</option></select></div>
+                  <label className="checkbox" style={{alignSelf:"end",marginBottom:10}}><input type="checkbox" checked={rnrSuggestion.is_public!==false} onChange={e=>setRnrSuggestion({...rnrSuggestion,is_public:e.target.checked})} /> 공개 업무 분장표에 표시</label>
+                </div>
+                <div className="form-row"><label className="label">업무 흐름</label><textarea className="textarea compact-textarea" value={stringListFromUnknown(rnrSuggestion.flow_notes).join("\n")} onChange={e=>setRnrSuggestion({...rnrSuggestion,flow_notes:e.target.value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean)})} /></div>
                 <div className="form-row"><label className="label">담당 직원</label>
                   <select className="select" value={rnrAssigneeId} onChange={e=>setRnrAssigneeId(e.target.value)}>
                     <option value="">직책 기준으로 저장</option>
@@ -6618,6 +6819,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             )}
           </div>
         </div>
+        <div className="rnr-section-title"><b>공개 업무 분장표 미리보기</b><span>직원들에게 보이는 부서별 업무 흐름입니다.</span></div>
+        <WorkMapBoard entries={rnrEntries} employees={activeEmployees} onOpen={openRnr} />
         <div className="rnr-section-title"><b>조직도와 부서별 업무</b><span>직원을 바로 배치하고, 부서 안에서 업무 분류별 R&R을 확인합니다.</span></div>
         <div className="rnr-department-tabs">
           <button className={rnrDepartmentFilter==="all"?"active":""} onClick={()=>setRnrDepartmentFilter("all")}>전체</button>
@@ -6643,7 +6846,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <div className="rnr-hierarchy-tasks">
                   {card.entries.slice(0,3).map((entry:any)=>(
                     <button key={entry.id} type="button" onClick={()=>openRnr(entry)}>
-                      <b>{rnrDisplayTitle(entry)}</b>
+                      <b>{rnrPublicTitle(entry)}</b>
                       <span>담당 {rnrAssigneeName(entry)} · 백업 {card.members.find((member:any)=>member.id!==entry.assigned_employee_id)?.name||"부서 공동"}</span>
                       {rnrIsSensitive(entry)&&<em>민감 권한 확인</em>}
                     </button>
@@ -6697,7 +6900,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                       {group.entries.slice(0,6).map((entry:any)=>(
                         <div className="rnr-work-item" key={entry.id}>
                           <button className="rnr-person-task" onClick={()=>openRnr(entry)}>
-                            <b>{rnrDisplayTitle(entry)}</b>
+                            <b>{rnrPublicTitle(entry)}</b>
                             <span>{rnrAssigneeName(entry)} · {entry.position||"직책 공통"}</span>
                           </button>
                           <button className="icon-button rnr-task-send" title="다음 출근일 할일로 보내기" onClick={()=>sendRnrToTodayTask(entry)}><i className="ti ti-clipboard-plus" aria-hidden="true"></i></button>
@@ -6727,8 +6930,17 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <div className="form-row"><label className="label">직책</label><select className="select" value={editingRnr.position??""} onChange={e=>setEditingRnr({...editingRnr,position:e.target.value})}>{POSITION_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"공통"}</option>)}</select></div>
                 <div className="form-row"><label className="label">업무 분류</label><select className="select" value={editingRnr.category??""} onChange={e=>setEditingRnr({...editingRnr,category:e.target.value})}>{RNR_CATEGORY_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"미분류"}</option>)}</select></div>
               </div>
+              <div className="grid two">
+                <div className="form-row"><label className="label">공개 업무명</label><input className="input" value={editingRnr.display_title??""} onChange={e=>setEditingRnr({...editingRnr,display_title:e.target.value})} /></div>
+                <div className="form-row"><label className="label">업무 묶음</label><input className="input" value={editingRnr.work_group??""} onChange={e=>setEditingRnr({...editingRnr,work_group:e.target.value})} /></div>
+              </div>
+              <div className="grid two">
+                <div className="form-row"><label className="label">공개 범위</label><select className="select" value={editingRnr.target_scope??"department"} onChange={e=>setEditingRnr({...editingRnr,target_scope:e.target.value})}><option value="common">공통</option><option value="department">부서</option><option value="role">직책</option><option value="employee">담당자</option></select></div>
+                <label className="checkbox" style={{alignSelf:"end",marginBottom:10}}><input type="checkbox" checked={editingRnr.is_public!==false} onChange={e=>setEditingRnr({...editingRnr,is_public:e.target.checked})} /> 공개 업무 분장표에 표시</label>
+              </div>
               <div className="form-row"><label className="label">담당 직원</label><select className="select" value={editingRnr.assigned_employee_id??""} onChange={e=>setEditingRnr({...editingRnr,assigned_employee_id:e.target.value})}><option value="">직책 기준</option>{employees.filter(isEmployeeActive).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
               <div className="form-row"><label className="label">업무 설명</label><textarea className="textarea" value={editingRnr.summary??""} onChange={e=>setEditingRnr({...editingRnr,summary:e.target.value})} /></div>
+              <div className="form-row"><label className="label">업무 흐름</label><textarea className="textarea compact-textarea" value={editingRnr.flowNotesText??""} onChange={e=>setEditingRnr({...editingRnr,flowNotesText:e.target.value})} placeholder={"한 줄에 하나씩 입력"} /></div>
               <div className="form-row"><label className="label">체크리스트</label><textarea className="textarea compact-textarea" value={editingRnr.checklistText??""} onChange={e=>setEditingRnr({...editingRnr,checklistText:e.target.value})} placeholder={"한 줄에 하나씩 입력"} /></div>
             </div>
           ) : (
@@ -6738,8 +6950,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <div><dt>부서</dt><dd>{selectedRnr.department||"공통"}</dd></div>
                 <div><dt>직책</dt><dd>{selectedRnr.position||"-"}</dd></div>
                 <div><dt>업무 분류</dt><dd>{selectedRnr.category||"기타"}</dd></div>
+                <div><dt>업무 묶음</dt><dd>{rnrWorkGroup(selectedRnr)}</dd></div>
+                <div><dt>공개 여부</dt><dd>{rnrIsPublicBoardEntry(selectedRnr)?"공개":"비공개"}</dd></div>
               </dl>
-              <div className="type-desc"><b>업무 설명</b><ul className="rnr-duty-list detail checkable">{rnrDescriptionLines(selectedRnr).map((line:string,index:number)=><li key={index}><label><input type="checkbox" checked={!!rnrChecklistDone[`${selectedRnr.id}:${index}`]} onChange={event=>toggleRnrChecklist(selectedRnr.id,index,event.target.checked)} /> <span>{line}</span></label></li>)}</ul></div>
+              <div className="type-desc"><b>업무 흐름</b><ul className="rnr-duty-list detail checkable">{rnrFlowLines(selectedRnr).map((line:string,index:number)=><li key={index}><label><input type="checkbox" checked={!!rnrChecklistDone[`${selectedRnr.id}:${index}`]} onChange={event=>toggleRnrChecklist(selectedRnr.id,index,event.target.checked)} /> <span>{line}</span></label></li>)}</ul></div>
               {Array.isArray(selectedRnr.attachments)&&selectedRnr.attachments.length>0&&<div className="rnr-attachments readonly">{selectedRnr.attachments.map((attachment:any,index:number)=>isImageAttachment(attachment)?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
             </div>
           )}
