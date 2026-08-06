@@ -6957,14 +6957,14 @@ function SettingsPage({ currentEmployee, section="schedule", readOnly=false }: {
   return <div className="grid">
     {section==="schedule"&&<>
       {readOnly&&msg&&<div className="alert error">{msg}</div>}
-      <TeamScheduleBoard employees={employees} events={scheduleEvents} overrides={overrides} workTimeChanges={workTimeChanges} leaveRequests={leaveRequests} compTimeRequests={compTimeRequests} currentEmployee={currentEmployee} onChanged={load} readOnly={readOnly} />
+      <TeamScheduleBoard employees={employees} events={scheduleEvents} overrides={overrides} workTimeChanges={workTimeChanges} absences={absences} leaveRequests={leaveRequests} compTimeRequests={compTimeRequests} currentEmployee={currentEmployee} onChanged={load} readOnly={readOnly} />
       {!readOnly&&<ScheduleCard employees={employees} empMap={empMap} overrides={overrides} absences={absences} currentEmployee={currentEmployee} empName={empName} onChanged={load} setMsg={setMsg} msg={msg} />}
     </>}
     {section==="payroll"&&<PayrollCard employees={employees} absences={absences} overrides={overrides} workTimeChanges={workTimeChanges} scheduleEvents={scheduleEvents} readOnly={readOnly} />}
   </div>;
 }
 
-function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequests,compTimeRequests,currentEmployee,onChanged,readOnly=false}:{employees:any[];events:any[];overrides:any[];workTimeChanges:any[];leaveRequests:any[];compTimeRequests:any[];currentEmployee:any;onChanged:()=>void;readOnly?:boolean}) {
+function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,leaveRequests,compTimeRequests,currentEmployee,onChanged,readOnly=false}:{employees:any[];events:any[];overrides:any[];workTimeChanges:any[];absences:any[];leaveRequests:any[];compTimeRequests:any[];currentEmployee:any;onChanged:()=>void;readOnly?:boolean}) {
   const [employeeOrder,setEmployeeOrder]=useState<string[]>(()=>{
     try{return JSON.parse(localStorage.getItem("lupl_schedule_employee_order")??"[]");}catch{return [];}
   });
@@ -6972,13 +6972,25 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   const weekStart=weekStartIso(weekAnchor);
   const dates=Array.from({length:5},(_,i)=>addIsoDays(weekStart,i));
   const weekEnd=dates[4];
+  const monthRange=monthRangeFor(weekAnchor);
+  const monthIssueDates=monthDates(monthRange.start);
+  const sortScheduleEmployee=(a:any,b:any)=>{
+    const ai=employeeOrder.indexOf(a.id),bi=employeeOrder.indexOf(b.id);
+    if(ai>=0||bi>=0) return (ai<0?9999:ai)-(bi<0?9999:bi);
+    return String(a.employee_no??"").localeCompare(String(b.employee_no??""));
+  };
   const activeEmployees=employees
     .filter(employee=>employeeVisibleInScheduleWeek(employee,dates,events,overrides,workTimeChanges,leaveRequests,compTimeRequests))
-    .sort((a,b)=>{
-      const ai=employeeOrder.indexOf(a.id),bi=employeeOrder.indexOf(b.id);
-      if(ai>=0||bi>=0) return (ai<0?9999:ai)-(bi<0?9999:bi);
-      return String(a.employee_no??"").localeCompare(String(b.employee_no??""));
-    });
+    .sort(sortScheduleEmployee);
+  const employeeHasMonthIssue=(employee:any)=>!isTestEmployee(employee)&&(
+    events.some((event:any)=>event.employee_id===employee.id&&dateRangesOverlap(monthRange.start,monthRange.end,event.start_date,event.end_date))
+    || absences.some((absence:any)=>absence.employee_id===employee.id&&dateRangesOverlap(monthRange.start,monthRange.end,absence.start_date,absence.end_date))
+    || leaveRequests.some((request:any)=>request.employee_id===employee.id&&request.status==="approved"&&dateRangesOverlap(monthRange.start,monthRange.end,request.start_date,request.end_date))
+    || compTimeRequests.some((request:any)=>request.employee_id===employee.id&&dateInRange(request.work_date,monthRange.start,monthRange.end))
+  );
+  const monthIssueEmployees=employees
+    .filter(employee=>employeeVisibleInScheduleWeek(employee,monthIssueDates,events,overrides,workTimeChanges,leaveRequests,compTimeRequests)||employeeHasMonthIssue(employee))
+    .sort(sortScheduleEmployee);
   const [selectedEmpId,setSelectedEmpId]=useState("all");
   const [scheduleViewMode,setScheduleViewMode]=useState<"week"|"month">("week");
   const [editing,setEditing]=useState<any|null>(null);
@@ -6991,7 +7003,6 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   const [focusEmployeeId,setFocusEmployeeId]=useState("");
   const timeDragRef=useRef<any|null>(null);
   const timeDragClickGuard=useRef(0);
-  const monthRange=monthRangeFor(weekAnchor);
   const showAdminScheduleDetails=currentEmployee.role==="admin"&&!readOnly;
   const isAll=selectedEmpId==="all";
   const employeeCount=Math.max(1,activeEmployees.length);
@@ -7501,7 +7512,8 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
   function teamMonthIssueChips(date:string) {
     const chips:any[]=[];
     if(isCompanySummerHolidayDate(date)) chips.push({key:`holiday-${date}`,type:"holiday",title:COMPANY_SUMMER_HOLIDAY.title,detail:"공통 여름휴가"});
-    visibleEmployees.forEach((employee:any)=>{
+    const issueEmployees=isAll?monthIssueEmployees:visibleEmployees;
+    issueEmployees.forEach((employee:any)=>{
       const info=workInfoForDate(employee,date);
       if(info.leave&&info.leave.request_type!=="company_holiday") {
         chips.push({
@@ -7511,6 +7523,24 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
           detail:showAdminScheduleDetails?`${timeLabel(info.start)}~${timeLabel(info.end)} ${info.leave.reason??""}`:"휴가/일정 확인",
         });
       }
+      events
+        .filter((event:any)=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date&&["hidden","unavailable"].includes(event.event_type))
+        .map((event:any)=>displayScheduleEvent(event))
+        .filter((event:any)=>event?.event_type==="unavailable")
+        .forEach((event:any)=>chips.push({
+          key:`unavailable-${event.id}-${date}`,
+          type:"gap",
+          title:`${employee.name} · ${scheduleEventTitleForViewer(event)}`,
+          detail:showAdminScheduleDetails?(event.note||`${event.start_date}~${event.end_date}`):"일정 확인이 필요한 날입니다.",
+        }));
+      absences
+        .filter((absence:any)=>absence.employee_id===employee.id&&date>=absence.start_date&&date<=absence.end_date)
+        .forEach((absence:any)=>chips.push({
+          key:`absence-${absence.id}-${date}`,
+          type:"gap",
+          title:`${employee.name} · 미출근`,
+          detail:showAdminScheduleDetails?`${absence.unpaid?"급여 공제":"급여 공제 없음"} · ${absence.reason??"-"}`:"일정 확인이 필요한 날입니다.",
+        }));
       overtimeEventsFor(employee,date).forEach((event:any)=>chips.push({
         key:event.id,
         type:event.overtimeStatus==="approved"?"overtime approved":"overtime",
@@ -7524,7 +7554,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,leaveRequ
         detail:showAdminScheduleDetails?event.note??"": "해당일은 일정 확인이 필요한 날입니다.",
       }));
     });
-    return chips.slice(0,5);
+    return chips;
   }
   const teamMonthDayKeys=["sun","mon","tue","wed","thu","fri","sat"];
   const teamMonthDates=monthDates(monthRange.start);
