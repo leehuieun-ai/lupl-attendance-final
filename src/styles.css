@@ -353,13 +353,21 @@ h3 { font-size: 15px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 
 .team-month-cell.today { box-shadow: inset 0 0 0 2px #ef4444; }
 .team-month-cell > b { color: #172033; font-size: 12px; }
 .team-month-cell.weekend > b { color: #dc2626; }
-.team-month-chip { display: block; max-width: 100%; border-radius: 5px; padding: 5px 7px; background: #e0f2fe; color: #075985; font-size: 11px; font-weight: 850; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.team-month-chip small { display: block; margin-top: 2px; opacity: .8; font-size: 9px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.team-month-chip.leave { background: #fce7f3; color: #9d174d; }
-.team-month-chip.holiday { background: #dcfce7; color: #166534; }
-.team-month-chip.overtime { background: #ffedd5; color: #9a3412; }
-.team-month-chip.overtime.approved { background: #dbeafe; color: #1d4ed8; }
-.team-month-chip.gap { background: #fee2e2; color: #991b1b; }
+.team-month-chip { --employee-color: #2563eb; display: grid; grid-template-columns: auto minmax(0,1fr); gap: 3px 6px; max-width: 100%; border: 1px solid color-mix(in srgb,var(--employee-color) 32%,#dbe5f3); border-left: 4px solid var(--employee-color); border-radius: 6px; padding: 5px 7px 5px 6px; background: color-mix(in srgb,var(--employee-color) 10%,white); color: #172033; font-size: 11px; font-weight: 850; overflow: hidden; }
+.team-month-chip em { align-self: start; border-radius: 999px; padding: 2px 5px; background: rgba(255,255,255,.82); color: var(--employee-color); font-style: normal; font-size: 9px; font-weight: 900; line-height: 1.2; white-space: nowrap; box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--employee-color) 18%,transparent); }
+.team-month-chip strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #172033; font-size: 11px; font-weight: 900; }
+.team-month-chip small { grid-column: 2; display: block; margin-top: -1px; color: #64748b; font-size: 9px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-month-chip.leave { border-style: solid; }
+.team-month-chip.leave em { color: #be185d; }
+.team-month-chip.holiday { display: block; border-color: #bbf7d0; border-left-color: #16a34a; background: #dcfce7; color: #166534; }
+.team-month-chip.holiday em { display: inline-flex; margin-right: 5px; color: #166534; }
+.team-month-chip.holiday strong { color: #166534; }
+.team-month-chip.holiday small { display: block; margin-top: 2px; color: #166534; }
+.team-month-chip.overtime { border-style: dashed; background: color-mix(in srgb,var(--employee-color) 14%,#fff7ed); }
+.team-month-chip.overtime em { color: #c2410c; }
+.team-month-chip.overtime.approved { border-style: solid; box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--employee-color) 18%,transparent); }
+.team-month-chip.gap { background: color-mix(in srgb,var(--employee-color) 8%,#fff1f2); }
+.team-month-chip.gap em { color: #dc2626; }
 .team-week-title { min-height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 13px; border-bottom: 1px solid var(--line); background: #f8fafc; }
 .team-week-title b, .team-week-title span { display: block; }
 .team-week-title b { font-size: 13px; }

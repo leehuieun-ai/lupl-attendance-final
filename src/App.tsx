@@ -8363,14 +8363,17 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
   }
   function teamMonthIssueChips(date:string) {
     const chips:any[]=[];
-    if(isCompanySummerHolidayDate(date)) chips.push({key:`holiday-${date}`,type:"holiday",title:COMPANY_SUMMER_HOLIDAY.title,detail:"공통 여름휴가"});
+    if(isCompanySummerHolidayDate(date)) chips.push({key:`holiday-${date}`,type:"holiday",kind:"공통",title:COMPANY_SUMMER_HOLIDAY.title,detail:"공통 여름휴가"});
     const issueEmployees=isAll?monthIssueEmployees:visibleEmployees;
     issueEmployees.forEach((employee:any)=>{
+      const employeeColor=employeeColorFromList(monthIssueEmployees,employee.id);
       const info=workInfoForDate(employee,date);
       if(info.leave&&info.leave.request_type!=="company_holiday") {
         chips.push({
           key:`leave-${employee.id}-${date}`,
           type:"leave",
+          kind:"휴가",
+          employeeColor,
           title:`${employee.name} · ${showAdminScheduleDetails?leaveTypeDisplayLabel(info.leave):"개인 사유"}`,
           detail:showAdminScheduleDetails?`${timeLabel(info.start)}~${timeLabel(info.end)} ${info.leave.reason??""}`:"휴가/일정 확인",
         });
@@ -8382,6 +8385,8 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
         .forEach((event:any)=>chips.push({
           key:`unavailable-${event.id}-${date}`,
           type:"gap",
+          kind:"공백",
+          employeeColor,
           title:`${employee.name} · ${scheduleEventTitleForViewer(event)}`,
           detail:showAdminScheduleDetails?(event.note||`${event.start_date}~${event.end_date}`):"일정 확인이 필요한 날입니다.",
         }));
@@ -8390,18 +8395,24 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
         .forEach((absence:any)=>chips.push({
           key:`absence-${absence.id}-${date}`,
           type:"gap",
+          kind:"공백",
+          employeeColor,
           title:`${employee.name} · 미출근`,
           detail:showAdminScheduleDetails?`${absence.unpaid?"급여 공제":"급여 공제 없음"} · ${absence.reason??"-"}`:"일정 확인이 필요한 날입니다.",
         }));
       overtimeEventsFor(employee,date).forEach((event:any)=>chips.push({
         key:event.id,
         type:event.overtimeStatus==="approved"?"overtime approved":"overtime",
+        kind:event.overtimeStatus==="approved"?"승인 추가근무":"추가근무",
+        employeeColor,
         title:`${employee.name} · ${event.title}`,
         detail:`${event.start_time}~${event.end_time}`,
       }));
       events.filter((event:any)=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date&&event.event_type==="info").forEach((event:any)=>chips.push({
         key:`info-${event.id}-${date}`,
         type:"info",
+        kind:"일정",
+        employeeColor,
         title:showAdminScheduleDetails ? event.title||"일정 확인" : `${employee.name} · 개인 사유`,
         detail:showAdminScheduleDetails?event.note??"": "해당일은 일정 확인이 필요한 날입니다.",
       }));
@@ -8502,7 +8513,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
               const chips=date?teamMonthIssueChips(date):[];
               const weekend=date?[0,6].includes(dateFromIso(date).getDay()):false;
               return <div className={`team-month-cell ${date?"":"empty"} ${date===todayIso()?"today":""} ${weekend?"weekend":""}`} key={date??`empty-${index}`}>
-                {date&&<><b>{Number(date.slice(8))}</b>{chips.map(chip=><span className={`team-month-chip ${chip.type}`} key={chip.key} title={chip.detail}>{chip.title}<small>{chip.detail}</small></span>)}</>}
+                {date&&<><b>{Number(date.slice(8))}</b>{chips.map(chip=><span className={`team-month-chip ${chip.type}`} style={chip.employeeColor?{"--employee-color":chip.employeeColor} as React.CSSProperties:undefined} key={chip.key} title={chip.detail}><em>{chip.kind}</em><strong>{chip.title}</strong><small>{chip.detail}</small></span>)}</>}
               </div>;
             })}
           </div>
