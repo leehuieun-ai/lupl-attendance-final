@@ -5024,16 +5024,17 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [absences,setAbsences]=useState<any[]>([]);
   const [allLogs,setAllLogs]=useState<any[]>([]);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
+  const [dailyTasks,setDailyTasks]=useState<any[]>([]);
   const [rnrInput,setRnrInput]=useState("");
   const [rnrAttachments,setRnrAttachments]=useState<any[]>([]);
   const [rnrSuggestion,setRnrSuggestion]=useState<any|null>(null);
   const [rnrAssigneeId,setRnrAssigneeId]=useState("");
   const [selectedRnr,setSelectedRnr]=useState<any|null>(null);
   const [editingRnr,setEditingRnr]=useState<any|null>(null);
+  const [editingRnrTask,setEditingRnrTask]=useState<any|null>(null);
   const [rnrDepartmentFilter,setRnrDepartmentFilter]=useState("all");
   const [rnrOrgDraft,setRnrOrgDraft]=useState<Record<string,{employeeId:string;position:string}>>({});
   const [rnrChecklistDone,setRnrChecklistDone]=useState<Record<string,boolean>>(()=>{try{return JSON.parse(localStorage.getItem("lupl_rnr_checklist_done")??"{}");}catch{return {};}});
-  const [showRnrRoleGuide,setShowRnrRoleGuide]=useState(false);
   const [rnrBusy,setRnrBusy]=useState(false);
   const [rnrMsg,setRnrMsg]=useState("");
   const [message,setMessage]=useState("");
@@ -5066,7 +5067,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const list=emps??[]; const map:Record<string,any>={};
     list.forEach((e:any)=>{map[e.id]=e;});
     setEmployees(list); setEmpMap(map);
-    const [d,w,r,c,wt,ac,a,ov,ab,lg,rn]=await Promise.all([
+    const [d,w,r,c,wt,ac,a,ov,ab,lg,rn,dt]=await Promise.all([
       supabase.from("registered_devices").select("*").order("created_at",{ascending:false}),
       supabase.from("workplaces").select("*").order("created_at",{ascending:false}),
       supabase.from("attendance_requests").select("*").order("created_at",{ascending:false}),
@@ -5078,8 +5079,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       supabase.from("employee_absences").select("*").order("start_date",{ascending:false}),
       supabase.from("attendance_logs").select("id, employee_id, workplace_id, check_in_time, check_out_time, original_check_out_time, scheduled_check_out_time, overtime_review_status, status, workplaces(name,type)").order("check_in_time",{ascending:false}).limit(300),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
+      supabase.from("daily_tasks").select("*").eq("is_active",true).order("task_date",{ascending:false}).order("created_at",{ascending:false}).limit(200),
     ]);
-    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]);
+    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setDailyTasks(dt.data??[]);
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
@@ -5088,6 +5090,20 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       ? empMap[entry.assigned_employee_id].name
       : "직책 기준"
   );
+  const rnrTitleSet=new Set(rnrEntries.map((entry:any)=>rnrDisplayTitle(entry)));
+  const rnrTodayTaskRows=dailyTasks
+    .filter((task:any)=>task.source_rnr_entry_id||(
+      task.created_by===currentEmployee.id
+      && rnrTitleSet.has(String(task.title??""))
+    ))
+    .sort((a:any,b:any)=>String(b.task_date??"").localeCompare(String(a.task_date??""))||String(b.created_at??"").localeCompare(String(a.created_at??"")));
+  function dailyTaskTargetLabel(task:any) {
+    return task?.target_employee_id ? empName(task.target_employee_id) : "전체 직원";
+  }
+  function dailyTaskSourceLabel(task:any) {
+    const source=task?.source_rnr_entry_id ? rnrEntries.find((entry:any)=>entry.id===task.source_rnr_entry_id) : null;
+    return source ? rnrDisplayTitle(source) : "R&R에서 보낸 할일";
+  }
 
   function leaveForEmployee(empId:string) {
     const emp=empMap[empId]; if(!emp) return null;
@@ -5344,20 +5360,54 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       is_active:true,
       created_by:currentEmployee.id,
       target_employee_id:targetEmployeeId,
+      source_rnr_entry_id:entry.id,
       attachments:Array.isArray(entry.attachments)?entry.attachments:[],
     };
     let result=await supabase.from("daily_tasks").insert(payload);
-    if(result.error&&/attachments|schema cache/i.test(result.error.message)){
-      const {attachments,...fallbackPayload}=payload;
+    if(result.error&&/attachments|source_rnr_entry_id|schema cache/i.test(result.error.message)){
+      const {attachments,source_rnr_entry_id,...fallbackPayload}=payload;
       result=await supabase.from("daily_tasks").insert(fallbackPayload);
     }
     const {error}=result;
     if(error) setRnrMsg(error.message);
     else {
-      await onChanged();
+      await load(); onChanged();
       const dateLabel=taskDate===todayIso()?"오늘":`다음 출근일(${taskDate})`;
       setRnrMsg(targetEmployeeId?`${rnrAssigneeName(entry)}님의 ${dateLabel} 할일로 보냈습니다.`:`전체 직원 ${dateLabel} 할일로 보냈습니다.`);
     }
+  }
+  function beginEditRnrTask(task:any) {
+    setEditingRnrTask({
+      ...task,
+      task_date:String(task.task_date??todayIso()).slice(0,10),
+      target_employee_id:task.target_employee_id??"",
+    });
+  }
+  async function saveEditedRnrTask() {
+    if(!editingRnrTask?.id) return;
+    const title=String(editingRnrTask.title??"").trim();
+    const content=String(editingRnrTask.content??"").trim();
+    if(!title||!content) return setRnrMsg("오늘의 할일 제목과 내용을 입력해주세요.");
+    const patch={
+      task_date:editingRnrTask.task_date||todayIso(),
+      title,
+      content,
+      target_employee_id:editingRnrTask.target_employee_id||null,
+      updated_at:new Date().toISOString(),
+    };
+    const {error}=await supabase.from("daily_tasks").update(patch).eq("id",editingRnrTask.id);
+    if(error) return setRnrMsg(error.message);
+    setEditingRnrTask(null);
+    setRnrMsg("오늘의 할일을 수정했습니다.");
+    await load(); onChanged();
+  }
+  async function hideRnrTask(task:any) {
+    if(!window.confirm(`${task.title} 할일을 삭제할까요?`)) return;
+    const {error}=await supabase.from("daily_tasks").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",task.id);
+    if(error) return setRnrMsg(error.message);
+    if(editingRnrTask?.id===task.id) setEditingRnrTask(null);
+    setRnrMsg("오늘의 할일을 삭제했습니다.");
+    await load(); onChanged();
   }
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
@@ -6505,7 +6555,41 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         <h2 className="card-title"><i className="ti ti-sitemap" aria-hidden="true"></i>업무 R&R 정리</h2>
         <p className="subtle" style={{marginBottom:12}}>업무를 편하게 적으면 부서/직책/업무명으로 정리해서 누적합니다. 다음 직원이 같은 역할을 맡을 때 기준 업무로 볼 수 있습니다.</p>
         {rnrMsg&&<div className={`alert ${rnrMsg.includes("저장")?"success":""}`}>{rnrMsg}</div>}
-        <div className="grid two">
+        <div className="rnr-today-panel">
+          <div className="rnr-section-title rnr-panel-title">
+            <b>오늘의 할일 모음</b>
+            <span>R&R에서 오늘의 할일로 올린 항목만 모아봅니다.</span>
+          </div>
+          {rnrTodayTaskRows.length===0 ? (
+            <p className="rnr-empty-work">아직 R&R에서 올린 오늘의 할일이 없습니다. 부서별 업무의 <i className="ti ti-clipboard-plus" aria-hidden="true"></i> 버튼으로 보낼 수 있습니다.</p>
+          ) : (
+            <div className="rnr-today-list">
+              {rnrTodayTaskRows.map((task:any)=>editingRnrTask?.id===task.id ? (
+                <div className="rnr-today-edit" key={task.id}>
+                  <div className="grid three">
+                    <div className="form-row"><label className="label">날짜</label><input className="input" type="date" value={editingRnrTask.task_date} onChange={e=>setEditingRnrTask({...editingRnrTask,task_date:e.target.value})} /></div>
+                    <div className="form-row"><label className="label">대상</label><select className="select" value={editingRnrTask.target_employee_id??""} onChange={e=>setEditingRnrTask({...editingRnrTask,target_employee_id:e.target.value})}><option value="">전체 직원</option>{employees.filter(isEmployeeActive).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+                    <div className="form-row"><label className="label">제목</label><input className="input" value={editingRnrTask.title??""} onChange={e=>setEditingRnrTask({...editingRnrTask,title:e.target.value})} /></div>
+                  </div>
+                  <div className="form-row"><label className="label">내용</label><textarea className="textarea compact-textarea" value={editingRnrTask.content??""} onChange={e=>setEditingRnrTask({...editingRnrTask,content:e.target.value})} /></div>
+                  <div className="actions rnr-today-actions"><button className="button ghost compact" onClick={()=>setEditingRnrTask(null)}>취소</button><button className="button compact" onClick={saveEditedRnrTask}>수정 저장</button></div>
+                </div>
+              ) : (
+                <div className="rnr-today-row" key={task.id}>
+                  <div>
+                    <span>{task.task_date} · {dailyTaskTargetLabel(task)}</span>
+                    <b>{task.title}</b>
+                    <p>{task.content}</p>
+                    <small>{dailyTaskSourceLabel(task)}</small>
+                    {Array.isArray(task.attachments)&&task.attachments.length>0&&<div className="rnr-attachments mini readonly">{task.attachments.map((attachment:any,index:number)=>isImageAttachment(attachment)?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+                  </div>
+                  <div className="actions rnr-today-actions"><button className="button ghost compact" onClick={()=>beginEditRnrTask(task)}>수정</button><button className="button danger compact" onClick={()=>hideRnrTask(task)}>삭제</button></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="grid two rnr-ai-grid">
           <div>
             <div className="form-row"><label className="label">업무 메모</label><textarea className="textarea rnr-textarea" value={rnrInput} onChange={e=>setRnrInput(e.target.value)} onPaste={handleRnrPaste} placeholder="예: 내일 오전에 학교 제출용 서류 정리하고, 영수증은 민지한테 맡기고, 교육장 비품은 사무보조가 체크하게 해줘." /></div>
             <p className="subtle rnr-paste-hint">이미지는 업무 메모 칸에 Ctrl+V로 여러 장 붙여넣을 수 있습니다.</p>
@@ -6527,19 +6611,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <button className="button full" onClick={saveRnrEntry}>R&R에 저장</button>
               </>
             ) : (
-              <div className="type-desc">
-                <button className="collapsible-btn rnr-role-guide-toggle" onClick={()=>setShowRnrRoleGuide(v=>!v)}>
-                  기본 역할 추천
-                  <i className={`ti ${showRnrRoleGuide?"ti-chevron-up":"ti-chevron-down"}`} style={{marginLeft:"auto"}} aria-hidden="true"></i>
-                </button>
-                {showRnrRoleGuide&&<div className="rnr-role-guide">
-                  {RNR_BASELINE_ROLES.map(role=>(
-                    <div className="rnr-role-guide-row" key={`${role.department}-${role.position}`}>
-                      <strong>{role.department} · {role.position}</strong>
-                      <span>{role.duties.slice(0,3).join(" · ")}</span>
-                    </div>
-                  ))}
-                </div>}
+              <div className="type-desc rnr-ai-empty">
+                <b>AI 정리 결과</b>
+                <p>업무 메모를 입력하고 AI로 정리를 누르면 부서, 직책, 담당자, 체크리스트가 이곳에 표시됩니다.</p>
               </div>
             )}
           </div>
