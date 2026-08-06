@@ -336,7 +336,7 @@ function companySummerHolidayLabel() {
   return `${COMPANY_SUMMER_HOLIDAY.start}(목) ~ ${COMPANY_SUMMER_HOLIDAY.end}(월)`;
 }
 function isCompanySummerHolidayDate(dateIso:string) {
-  return dateIso>=COMPANY_SUMMER_HOLIDAY.start&&dateIso<=COMPANY_SUMMER_HOLIDAY.end;
+  return todayIso()<=COMPANY_SUMMER_HOLIDAY.end&&dateIso>=COMPANY_SUMMER_HOLIDAY.start&&dateIso<=COMPANY_SUMMER_HOLIDAY.end;
 }
 function companyHolidayLeaveObject(dateIso:string) {
   return {
@@ -3862,6 +3862,14 @@ function rnrTitleFromText(text:any) {
 function rnrDisplayTitle(entry:any) {
   return String(entry?.display_title??"").trim()||String(entry?.title??"").trim()||rnrTitleFromText(entry?.raw_input)||rnrTitleFromText(entry?.summary)||"업무 R&R";
 }
+function normalizeDepartmentName(value:any) {
+  const raw=String(value??"").trim();
+  if(!raw) return "";
+  if(raw==="공통") return "공통";
+  const compact=raw.replace(/\s+/g,"");
+  const matched=DEPARTMENT_OPTIONS.filter(Boolean).find(option=>option.replace(/\s+/g,"")===compact);
+  return matched||raw;
+}
 function rnrTitleSearchText(entry:any) {
   return [
     entry?.display_title,
@@ -3934,6 +3942,7 @@ function inferRnrWorkGroup(text:any, category:any) {
   const source=String(text??"");
   if(/부가가치세|부가세|국세|지방세|원천세|세금|신고/.test(source)) return "세금 및 신고";
   if(/현금영수증|강사|프리랜서|급여|지급/.test(source)) return "지급 및 증빙";
+  if(/신규|신입|온보딩|입사|사번|계정|웍스|works|권한/.test(source)) return "신규 인원 온보딩 준비";
   if(/노션|문서|자료|OJT|온보딩|매뉴얼/.test(source)) return "문서 관리";
   if(/블로그|인스타|SNS|홍보|기사|언론/.test(source)) return "콘텐츠·홍보";
   if(/명단|시장|운영|사생대회|행사|교육/.test(source)) return "운영 기획";
@@ -3971,7 +3980,9 @@ function enrichRnrSuggestion(suggestion:any, text:string) {
   return {...draft,is_public:suggestion?.is_public===false?false:!rnrIsSensitive(draft),public_note:String(suggestion?.public_note??"").trim()};
 }
 function rnrPublicTitle(entry:any) {
-  const saved=String(entry?.display_title??"").trim()||rnrDisplayTitle(entry);
+  const manual=String(entry?.display_title??"").trim();
+  if(manual) return manual;
+  const saved=rnrDisplayTitle(entry);
   const shouldPolish=!saved||saved.length>18||/(의\s*건|해줘|해주세요|공유|가입|정리|내역|송부)/.test(saved);
   return shouldPolish ? (polishedRnrTitle(entry)||saved) : saved;
 }
@@ -3983,7 +3994,7 @@ function rnrTargetScope(entry:any) {
   return RNR_TARGET_SCOPE_LABELS[scope]?scope:(entry?.assigned_employee_id?"employee":entry?.department?"department":"common");
 }
 function rnrPublicDepartment(entry:any) {
-  return rnrTargetScope(entry)==="common" ? "공통" : (String(entry?.department??"").trim()||"공통");
+  return rnrTargetScope(entry)==="common" ? "공통" : (normalizeDepartmentName(entry?.department)||"공통");
 }
 function rnrFlowLines(entry:any) {
   const lines=stringListFromUnknown(entry?.flow_notes);
@@ -5153,7 +5164,7 @@ function WorkMapBoard({ entries, employees=[], onOpen }: { entries:any[]; employ
                 card.department==="공통"
                   ? "전체 직원"
                   : (employees
-                    .filter((employee:any)=>String(employee.department??"").trim()===card.department)
+                    .filter((employee:any)=>normalizeDepartmentName(employee.department)===card.department)
                     .map((employee:any)=>employee.name)
                     .filter(Boolean)
                     .slice(0,5)
@@ -5384,7 +5395,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   async function toggleEmployee(id:string,cur:string){const n=cur!=="active";await updateEmployee(id,{is_active:n,employment_status:n?"active":"inactive"});}
   const orgDepartmentValue=(department:string)=>department==="공통"?"":department;
-  const employeeDepartmentLabel=(employee:any)=>String(employee?.department??"").trim()||"공통";
+  const employeeDepartmentLabel=(employee:any)=>normalizeDepartmentName(employee?.department)||"공통";
   const rnrOrgDraftFor=(department:string)=>rnrOrgDraft[department]??{employeeId:"",position:"매니저"};
   function setRnrOrgDraftValue(department:string,patch:Partial<{employeeId:string;position:string}>){
     setRnrOrgDraft(current=>({...current,[department]:{...(current[department]??{employeeId:"",position:"매니저"}),...patch}}));
@@ -5478,8 +5489,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(targetScope==="employee"&&!assignee) return setRnrMsg("담당자 업무로 저장하려면 담당 직원을 선택해주세요. 부서 업무라면 배정 대상을 부서로 바꿔주세요.");
     if(targetScope==="department"&&!String(rnrSuggestion.department??"").trim()) return setRnrMsg("부서 업무로 저장하려면 부서를 선택해주세요.");
     const displayTitleSeed=String(rnrSuggestion.display_title??rnrSuggestion.title??rawTitle).trim()||rawTitle;
-    const displayTitle=polishedRnrTitle({...rnrSuggestion,title:displayTitleSeed,display_title:displayTitleSeed,summary,raw_input:rnrInput,category})||displayTitleSeed;
-    const department=targetScope==="common"?"공통":targetScope==="employee"?(assignee?.department||rnrSuggestion.department||""):(rnrSuggestion.department||"");
+    const displayTitle=displayTitleSeed;
+    const department=normalizeDepartmentName(targetScope==="common"?"공통":targetScope==="employee"?(assignee?.department||rnrSuggestion.department||""):(rnrSuggestion.department||""));
     const position=targetScope==="common"?"":targetScope==="employee"?(assignee?.position||rnrSuggestion.position||""):(rnrSuggestion.position||"");
     const payload={
       raw_input:rnrInput.trim()||rawTitle,
@@ -5548,13 +5559,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(targetScope==="employee"&&!assignee) return setRnrMsg("담당자 업무로 수정하려면 담당 직원을 선택해주세요. 부서 업무라면 배정 대상을 부서로 바꿔주세요.");
     if(targetScope==="department"&&!String(editingRnr.department??"").trim()) return setRnrMsg("부서 업무로 수정하려면 부서를 선택해주세요.");
     const flowNotes=String(editingRnr.flowNotesText??"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
-    const department=targetScope==="common"?"공통":targetScope==="employee"?(assignee?.department||editingRnr.department||""):(editingRnr.department||"");
+    const department=normalizeDepartmentName(targetScope==="common"?"공통":targetScope==="employee"?(assignee?.department||editingRnr.department||""):(editingRnr.department||""));
     const position=targetScope==="common"?"":targetScope==="employee"?(assignee?.position||editingRnr.position||""):(editingRnr.position||"");
     const payload={
       raw_input:title,
       title,
       summary,
-      display_title:polishedRnrTitle({...editingRnr,title,summary,raw_input:title,category})||String(editingRnr.display_title??title).trim()||title,
+      display_title:String(editingRnr.display_title??title).trim()||title,
       work_group:String(editingRnr.work_group??"").trim()||inferRnrWorkGroup(`${title}\n${summary}`,category),
       flow_notes:flowNotes.length?flowNotes:inferRnrFlowLines(`${title}\n${summary}`,category),
       target_scope:targetScope,
@@ -5617,9 +5628,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const contentLines=rnrFlowLines(entry).map((item:string)=>`- ${item}`).join("\n");
     const taskDate=dateOverride||(selectedRnr?.id===entry.id?rnrTaskDate:"")||nextTaskDateForRnr(entry);
     const targetScope=rnrTargetScope(entry);
-    const department=String(entry.department??"").trim();
+    const department=normalizeDepartmentName(entry.department);
     const departmentTargets=targetScope==="department"
-      ? activeEmployees.filter((employee:any)=>String(employee.department??"").trim()===department).map((employee:any)=>employee.id)
+      ? activeEmployees.filter((employee:any)=>normalizeDepartmentName(employee.department)===department).map((employee:any)=>employee.id)
       : [];
     const targetEmployeeIds=targetScope==="employee"&&entry.assigned_employee_id
       ? [entry.assigned_employee_id]
@@ -5696,6 +5707,38 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     setEditingRnr(null);
     setRnrMsg("업무분장표에서 삭제했습니다.");
     await load(); onChanged();
+  }
+  async function sendRnrToMonthlyKpi(entry:any) {
+    if(!entry?.id) return;
+    const targetScope=rnrTargetScope(entry);
+    const department=normalizeDepartmentName(entry.department);
+    const departmentTargets=targetScope==="department"
+      ? activeEmployees.filter((employee:any)=>normalizeDepartmentName(employee.department)===department)
+      : [];
+    const employeeTargets=targetScope==="employee"&&entry.assigned_employee_id
+      ? [activeEmployees.find((employee:any)=>employee.id===entry.assigned_employee_id)].filter(Boolean)
+      : departmentTargets;
+    const monthValue=String(rnrTaskDate||todayIso()).slice(0,7);
+    const workDate=monthStartIso(monthValue);
+    const baseTitle=rnrPublicTitle(entry)||"월간 KPI";
+    const targetRows=employeeTargets.length>0
+      ? employeeTargets.map((employee:any)=>({employee_id:employee.id,employee_name:employee.name,title:baseTitle}))
+      : [{employee_id:null,employee_name:targetScope==="department"&&department?department:"전체",title:targetScope==="department"&&department?`${department} · ${baseTitle}`:baseTitle}];
+    const payloads=targetRows.map((row:any,index:number)=>({
+      ...row,
+      parent_id:null,
+      scope:"monthly",
+      work_date:workDate,
+      status:"pending",
+      sort_order:index+1,
+      is_public:true,
+      is_active:true,
+      created_by:currentEmployee.id,
+    }));
+    const {error}=await supabase.from("kpi_entries").insert(payloads);
+    if(error) return setRnrMsg(error.message);
+    const label=employeeTargets.length>0 ? `${employeeTargets.length}명` : targetRows[0].employee_name;
+    setRnrMsg(`${label} ${monthValue} 월간 KPI로 보냈습니다.`);
   }
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
@@ -6275,7 +6318,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const baseRnrDepartments=DEPARTMENT_OPTIONS.filter(Boolean);
   const rnrDepartmentNames=Array.from(new Set([
     ...baseRnrDepartments,
-    ...activeEmployees.map((employee:any)=>String(employee.department??"").trim()).filter(Boolean),
+    ...activeEmployees.map((employee:any)=>normalizeDepartmentName(employee.department)).filter(Boolean),
     ...rnrEntries.map((entry:any)=>rnrPublicDepartment(entry)).filter(Boolean),
     ...(rnrEntries.some((entry:any)=>!String(entry.department??"").trim())||activeEmployees.some((employee:any)=>!String(employee.department??"").trim())?["공통"]:[]),
   ])).sort((a:string,b:string)=>{
@@ -6887,7 +6930,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           <div className="rnr-suggestion-box">
             {rnrSuggestion ? (
               <>
-                <div className="rnr-result-head"><b>{professionalRnrTitle(rnrSuggestion.title||rnrInput,rnrSuggestion.category||classifyRnrCategory(rnrInput))}</b><span>{rnrSuggestion.department||"부서 미정"} · {rnrSuggestion.position||"직책 미정"} · {rnrSuggestion.category||"업무분류 미정"}</span></div>
+                <div className="rnr-result-head"><b>{professionalRnrTitle(rnrSuggestion.title||rnrInput,rnrSuggestion.category||classifyRnrCategory(rnrInput))}</b><span>{rnrSuggestion.department||"부서 미정"} · {rnrSuggestion.position||"직책 미정"} · {rnrSuggestion.work_group||"업무 묶음 미정"}</span></div>
                 <p>{rnrSuggestion.summary}</p>
                 <div className="grid two">
                   <div className="form-row"><label className="label">공개 업무명</label><input className="input" value={rnrSuggestion.display_title??""} onChange={e=>setRnrSuggestion({...rnrSuggestion,display_title:e.target.value})} /></div>
@@ -6924,7 +6967,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         </div>
         <div className="rnr-section-title"><b>공개 업무 분장표 미리보기</b><span>직원들에게 보이는 부서별 업무 흐름입니다.</span></div>
         <WorkMapBoard entries={rnrEntries} employees={activeEmployees} onOpen={openRnr} />
-        <div className="rnr-section-title"><b>조직도와 부서별 업무</b><span>직원을 바로 배치하고, 부서 안에서 업무 분류별 R&R을 확인합니다.</span></div>
+        <div className="rnr-section-title"><b>조직도와 부서별 업무</b><span>직원을 바로 배치하고, 부서 안에서 업무 묶음별 R&R을 확인합니다.</span></div>
         <div className="rnr-department-tabs">
           <button className={rnrDepartmentFilter==="all"?"active":""} onClick={()=>setRnrDepartmentFilter("all")}>전체</button>
           {rnrDepartmentNames.map((department:string)=><button key={department} className={rnrDepartmentFilter===department?"active":""} onClick={()=>setRnrDepartmentFilter(department)}>{department}</button>)}
@@ -7004,7 +7047,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                           <button className="rnr-person-task" onClick={()=>openRnr(entry)}>
                             <b>{rnrPublicTitle(entry)}</b>
                           </button>
-                          <button className="icon-button rnr-task-send" title="다음 출근일 할일로 보내기" onClick={()=>sendRnrToTodayTask(entry)}><i className="ti ti-clipboard-plus" aria-hidden="true"></i></button>
+                          <button className="icon-button rnr-task-send" title="할일로 보내기" onClick={()=>sendRnrToTodayTask(entry)}><i className="ti ti-clipboard-plus" aria-hidden="true"></i></button>
                         </div>
                       ))}
                     </div>
@@ -7018,7 +7061,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       </section>}
 
       {selectedRnr&&<div className="modal-backdrop" onClick={()=>setSelectedRnr(null)}>
-        <div className="modal-box" style={{maxWidth:560}} onClick={e=>e.stopPropagation()}>
+        <div className="modal-box rnr-modal-box" onClick={e=>e.stopPropagation()}>
           <div className="modal-header">
             <h2 className="card-title" style={{margin:0}}><i className="ti ti-sitemap" aria-hidden="true"></i>{rnrPublicTitle(selectedRnr)}</h2>
             <button className="modal-close" title="닫기" onClick={()=>setSelectedRnr(null)}><i className="ti ti-x" aria-hidden="true"></i></button>
@@ -7026,10 +7069,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           {editingRnr ? (
             <div className="rnr-edit-form">
               <div className="form-row"><label className="label">업무명</label><input className="input" value={editingRnr.title??""} onChange={e=>setEditingRnr({...editingRnr,title:e.target.value})} /></div>
-              <div className="grid three">
+              <div className="grid two">
                 <div className="form-row"><label className="label">부서</label><select className="select" value={editingRnr.department??""} onChange={e=>setEditingRnr({...editingRnr,department:e.target.value})}>{DEPARTMENT_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"공통"}</option>)}</select></div>
                 <div className="form-row"><label className="label">직책</label><select className="select" value={editingRnr.position??""} onChange={e=>setEditingRnr({...editingRnr,position:e.target.value})}>{POSITION_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"공통"}</option>)}</select></div>
-                <div className="form-row"><label className="label">업무 분류</label><select className="select" value={editingRnr.category??""} onChange={e=>setEditingRnr({...editingRnr,category:e.target.value})}>{RNR_CATEGORY_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"미분류"}</option>)}</select></div>
               </div>
               <div className="grid two">
                 <div className="form-row"><label className="label">공개 업무명</label><input className="input" value={editingRnr.display_title??""} onChange={e=>setEditingRnr({...editingRnr,display_title:e.target.value})} /></div>
@@ -7057,7 +7099,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 <div><dt>담당</dt><dd>{rnrAssigneeName(selectedRnr)}</dd></div>
                 <div><dt>부서</dt><dd>{selectedRnr.department||"공통"}</dd></div>
                 <div><dt>직책</dt><dd>{selectedRnr.position||"-"}</dd></div>
-                <div><dt>업무 분류</dt><dd>{rnrCategory(selectedRnr)||"기타"}</dd></div>
                 <div><dt>업무 묶음</dt><dd>{rnrWorkGroup(selectedRnr)}</dd></div>
                 <div><dt>공개 여부</dt><dd>{rnrIsPublicBoardEntry(selectedRnr)?"공개":"비공개"}</dd></div>
               </dl>
@@ -7066,7 +7107,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             </div>
           )}
           <div className="actions rnr-modal-actions" style={{justifyContent:"flex-end",marginTop:16}}>
-            {editingRnr ? <><button className="button danger ghost" onClick={()=>deleteRnrEntry(selectedRnr)}>삭제</button><button className="button ghost" onClick={()=>setEditingRnr(null)}>취소</button><button className="button" onClick={saveEditedRnr}>수정 저장</button></> : <><div className="rnr-task-date-control"><label className="label">할일 날짜</label><input className="input" type="date" value={rnrTaskDate} onChange={e=>setRnrTaskDate(e.target.value||todayIso())} /></div><button className="button secondary" onClick={()=>sendRnrToTodayTask(selectedRnr,rnrTaskDate)}><i className="ti ti-clipboard-plus" aria-hidden="true"></i>지정 날짜 할일</button><button className="button ghost" onClick={()=>beginEditRnr(selectedRnr)}><i className="ti ti-edit" aria-hidden="true"></i>수정</button><button className="button danger ghost" onClick={()=>deleteRnrEntry(selectedRnr)}>삭제</button><button className="button" onClick={()=>setSelectedRnr(null)}>확인</button></>}
+            {editingRnr ? <><button className="button danger ghost" onClick={()=>deleteRnrEntry(selectedRnr)}>삭제</button><button className="button ghost" onClick={()=>setEditingRnr(null)}>취소</button><button className="button" onClick={saveEditedRnr}>수정 저장</button></> : <><div className="rnr-task-date-control"><label className="label">기준 날짜</label><input className="input" type="date" value={rnrTaskDate} onChange={e=>setRnrTaskDate(e.target.value||todayIso())} /></div><button className="button secondary" onClick={()=>sendRnrToTodayTask(selectedRnr,rnrTaskDate)}><i className="ti ti-clipboard-plus" aria-hidden="true"></i>할일</button><button className="button secondary" onClick={()=>sendRnrToMonthlyKpi(selectedRnr)}><i className="ti ti-target-arrow" aria-hidden="true"></i>월간 KPI</button><button className="button ghost" onClick={()=>beginEditRnr(selectedRnr)}><i className="ti ti-edit" aria-hidden="true"></i>수정</button><button className="button danger ghost" onClick={()=>deleteRnrEntry(selectedRnr)}>삭제</button><button className="button" onClick={()=>setSelectedRnr(null)}>확인</button></>}
           </div>
         </div>
       </div>}

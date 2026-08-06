@@ -1183,6 +1183,9 @@ body { overflow-x: hidden; }
 .rnr-task-date-control { display: grid; grid-template-columns: auto 150px; gap: 8px; align-items: center; margin-right: auto; }
 .rnr-task-date-control .label { margin: 0; white-space: nowrap; }
 .rnr-task-date-control .input { min-height: 38px; }
+.rnr-modal-box { max-width: min(860px, calc(100vw - 32px)); }
+.rnr-modal-actions { flex-wrap: nowrap; }
+.rnr-modal-actions .button { min-width: 92px; padding-inline: 14px; white-space: nowrap; }
 .work-map-page { display: grid; gap: 18px; background: #fbfcfe; }
 .work-map-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid #e1e7f0; border-radius: 8px; background: #fff; padding: 18px 20px; }
 .work-map-hero span { display: block; margin-bottom: 5px; color: #8a95a8; font-size: 12px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
@@ -1355,6 +1358,9 @@ body { overflow-x: hidden; }
     width: 100%;
     grid-template-columns: minmax(0,1fr);
     margin-right: 0;
+  }
+  .rnr-modal-actions {
+    flex-wrap: wrap;
   }
   .rnr-modal-actions .button {
     width: 100%;
