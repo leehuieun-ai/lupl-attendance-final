@@ -1178,6 +1178,11 @@ body { overflow-x: hidden; }
 .rnr-ai-empty { height: 100%; display: grid; align-content: start; gap: 8px; color: #596579; }
 .rnr-ai-empty b { color: #182235; font-size: 16px; }
 .rnr-ai-empty p { margin: 0; }
+.rnr-assignment-box { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 12px 0; border: 1px solid #e2e8f0; border-radius: 8px; background: #fbfdff; padding: 12px; }
+.rnr-common-check { min-height: 40px; align-items: center; border: 1px solid #e5ebf3; border-radius: 8px; background: #fff; padding: 9px 10px; color: #334155; font-size: 13px; font-weight: 800; }
+.rnr-task-date-control { display: grid; grid-template-columns: auto 150px; gap: 8px; align-items: center; margin-right: auto; }
+.rnr-task-date-control .label { margin: 0; white-space: nowrap; }
+.rnr-task-date-control .input { min-height: 38px; }
 .work-map-page { display: grid; gap: 18px; background: #fbfcfe; }
 .work-map-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid #e1e7f0; border-radius: 8px; background: #fff; padding: 18px 20px; }
 .work-map-hero span { display: block; margin-bottom: 5px; color: #8a95a8; font-size: 12px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
@@ -1342,6 +1347,17 @@ body { overflow-x: hidden; }
   .improvement-issue-actions {
     min-width: 0;
     justify-content: flex-start;
+  }
+  .rnr-assignment-box {
+    grid-template-columns: minmax(0,1fr);
+  }
+  .rnr-task-date-control {
+    width: 100%;
+    grid-template-columns: minmax(0,1fr);
+    margin-right: 0;
+  }
+  .rnr-modal-actions .button {
+    width: 100%;
   }
   .improvement-list-toggle {
     align-items: flex-start;
