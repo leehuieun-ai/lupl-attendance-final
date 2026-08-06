@@ -3619,6 +3619,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [kpiView,setKpiView]=useState<"daily"|"weekly"|"monthly">("daily");
   const [draggingKpi,setDraggingKpi]=useState<{id:string,scope:"daily"|"weekly",sortOrder:number}|null>(null);
   const [dropTargetId,setDropTargetId]=useState<string|null>(null);
+  const [dropColTarget,setDropColTarget]=useState<"monthly"|"weekly"|"daily"|null>(null);
   const canvasRef=useRef<HTMLCanvasElement>(null);
   const kpiWrapRef=useRef<HTMLDivElement>(null);
   const isAdmin=currentEmployee.role==="admin";
@@ -3656,6 +3657,17 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     if(saving) return;
     setSaving(true);
     await supabase.from("kpi_entries").update({parent_id:null}).eq("id",entry.id);
+    await load();
+    setSaving(false);
+  }
+  async function changeScope(entryId:string,newScope:"daily"|"weekly"|"monthly") {
+    if(saving) return;
+    setSaving(true);
+    const workDate=newScope==="daily"?today:newScope==="weekly"?weekStart:monthStart;
+    await supabase.from("kpi_entries").update({scope:newScope,parent_id:null,work_date:workDate}).eq("id",entryId);
+    setDraggingKpi(null);
+    setDropTargetId(null);
+    setDropColTarget(null);
     await load();
     setSaving(false);
   }
@@ -3782,9 +3794,16 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       source_rnr_entry_id:related?.id??null,
     }));
   }
-  function openKpiSuggestion(scope:string) {
-    const title=quickDrafts[scope as keyof typeof quickDrafts].trim();
-    if(!title) return setMessage(`${scope==="monthly"?"월간":scope==="weekly"?"주간":"데일리"} KPI를 먼저 입력해주세요.`);
+  function openKpiSuggestion(scope:string, titleOverride?:string) {
+    const draftTitle=quickDrafts[scope as keyof typeof quickDrafts].trim();
+    const parentTitle=scope==="weekly"&&quickMonthlyParentId
+      ? monthlyGoals.find((g:any)=>g.id===quickMonthlyParentId)?.title??""
+      : scope==="daily"&&quickWeeklyParentId
+      ? weeklyGoals.find((g:any)=>g.id===quickWeeklyParentId)?.title??""
+      : "";
+    const title=titleOverride||draftTitle||parentTitle;
+    if(!title) return setMessage("KPI 내용을 먼저 입력하거나 연결할 항목을 선택해주세요.");
+    setMessage("");
     const steps=kpiStepCandidates(title);
     setKpiSuggestion({
       scope,
@@ -4086,12 +4105,21 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         <div className="kpi-hierarchy-wrap" ref={kpiWrapRef}>
           <canvas className="kpi-canvas" ref={canvasRef} />
           <div className="kpi-hierarchy-inner">
-            {draggingKpi&&<div className="kpi-drag-hint">{draggingKpi.scope==="daily"?"주간 KPI 카드 위에 드롭해서 연결":"월별 KPI 카드 위에 드롭해서 연결"} &nbsp;·&nbsp; <kbd>Esc</kbd>로 취소</div>}
+            {draggingKpi&&<div className="kpi-drag-hint">
+              {draggingKpi.scope==="daily"
+                ?"주간 카드에 드롭 → 연결 &nbsp;·&nbsp; 월간 열 하단 존에 드롭 → 스코프 변경"
+                :"월간 카드에 드롭 → 연결 &nbsp;·&nbsp; 데일리 열 하단 존에 드롭 → 스코프 변경"}
+              &nbsp;·&nbsp; <kbd>Esc</kbd>로 취소
+            </div>}
             <div className="kpi-hierarchy-grid">
 
               {/* 월별 열 */}
-              <div className="kpi-h-col">
-                <p className="kpi-h-col-label">월 목표</p>
+              <div className="kpi-h-col monthly-col" style={{"--col-accent":"#2563eb"} as React.CSSProperties}>
+                <div className="kpi-h-col-header">
+                  <em className="kpi-h-col-label">월 목표</em>
+                  <span className="kpi-h-col-count">{monthlyGoals.length}</span>
+                </div>
+                <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
                   {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
                     <option value="">전체</option>
@@ -4127,14 +4155,29 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                           <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
                         </div>
                       </div>
+                      <button className="kpi-step-suggest-btn" disabled={saving} onClick={()=>{setQuickMonthlyParentId(goal.id);openKpiSuggestion("weekly",goal.title);}}>
+                        <i className="ti ti-sparkles" style={{fontSize:11}}></i> 주간 단계 추천
+                      </button>
                     </div>
                   );
                 }) : <p className="kpi-h-empty">월별 KPI를 추가하세요</p>}
+                {/* 스코프 변경 드롭존 - 주간 드래그 중일 때 */}
+                {draggingKpi?.scope==="weekly"&&<div
+                  className={`kpi-scope-dropzone${dropColTarget==="monthly"?" active":""}`}
+                  onDragOver={e=>{e.preventDefault();setDropColTarget("monthly");}}
+                  onDragLeave={()=>setDropColTarget(null)}
+                  onDrop={e=>{e.preventDefault();if(draggingKpi)changeScope(draggingKpi.id,"monthly");}}
+                >↑ 여기 드롭 → 월간으로 변경</div>}
+              </div>
               </div>
 
               {/* 주간 열 */}
-              <div className="kpi-h-col">
-                <p className="kpi-h-col-label">주간 목표</p>
+              <div className="kpi-h-col weekly-col" style={{"--col-accent":"#8b5cf6"} as React.CSSProperties}>
+                <div className="kpi-h-col-header">
+                  <em className="kpi-h-col-label">주간 목표</em>
+                  <span className="kpi-h-col-count">{weeklyGoals.length}</span>
+                </div>
+                <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
                   {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
                     <option value="">전체</option>
@@ -4189,10 +4232,15 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   );
                 }) : <p className="kpi-h-empty">주간 KPI를 추가하세요</p>}
               </div>
+              </div>
 
               {/* 데일리 열 */}
-              <div className="kpi-h-col">
-                <p className="kpi-h-col-label">데일리</p>
+              <div className="kpi-h-col daily-col" style={{"--col-accent":"#059669"} as React.CSSProperties}>
+                <div className="kpi-h-col-header">
+                  <em className="kpi-h-col-label">데일리</em>
+                  <span className="kpi-h-col-count">{todayEntries.length}</span>
+                </div>
+                <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
                   {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
                     <option value="">전체</option>
@@ -4238,6 +4286,14 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                     </div>
                   </div>
                 )) : <p className="kpi-h-empty">오늘 데일리 KPI를 추가하세요</p>}
+                {/* 스코프 변경 드롭존 - 주간 드래그 중일 때 */}
+                {draggingKpi?.scope==="weekly"&&<div
+                  className={`kpi-scope-dropzone${dropColTarget==="daily"?" active":""}`}
+                  onDragOver={e=>{e.preventDefault();setDropColTarget("daily");}}
+                  onDragLeave={()=>setDropColTarget(null)}
+                  onDrop={e=>{e.preventDefault();if(draggingKpi)changeScope(draggingKpi.id,"daily");}}
+                >↓ 여기 드롭 → 데일리로 변경</div>}
+              </div>
               </div>
 
             </div>
