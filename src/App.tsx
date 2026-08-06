@@ -3893,6 +3893,7 @@ function rnrDescriptionLines(entry:any) {
   return merged.filter(Boolean);
 }
 const RNR_TARGET_SCOPE_LABELS:Record<string,string>={common:"공통",department:"부서",role:"직책",employee:"담당자"};
+const WORK_MAP_ACCENTS=["#2563eb","#12b76a","#f97316","#7c3aed","#06b6d4","#ef4444","#64748b"];
 function stringListFromUnknown(value:any) {
   if(Array.isArray(value)) return value.map(item=>String(item??"").trim()).filter(Boolean);
   if(typeof value==="string") return value.split(/\r?\n|[,;]+/).map(item=>item.trim()).filter(Boolean);
@@ -5085,7 +5086,8 @@ function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmp
 
 function WorkMapBoard({ entries, employees=[], onOpen }: { entries:any[]; employees?:any[]; onOpen?:(entry:any)=>void }) {
   const employeeById=new Map(employees.map((employee:any)=>[employee.id,employee]));
-  const cards=Array.from(entries.filter(rnrIsPublicBoardEntry).reduce((deptMap:Map<string,any>,entry:any)=>{
+  const publicEntries=entries.filter(rnrIsPublicBoardEntry);
+  const cards:any[]=Array.from(publicEntries.reduce((deptMap:Map<string,any>,entry:any)=>{
     const department=rnrPublicDepartment(entry);
     const groupName=rnrWorkGroup(entry);
     if(!deptMap.has(department)) deptMap.set(department,{department,entries:[],groups:new Map<string,any>()});
@@ -5100,12 +5102,19 @@ function WorkMapBoard({ entries, employees=[], onOpen }: { entries:any[]; employ
     return String(a.department).localeCompare(String(b.department));
   });
   if(cards.length===0) return <p className="rnr-empty-work">아직 공개된 업무 분장표가 없습니다. 관리자 업무 R&R에서 공개 항목을 저장하면 이곳에 표시됩니다.</p>;
-  return <div className="work-map-board">
-    {cards.map((card:any)=>(
-      <article className="work-map-card" key={card.department}>
+  const groupCount=cards.reduce((sum:number,card:any)=>sum+card.groups.size,0);
+  return <>
+    <div className="work-map-overview">
+      <div><span>공개 부서</span><b>{cards.length}</b></div>
+      <div><span>업무 묶음</span><b>{groupCount}</b></div>
+      <div><span>업무 카드</span><b>{publicEntries.length}</b></div>
+    </div>
+    <div className="work-map-board">
+    {cards.map((card:any,index:number)=>(
+      <article className="work-map-card" key={card.department} style={{"--dept-accent":WORK_MAP_ACCENTS[index%WORK_MAP_ACCENTS.length]} as any}>
         <div className="work-map-card-head">
-          <div><b>{card.department}</b><span>{card.entries.length}개 업무</span></div>
-          <i className="ti ti-hierarchy-3" aria-hidden="true"></i>
+          <div><span>Department</span><b>{card.department}</b></div>
+          <em>{card.entries.length}개 업무</em>
         </div>
         <div className="work-map-groups">
           {Array.from(card.groups.values()).map((group:any)=>(
@@ -5127,7 +5136,8 @@ function WorkMapBoard({ entries, employees=[], onOpen }: { entries:any[]; employ
         </div>
       </article>
     ))}
-  </div>;
+    </div>
+  </>;
 }
 
 function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
@@ -5166,11 +5176,13 @@ function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
     return ()=>{alive=false;};
   },[currentEmployee?.id]);
   return <section className="card work-map-page">
-    <div className="section-head">
+    <div className="work-map-hero">
       <div>
-        <h2 className="card-title"><i className="ti ti-hierarchy-3" aria-hidden="true"></i>업무 분장표</h2>
+        <span>LUPl Role Map</span>
+        <h2><i className="ti ti-hierarchy-3" aria-hidden="true"></i>업무 분장표</h2>
         <p className="subtle">부서별로 해야 할 일과 연결 업무 흐름을 공개용으로 정리해 둔 화면입니다.</p>
       </div>
+      <i className="ti ti-route-square-2" aria-hidden="true"></i>
     </div>
     {message&&<div className="alert error">{message}</div>}
     {loading ? <p className="subtle">불러오는 중...</p> : <WorkMapBoard entries={entries} />}
