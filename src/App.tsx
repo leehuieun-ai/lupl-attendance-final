@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel, exportWorkbookToXlsx } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "kpi" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
 type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection" | "attendancePolicy";
 
 const ADMIN_PERMISSION_LEVEL_RANK: Record<string, number> = { none: 0, read: 1, edit: 2, all: 3 };
@@ -26,6 +26,7 @@ const ADMIN_PERMISSION_MENUS: { id: Tab; label: string; description: string }[] 
   { id: "employees", label: "직원 관리", description: "직원 정보, 계약사항, 연차, 계정 관리" },
   { id: "workplaces", label: "근무지", description: "승인 근무지 등록, 수정, 삭제" },
   { id: "reports", label: "근태 리포트", description: "월별 근태 기록과 통계 확인" },
+  { id: "kpi", label: "KPI", description: "데일리·주간·월별 KPI 확인" },
   { id: "payroll", label: "급여", description: "급여 기준, 세무사 제출용 정리" },
   { id: "consents", label: "직원 동의서", description: "동의서 조회와 PDF 출력" },
   { id: "rnr", label: "업무 R&R", description: "조직도와 부서별 업무 관리" },
@@ -213,6 +214,7 @@ const IMPROVEMENT_SUBMENU_OPTIONS:Record<string,string[]> = {
   overtime:["추가근무 신청","추가근무 내역","보상휴가 적립"],
   worktime:["근무 일정 확인","기존 근무조건","변경 사유","상세 설명","서명","요청 내역"],
   "team-schedule":["직원별 주간 캘린더","캘린더 요약"],
+  kpi:["직원별 달성률","데일리 KPI","주간 KPI","월별 KPI","웍스 공유"],
   "admin-dashboard":["승인 대기","일일 직원 근무 현황","기록 마감","확인 완료"],
   employees:["추가근무 적립 내역","근무시간 변경 요청","근무시간 변경 기록","직원 연차 소진내용","직원 연차 현황","직원 계정 생성","직원 관리"],
   workplaces:["근무지 등록","승인된 근무지","근무지 승인"],
@@ -1138,6 +1140,31 @@ function monthSelectOptions(anchor=todayIso(), before=6, after=2) {
   }).reverse();
 }
 
+function weekEndIso(dateIso:string) { return isoDate(addLocalDays(dateFromIso(weekStartIso(dateIso)),4)); }
+function monthStartIso(month:string) { return `${month}-01`; }
+function monthEndIso(month:string) {
+  const [y,m]=month.split("-").map(Number);
+  return isoDate(new Date(y,m,0));
+}
+function kpiLinesFromText(text:string) {
+  return text
+    .split(/\r?\n/)
+    .map(line=>line.replace(/^\s*(?:[-*]|\d+[.)])\s*/,"").trim())
+    .filter(Boolean)
+    .slice(0,20);
+}
+function kpiStatusLabel(status?:string|null) {
+  if(status==="done") return "완료";
+  if(status==="missed") return "미완료";
+  return "확인 전";
+}
+function kpiCompletionRate(entries:any[]) {
+  const actionable=entries.filter((entry:any)=>entry?.scope==="daily"&&entry?.is_active!==false);
+  if(actionable.length===0) return null;
+  const done=actionable.filter((entry:any)=>entry.status==="done").length;
+  return Math.round((done/actionable.length)*100);
+}
+
 
 async function fetchCurrentEmployee() {
   const { data: { session } } = await supabase.auth.getSession();
@@ -1493,6 +1520,7 @@ export default function App() {
     overtime:"추가근무",
     worktime:"근무 일정 확인",
     "team-schedule":"팀 일정",
+    kpi:"KPI",
     "admin-dashboard":"오늘 관리",
     approvals:"승인함",
     employees:"직원",
@@ -1510,6 +1538,7 @@ export default function App() {
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"team-schedule",label:"팀 일정",icon:"ti-calendar-week"},
+    {id:"kpi",label:"KPI",icon:"ti-target-arrow"},
     {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
@@ -1573,6 +1602,7 @@ export default function App() {
           {tab==="overtime" && <LeavePage employee={employee} mode="overtime" />}
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
           {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
+          {tab==="kpi" && <KpiDashboardPage currentEmployee={employee} />}
           {tab==="admin-dashboard" && adminCan(employee,"admin-dashboard","read") && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
           {tab==="approvals" && adminCan(employee,"approvals","read") && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
           {tab==="employees" && adminCan(employee,"employees","read") && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
@@ -2596,11 +2626,18 @@ function HomePage({ employee }: { employee: any }) {
   const [attendanceRuleConsent,setAttendanceRuleConsent] = useState<any|null>(null);
   const [attendanceRuleChecked,setAttendanceRuleChecked] = useState(false);
   const [todayTasks,setTodayTasks] = useState<any[]>([]);
+  const [todayKpis,setTodayKpis] = useState<any[]>([]);
+  const [weeklyKpiOptions,setWeeklyKpiOptions] = useState<any[]>([]);
   const [todoDraft,setTodoDraft] = useState({title:"",content:""});
   const [todoMessage,setTodoMessage] = useState("");
   const [todoTargetEmployeeId,setTodoTargetEmployeeId] = useState("");
   const [todoEmployees,setTodoEmployees] = useState<any[]>([]);
   const [roleGuideEntries,setRoleGuideEntries] = useState<any[]>([]);
+  const [kpiModal,setKpiModal] = useState<any|null>(null);
+  const [kpiDraftText,setKpiDraftText] = useState("");
+  const [kpiParentId,setKpiParentId] = useState("");
+  const [kpiReview,setKpiReview] = useState<Record<string,string>>({});
+  const [kpiNotice,setKpiNotice] = useState("");
   const [notificationPermission,setNotificationPermission] = useState<NotificationPermission|"unsupported">("unsupported");
   const [lastReminderMessage,setLastReminderMessage] = useState("");
   const sentReminderKeys = useRef<Set<string>>(new Set());
@@ -2650,7 +2687,9 @@ function HomePage({ employee }: { employee: any }) {
   }
   async function load() {
     const today=todayIso();
-    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:leaveRows},{data:taskRows},{data:rnrRows},{data:correctionRows,error:correctionError},{data:ruleConsent,error:ruleError}]=await Promise.all([
+    const weekStart=weekStartIso(today);
+    const weekEnd=weekEndIso(today);
+    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:leaveRows},{data:taskRows},{data:rnrRows},{data:correctionRows,error:correctionError},{data:ruleConsent,error:ruleError},{data:kpiRows},{data:kpiWeeklyRows}]=await Promise.all([
       supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name"),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("check_in_time",{ascending:false}).limit(80),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).is("check_out_time",null).order("check_in_time",{ascending:false}),
@@ -2662,6 +2701,8 @@ function HomePage({ employee }: { employee: any }) {
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(80),
       supabase.from("attendance_correction_requests").select("*").eq("employee_id",employee.id).eq("status","pending").order("created_at",{ascending:true}).limit(10),
       supabase.from("work_time_change_consents").select("*").eq("employee_id",employee.id).eq("consent_version",ATTENDANCE_RULE_CONSENT_VERSION).maybeSingle(),
+      supabase.from("kpi_entries").select("*").eq("employee_id",employee.id).eq("work_date",today).eq("scope","daily").eq("is_active",true).order("sort_order",{ascending:true}),
+      supabase.from("kpi_entries").select("*").eq("scope","weekly").eq("is_active",true).gte("work_date",weekStart).lte("work_date",weekEnd).order("work_date",{ascending:true}).order("created_at",{ascending:true}).limit(100),
     ]);
     setWorkplaces(places??[]);
     setCompTimeRows(compRows??[]);
@@ -2672,6 +2713,8 @@ function HomePage({ employee }: { employee: any }) {
     setAttendanceRuleConsent(ruleError?{skipped:true}:ruleConsent??null);
     setAttendanceRuleChecked(true);
     setTodayTasks(taskRows??[]);
+    setTodayKpis(kpiRows??[]);
+    setWeeklyKpiOptions(kpiWeeklyRows??[]);
     if(employee.role==="admin"){
       const {data:todoEmployeeRows}=await supabase.from("employees").select("id,name,employee_no").eq("employment_status","active").order("name");
       setTodoEmployees(todoEmployeeRows??[]);
@@ -2782,6 +2825,117 @@ function HomePage({ employee }: { employee: any }) {
     if(error) setTodoMessage(error.message);
     else { setTodoDraft({title:"",content:""}); setTodoMessage("오늘의 할일을 숨겼습니다."); await load(); }
   }
+  function openCheckInKpiModal(attendanceLogId?:string|null) {
+    const currentText=todayKpis.map((entry:any,index:number)=>`${index+1}. ${entry.title}`).join("\n");
+    setKpiDraftText(currentText);
+    setKpiParentId(todayKpis.find((entry:any)=>entry.parent_id)?.parent_id??"");
+    setKpiNotice("");
+    setKpiModal({mode:"check_in",attendanceLogId});
+  }
+  function openCheckoutKpiModal() {
+    setKpiNotice("");
+    if(todayKpis.length===0) {
+      setKpiDraftText("");
+      setKpiParentId("");
+      setKpiModal({mode:"checkout_create",attendanceLogId:todayLog?.id});
+      return;
+    }
+    setKpiReview(todayKpis.reduce((map:Record<string,string>,entry:any)=>{
+      map[entry.id]=["done","missed"].includes(entry.status)?entry.status:"";
+      return map;
+    },{}));
+    setKpiModal({mode:"checkout_review",attendanceLogId:todayLog?.id});
+  }
+  function checkoutKpiReady() {
+    return todayKpis.length>0 && todayKpis.every((entry:any)=>["done","missed"].includes(entry.status));
+  }
+  async function sendWorksKpiMessage(eventType:"check_in"|"check_out", attendanceLogId?:string|null) {
+    if(!attendanceLogId) return {sent:false};
+    const {data,error}=await supabase.functions.invoke("send-works-kpi-message",{
+      body:{event_type:eventType,attendance_log_id:attendanceLogId},
+    });
+    if(error) return {sent:false,error:error.message};
+    return data ?? {sent:false};
+  }
+  async function saveCheckInKpis(andContinueCheckout=false) {
+    const lines=kpiLinesFromText(kpiDraftText);
+    if(lines.length===0) {
+      setKpiNotice("오늘 KPI를 한 줄 이상 입력해주세요.");
+      return;
+    }
+    setBusy(true);
+    setKpiNotice("");
+    try {
+      const workDate=todayIso();
+      const nowIso=new Date().toISOString();
+      const attendanceLogId=kpiModal?.attendanceLogId ?? todayLog?.id ?? null;
+      const deactivate=await supabase.from("kpi_entries")
+        .update({is_active:false,updated_at:nowIso})
+        .eq("employee_id",employee.id)
+        .eq("work_date",workDate)
+        .eq("scope","daily")
+        .eq("is_active",true);
+      if(deactivate.error) throw deactivate.error;
+      const payload=lines.map((title,index)=>({
+        employee_id:employee.id,
+        employee_name:employee.name,
+        attendance_log_id:attendanceLogId,
+        parent_id:kpiParentId||null,
+        scope:"daily",
+        work_date:workDate,
+        title,
+        status:"pending",
+        sort_order:index+1,
+        is_public:true,
+        is_active:true,
+        created_by:employee.id,
+      }));
+      const {data,error}=await supabase.from("kpi_entries").insert(payload).select("*");
+      if(error) throw error;
+      const savedRows=(data??[]).sort((a:any,b:any)=>Number(a.sort_order??0)-Number(b.sort_order??0));
+      setTodayKpis(savedRows);
+      if(andContinueCheckout) {
+        setKpiReview(savedRows.reduce((map:Record<string,string>,entry:any)=>({...map,[entry.id]:""}),{}));
+        setKpiModal({mode:"checkout_review",attendanceLogId});
+        setKpiNotice("퇴근 전 각 KPI의 완료 또는 미완료를 선택해주세요.");
+        return;
+      }
+      const works=await sendWorksKpiMessage("check_in", attendanceLogId);
+      setKpiModal(null);
+      await load();
+      setMessage(works?.sent===false&&works?.skipped
+        ? "오늘 KPI를 저장했습니다. 웍스 Secret 설정 후 자동 전송됩니다."
+        : "오늘 KPI를 저장했고 웍스방 전송을 요청했습니다.");
+    } catch(e:any) {
+      setKpiNotice(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function saveCheckoutKpiReview() {
+    const unresolved=todayKpis.filter((entry:any)=>!["done","missed"].includes(kpiReview[entry.id]||""));
+    if(unresolved.length>0) {
+      setKpiNotice("퇴근 전 모든 KPI에 완료 또는 미완료를 선택해야 합니다.");
+      return;
+    }
+    setBusy(true);
+    setKpiNotice("");
+    try {
+      const updates=await Promise.all(todayKpis.map((entry:any)=>supabase.from("kpi_entries").update({
+        status:kpiReview[entry.id],
+        updated_at:new Date().toISOString(),
+      }).eq("id",entry.id)));
+      const failed=updates.find(result=>result.error);
+      if(failed?.error) throw failed.error;
+      setTodayKpis(todayKpis.map((entry:any)=>({...entry,status:kpiReview[entry.id]})));
+      setKpiModal(null);
+      await continueCheckoutAfterKpi();
+    } catch(e:any) {
+      setKpiNotice(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
   function detectPlace(lat:number,lng:number,ip:string|null) {
     const approved=workplaces.filter(w=>w.approval_status==="approved"&&w.lat!=null&&w.lng!=null);
     const withDist=approved.map(w=>({...w,distance:distanceMeters(lat,lng,w.lat,w.lng)}));
@@ -2815,7 +2969,7 @@ function HomePage({ employee }: { employee: any }) {
         setDetectedPlace(place);setSelectedWorkplaceId(d.id);setMessage(`${d.name} GPS가 확인되어 ${isRecheck?"재출근":"출근"} 처리 중입니다.`);
         const data=await submitCheckIn(d.id,place,isRecheck);
         setMessage(`${d.name} ${isRecheck?"재출근":"출근"} 완료: ${data?.attendance_status??"처리 완료"}`);
-        setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load();
+        setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load(); openCheckInKpiModal(data?.attendance_log_id);
       }
       else{setDetectedPlace({currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip});setSelectedWorkplaceId("");setMessage("등록된 근무지 반경 안이 아닙니다. 현재 장소명을 입력하면 관리자 승인 대기 근무지로 저장됩니다.");}
     } catch(e:any){setMessage(e.message);setRecheckMode(false);} finally{setBusy(false);}
@@ -2852,16 +3006,17 @@ function HomePage({ employee }: { employee: any }) {
       }
       if(!workplaceId) throw new Error("근무지 선택 또는 현재 장소명 입력이 필요합니다.");
       const data=await submitCheckIn(workplaceId,detectedPlace,recheckMode);
-      setMessage(recheckMode ? `출근 시간을 갱신했습니다: ${data?.attendance_status??"처리 완료"}` : `출근 처리 결과: ${data?.attendance_status??"처리 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load();
+      setMessage(recheckMode ? `출근 시간을 갱신했습니다: ${data?.attendance_status??"처리 완료"}` : `출근 처리 결과: ${data?.attendance_status??"처리 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load(); openCheckInKpiModal(data?.attendance_log_id);
     } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
   }
-  async function checkOut() {
+  async function checkOut(options:{sendKpi?:boolean}={}) {
     setBusy(true); setMessage("퇴근 위치를 확인하는 중입니다.");
     try {
       const p=await getCurrentPositionFast(); const ip=await getPublicIp();
       const {fingerprintHash,deviceInfo}=await getDeviceFingerprint();
       const {data,error}=await supabase.rpc("check_out",{p_lat:p.lat,p_lng:p.lng,p_accuracy_m:p.accuracy,p_ip_address:ip,p_device_fingerprint_hash:fingerprintHash,p_device_info:deviceInfo});
       if(error) throw error; setMessage(`퇴근 처리 결과: ${data?.attendance_status??"저장 완료"}`);
+      if(options.sendKpi) await sendWorksKpiMessage("check_out", data?.attendance_log_id??todayLog?.id);
       await load();
       // 주말 근무 → 보상휴가 적립 여부 묻기
       const ci = todayLog?.check_in_time;
@@ -2900,12 +3055,12 @@ function HomePage({ employee }: { employee: any }) {
     setBusy(false);
     if(error) return setMessage(error.message);
     setLateCheckoutAsk(null);
-    await checkOut();
+    await checkOut({sendKpi:true});
     setMessage("추가근무 신청이 저장되었습니다. 관리자 승인 후 보상휴가로 적립됩니다.");
   }
   async function skipLateOvertime() {
     setLateCheckoutAsk(null);
-    await checkOut();
+    await checkOut({sendKpi:true});
     setMessage("퇴근은 처리했습니다. 추가근무가 아니라 늦게 누른 경우 실제 퇴근시각으로 출퇴근 기록 정정을 요청해주세요.");
   }
   function closeEarlyLeaveNotice() {
@@ -2943,9 +3098,9 @@ function HomePage({ employee }: { employee: any }) {
   const monthlyLateCount=monthLogs.filter((log:any)=>attendanceDisplay(employee,log,todayOverrides,workTimeChanges).lateMinutes>0||String(log.status??"").includes("지각")).length;
   const monthlyLateLevel=monthlyLateCount>=3?"danger":monthlyLateCount>=2?"warn":"normal";
 
-  function handleCheckoutClick() {
+  async function continueCheckoutAfterKpi() {
     if(!checkedIn) {
-      if(openLogs[0]) closeSpecificLog(openLogs[0]);
+      if(openLogs[0]) await closeSpecificLog(openLogs[0]);
       return;
     }
     if(reminderTargetTime&&Date.now()<reminderTargetTime) {
@@ -2958,11 +3113,22 @@ function HomePage({ employee }: { employee: any }) {
       setLateCheckoutAsk({targetTime:new Date(reminderTargetTime).toISOString(),nowTime:nowDate.toISOString()});
       return;
     }
-    checkOut();
+    await checkOut({sendKpi:true});
+  }
+  function handleCheckoutClick() {
+    if(!checkedIn) {
+      if(openLogs[0]) closeSpecificLog(openLogs[0]);
+      return;
+    }
+    if(!checkoutKpiReady()) {
+      openCheckoutKpiModal();
+      return;
+    }
+    continueCheckoutAfterKpi();
   }
   async function confirmEarlyCheckout() {
     setEarlyCheckoutAsk(null);
-    await checkOut();
+    await checkOut({sendKpi:true});
   }
 
   useEffect(()=>{
@@ -3017,6 +3183,59 @@ function HomePage({ employee }: { employee: any }) {
       {earlyLeaveNotice&&<ConfirmModal title="오늘은 마지막 금요일 조기 퇴근일입니다" confirmText="확인" cancelText="닫기" busy={busy} onCancel={closeEarlyLeaveNotice} onConfirm={closeEarlyLeaveNotice}>
         <p style={{margin:0}}>조기 퇴근 대상자는 안내된 기준 시각에 맞춰 퇴근 처리해주세요.</p>
       </ConfirmModal>}
+      {kpiModal&&(
+        <div className="modal-backdrop" onClick={()=>setKpiModal(null)}>
+          <div className="modal-box kpi-modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="card-title" style={{margin:0}}>{kpiModal.mode==="check_in"?"오늘 KPI 입력":"퇴근 전 KPI 마감"}</h2>
+              <button className="modal-close" onClick={()=>setKpiModal(null)}>✕</button>
+            </div>
+            {kpiModal.mode==="checkout_review" ? (
+              <>
+                <p className="body-text">퇴근 전 오늘 KPI마다 완료 또는 미완료를 선택해야 퇴근할 수 있습니다.</p>
+                <div className="kpi-review-list">
+                  {todayKpis.map((entry:any)=>(
+                    <div className="kpi-review-row" key={entry.id}>
+                      <span>{entry.title}</span>
+                      <div>
+                        <button className={`button compact ${kpiReview[entry.id]==="done"?"success":"ghost"}`} disabled={busy} onClick={()=>setKpiReview({...kpiReview,[entry.id]:"done"})}>완료</button>
+                        <button className={`button compact ${kpiReview[entry.id]==="missed"?"danger":"ghost"}`} disabled={busy} onClick={()=>setKpiReview({...kpiReview,[entry.id]:"missed"})}>미완료</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {kpiNotice&&<div className="alert error" style={{marginTop:12}}>{kpiNotice}</div>}
+                <div className="modal-actions">
+                  <button className="button ghost" disabled={busy} onClick={()=>setKpiModal(null)}>취소</button>
+                  <button className="button" disabled={busy} onClick={saveCheckoutKpiReview}>확인 후 퇴근</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="body-text">{kpiModal.mode==="checkout_create"?"오늘 KPI가 없어 퇴근 전 먼저 입력해야 합니다. 입력 후 완료 여부를 체크합니다.":"저장하면 출근 버튼을 누른 시간 기준으로 웍스방에 출근 완료 메시지가 전송됩니다."}</p>
+                {weeklyKpiOptions.length>0&&(
+                  <div className="form-row" style={{marginTop:12}}>
+                    <label className="label">연결 주간 KPI</label>
+                    <select className="select" value={kpiParentId} onChange={e=>setKpiParentId(e.target.value)}>
+                      <option value="">연결 안 함</option>
+                      {weeklyKpiOptions.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div className="form-row" style={{marginTop:12}}>
+                  <label className="label">오늘의 KPI</label>
+                  <textarea className="textarea kpi-textarea" value={kpiDraftText} onChange={e=>setKpiDraftText(e.target.value)} placeholder={"예:\n하나유니브 운영진 미팅\nCoffee Chat with 유니\n주간회의 with 소현"} />
+                </div>
+                {kpiNotice&&<div className="alert error" style={{marginTop:12}}>{kpiNotice}</div>}
+                <div className="modal-actions">
+                  <button className="button ghost" disabled={busy} onClick={()=>setKpiModal(null)}>취소</button>
+                  <button className="button" disabled={busy} onClick={()=>saveCheckInKpis(kpiModal.mode==="checkout_create")}>{kpiModal.mode==="checkout_create"?"저장 후 마감 체크":"저장하고 웍스 전송"}</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       <section className="card">
         <div className="summer-holiday-banner">
           <div><b>{COMPANY_SUMMER_HOLIDAY.title}</b><span>{companySummerHolidayLabel()}</span></div>
@@ -3149,6 +3368,28 @@ function HomePage({ employee }: { employee: any }) {
       </section>
 
       <div className="home-side-stack">
+      <section className="card kpi-today-card">
+        <div className="kpi-card-head">
+          <h2 className="card-title"><i className="ti ti-target-arrow" aria-hidden="true"></i>오늘 KPI</h2>
+          {checkedIn&&!checkedOut&&<button className="button ghost compact" onClick={()=>openCheckInKpiModal(todayLog?.id)}>수정</button>}
+        </div>
+        {todayKpis.length>0 ? (
+          <div className="kpi-today-list">
+            {todayKpis.map((entry:any,index:number)=>(
+              <div className={`kpi-today-row ${entry.status==="done"?"done":entry.status==="missed"?"missed":""}`} key={entry.id}>
+                <span>{index+1}</span>
+                <b>{entry.title}</b>
+                <em>{kpiStatusLabel(entry.status)}</em>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="kpi-empty">
+            <p className="body-text">오늘 등록된 KPI가 없습니다.</p>
+            {checkedIn&&!checkedOut&&<button className="button secondary full" onClick={()=>openCheckInKpiModal(todayLog?.id)}>오늘 KPI 입력</button>}
+          </div>
+        )}
+      </section>
       {(employee.role==="admin"||todayTask)&&(
         <section className="card today-task-desktop">
           <h2 className="card-title"><i className="ti ti-clipboard-list" aria-hidden="true"></i>오늘의 할일</h2>
@@ -3224,6 +3465,197 @@ function HomePage({ employee }: { employee: any }) {
         {!thisDevice&&<button className="button secondary full" style={{marginTop:10}} onClick={registerThisDevice}><i className="ti ti-plus" aria-hidden="true"></i>이 기기 등록 신청</button>}
       </section>
       </div>
+    </div>
+  );
+}
+
+function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
+  const [month,setMonth]=useState(todayIso().slice(0,7));
+  const [employees,setEmployees]=useState<any[]>([]);
+  const [entries,setEntries]=useState<any[]>([]);
+  const [message,setMessage]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [goalDraft,setGoalDraft]=useState({scope:"monthly",employee_id:"",parent_id:"",title:""});
+  const isAdmin=currentEmployee.role==="admin";
+  const today=todayIso();
+  const weekStart=weekStartIso(today);
+  const weekEnd=weekEndIso(today);
+  const monthStart=monthStartIso(month);
+  const monthEnd=monthEndIso(month);
+
+  async function load() {
+    setMessage("");
+    const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status").order("employee_no",{ascending:true});
+    const [entryResult,employeeResult]=await Promise.all([
+      supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",monthStart).lte("work_date",monthEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true}),
+      isAdmin ? employeeQuery : employeeQuery.eq("id",currentEmployee.id),
+    ]);
+    if(entryResult.error) setMessage("KPI 테이블이 아직 반영되지 않았습니다. Supabase SQL 패치를 먼저 실행해주세요.");
+    setEntries(entryResult.data??[]);
+    setEmployees(employeeResult.data??[]);
+  }
+  useEffect(()=>{ load(); },[month,currentEmployee.id]);
+
+  const employeeMap=new Map<string,any>();
+  employees.forEach((employee:any)=>employeeMap.set(employee.id,employee));
+  entries.forEach((entry:any)=>{
+    if(entry.employee_id&&!employeeMap.has(entry.employee_id)) {
+      employeeMap.set(entry.employee_id,{id:entry.employee_id,name:entry.employee_name||"직원",employee_no:""});
+    }
+  });
+  const scorePeople=Array.from(employeeMap.values())
+    .filter((employee:any)=>employee.id&&((employee.is_active&&employee.employment_status==="active")||entries.some((entry:any)=>entry.employee_id===employee.id)))
+    .sort((a:any,b:any)=>String(a.employee_no??a.name).localeCompare(String(b.employee_no??b.name)));
+  const dailyEntries=entries.filter((entry:any)=>entry.scope==="daily");
+  const todayEntries=dailyEntries.filter((entry:any)=>entry.work_date===today);
+  const weekDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
+  const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
+  const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly");
+  function personName(id?:string|null) {
+    if(!id) return "전체";
+    return employeeMap.get(id)?.name ?? entries.find((entry:any)=>entry.employee_id===id)?.employee_name ?? "직원";
+  }
+  function entriesByEmployee(list:any[]) {
+    const groups=new Map<string,any[]>();
+    list.forEach((entry:any)=>{
+      const key=entry.employee_id??"team";
+      groups.set(key,[...(groups.get(key)??[]),entry]);
+    });
+    return Array.from(groups.entries());
+  }
+  function scoreForEmployee(employeeId:string) {
+    const list=weekDailyEntries.filter((entry:any)=>entry.employee_id===employeeId);
+    const rate=kpiCompletionRate(list);
+    return {rate:rate??0,total:list.length,done:list.filter((entry:any)=>entry.status==="done").length};
+  }
+  async function saveGoal() {
+    if(!isAdmin) return;
+    const title=goalDraft.title.trim();
+    if(!title) return setMessage("KPI 제목을 입력해주세요.");
+    setSaving(true); setMessage("");
+    try {
+      const target=employees.find((employee:any)=>employee.id===goalDraft.employee_id);
+      const workDate=goalDraft.scope==="monthly"?monthStart:weekStart;
+      const {error}=await supabase.from("kpi_entries").insert({
+        employee_id:goalDraft.employee_id||null,
+        employee_name:target?.name || (goalDraft.employee_id ? null : "전체"),
+        parent_id:goalDraft.scope==="weekly" ? (goalDraft.parent_id||null) : null,
+        scope:goalDraft.scope,
+        work_date:workDate,
+        title,
+        status:"pending",
+        sort_order:entries.filter((entry:any)=>entry.scope===goalDraft.scope).length+1,
+        is_public:true,
+        is_active:true,
+        created_by:currentEmployee.id,
+      });
+      if(error) throw error;
+      setGoalDraft({...goalDraft,title:""});
+      await load();
+      setMessage("KPI 목표를 저장했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="kpi-dashboard-page">
+      <section className="card">
+        <div className="kpi-dashboard-head">
+          <div>
+            <h2 className="card-title"><i className="ti ti-target-arrow" aria-hidden="true"></i>KPI 대시보드</h2>
+            <p className="body-text">월별 목표를 주간으로 쪼개고, 직원 출퇴근 흐름에서 데일리 KPI 완료 상태를 쌓아 봅니다.</p>
+          </div>
+          <select className="select kpi-month-select" value={month} onChange={e=>setMonth(e.target.value)}>
+            {monthSelectOptions(today,8,2).map(option=><option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div>
+        {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
+        <div className="kpi-score-strip">
+          {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
+            const score=scoreForEmployee(employee.id);
+            return (
+              <div className="kpi-score-card" key={employee.id}>
+                <div><b>{employee.name}</b><strong>{score.rate}%</strong></div>
+                <span className="kpi-score-ring" style={{"--kpi-rate":`${score.rate}%`} as any}>{score.done}/{score.total}</span>
+              </div>
+            );
+          }) : <p className="body-text">이번 달 KPI 기록이 아직 없습니다.</p>}
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="section-head"><h2 className="card-title">데일리 KPI</h2><span className="subtle">오늘 직원별 KPI</span></div>
+        <div className="kpi-grid four">
+          {entriesByEmployee(todayEntries).length>0 ? entriesByEmployee(todayEntries).map(([employeeId,list])=>(
+            <div className="kpi-person-card" key={employeeId}>
+              <div className="kpi-person-head"><b>{personName(employeeId)}</b><span>{kpiCompletionRate(list)??0}%</span></div>
+              <ul>{list.map((entry:any)=><li key={entry.id} className={entry.status==="done"?"done":entry.status==="missed"?"missed":""}><span>{kpiStatusLabel(entry.status)}</span>{entry.title}</li>)}</ul>
+            </div>
+          )) : <p className="body-text">오늘 등록된 데일리 KPI가 없습니다.</p>}
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="section-head"><h2 className="card-title">주간 KPI</h2><span className="subtle">{weekStart}~{weekEnd}</span></div>
+        <div className="kpi-grid four">
+          {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
+            const list=weekDailyEntries.filter((entry:any)=>entry.employee_id===employee.id);
+            const done=list.filter((entry:any)=>entry.status==="done").length;
+            const missed=list.filter((entry:any)=>entry.status==="missed").length;
+            const pending=list.length-done-missed;
+            return (
+              <div className="kpi-person-card" key={employee.id}>
+                <div className="kpi-person-head"><b>{employee.name}</b><span>{kpiCompletionRate(list)??0}%</span></div>
+                <div className="kpi-week-stats">
+                  <span>완료 <b>{done}</b></span>
+                  <span>미완료 <b>{missed}</b></span>
+                  <span>확인 전 <b>{pending}</b></span>
+                </div>
+                {weeklyGoals.filter((goal:any)=>!goal.employee_id||goal.employee_id===employee.id).slice(0,3).map((goal:any)=><p className="kpi-linked-goal" key={goal.id}>{goal.title}</p>)}
+              </div>
+            );
+          }) : <p className="body-text">이번 주 KPI가 아직 없습니다.</p>}
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="section-head"><h2 className="card-title">월별 KPI</h2><span className="subtle">월 목표 → 주간 → 데일리</span></div>
+        {isAdmin&&(
+          <div className="kpi-goal-editor">
+            <select className="select" value={goalDraft.scope} onChange={e=>setGoalDraft({...goalDraft,scope:e.target.value,parent_id:""})}>
+              <option value="monthly">월별 KPI</option>
+              <option value="weekly">주간 KPI</option>
+            </select>
+            <select className="select" value={goalDraft.employee_id} onChange={e=>setGoalDraft({...goalDraft,employee_id:e.target.value})}>
+              <option value="">전체</option>
+              {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+            </select>
+            {goalDraft.scope==="weekly"&&(
+              <select className="select" value={goalDraft.parent_id} onChange={e=>setGoalDraft({...goalDraft,parent_id:e.target.value})}>
+                <option value="">월별 KPI 연결 없음</option>
+                {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+              </select>
+            )}
+            <input className="input" value={goalDraft.title} onChange={e=>setGoalDraft({...goalDraft,title:e.target.value})} placeholder="예: 8월 교육 운영 안정화" />
+            <button className="button compact" disabled={saving} onClick={saveGoal}>저장</button>
+          </div>
+        )}
+        <div className="kpi-month-map">
+          {monthlyGoals.length>0 ? monthlyGoals.map((goal:any)=>(
+            <div className="kpi-month-node" key={goal.id}>
+              <b>{goal.title}</b>
+              <span>{personName(goal.employee_id)}</span>
+              <div>
+                {weeklyGoals.filter((weekly:any)=>weekly.parent_id===goal.id).map((weekly:any)=><em key={weekly.id}>{weekly.title}</em>)}
+                {weeklyGoals.filter((weekly:any)=>weekly.parent_id===goal.id).length===0&&<em>주간 KPI 연결 전</em>}
+              </div>
+            </div>
+          )) : <p className="body-text">월별 KPI를 먼저 등록하면 주간·데일리 KPI가 이어집니다.</p>}
+        </div>
+      </section>
     </div>
   );
 }
