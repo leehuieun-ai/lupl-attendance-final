@@ -689,6 +689,7 @@ function kstMinutesOnDate(value:Date, dateIso:string) {
   return total;
 }
 function expectedWorkEndForDate(dateIso:string, schedule:any, leaveRequests:any[]=[], checkIn?:Date|null) {
+  const workRange=normalizeMinuteRange(schedule?.work_start??"09:00",schedule?.work_end??"18:00");
   const ranges=requiredWorkRangesForDate(dateIso,schedule,leaveRequests);
   const firstRange=ranges[0];
   const lastRange=ranges[ranges.length-1];
@@ -696,19 +697,19 @@ function expectedWorkEndForDate(dateIso:string, schedule:any, leaveRequests:any[
   let earlyMinutes=0;
   if(checkIn){
     const checkInMinute=kstMinutesOnDate(checkIn,dateIso);
-    if(firstRange&&checkInMinute<firstRange[0]) earlyMinutes=firstRange[0]-checkInMinute;
+    if(workRange&&ranges.length>0&&checkInMinute<workRange[0]) earlyMinutes=workRange[0]-checkInMinute;
     missedMinutes=ranges.reduce((sum,[start,end])=>{
       if(checkInMinute<=start) return sum;
       if(checkInMinute>=end) return sum+(end-start);
       return sum+(checkInMinute-start);
     },0);
   }
-  const baseEndMinute=lastRange?.[1]??(timeToMinutes(schedule?.work_start??"09:00")??9*60);
+  const baseEndMinute=lastRange?.[1]??workRange?.[1]??(timeToMinutes(schedule?.work_end??"18:00")??18*60);
   const breakRange=normalizeMinuteRange(schedule?.break_start??"12:00",schedule?.break_end??"13:00");
   const blockedRanges=[...(breakRange?[breakRange]:[]),...approvedLeaveRangesForDate(leaveRequests,dateIso,schedule)];
   const endMinute=addMinutesSkippingRanges(baseEndMinute,missedMinutes-earlyMinutes,blockedRanges);
   const expectedEnd=addMinutes(kstDateTime(dateIso,minutesToTime(endMinute%(24*60))),Math.floor(endMinute/(24*60))*24*60);
-  return {expectedEnd,shiftMinutes:minuteRangeTotal(ranges)+missedMinutes,leaveMinutes:approvedLeaveMinutesForDate(leaveRequests,dateIso,schedule)};
+  return {expectedEnd,shiftMinutes:minuteRangeTotal(ranges),leaveMinutes:approvedLeaveMinutesForDate(leaveRequests,dateIso,schedule)};
 }
 function dateTimeForWorkDateTime(dateIso:string, time?:string|null, after?:Date|null) {
   if(!time) return null;
@@ -1430,16 +1431,24 @@ export default function App() {
           const [w, rq, c, d, lg, wt] = await Promise.all([
             supabase.from("workplaces").select("id, approval_status"),
             supabase.from("attendance_requests").select("id, status"),
-            supabase.from("comp_time_requests").select("id, status"),
+            supabase.from("comp_time_requests").select("*"),
             supabase.from("registered_devices").select("id, status"),
             supabase.from("attendance_logs").select("id, status, check_in_time, check_out_time"),
             supabase.from("work_time_change_requests").select("id, status"),
           ]);
           if(seq!==loadSeqRef.current) return;
+          let settledCompIdsForBadge=new Set<string>();
+          try { settledCompIdsForBadge=new Set(JSON.parse(localStorage.getItem("lupl_settled_comp_ids")??"[]")); } catch {}
+          const actionableCompCount=(c.data??[]).filter((x:any)=>{
+            if(settledCompIdsForBadge.has(x.id)) return false;
+            if(x.attendance_log_id||x.actual_overtime_hours!==null&&x.actual_overtime_hours!==undefined) return false;
+            if(String(x.review_note??"").includes("실제 퇴근시간 기준")) return false;
+            return x.status==="pending";
+          }).length;
           setPendingCount(
             (w.data??[]).filter((x:any)=>x.approval_status==="pending").length +
             (rq.data??[]).filter((x:any)=>x.status==="pending").length +
-            (c.data??[]).filter((x:any)=>x.status==="pending").length +
+            actionableCompCount +
             (d.data??[]).filter((x:any)=>x.status==="pending").length +
             (wt.data??[]).filter((x:any)=>x.status==="pending").length +
             (lg.data??[]).filter((x:any)=>{
@@ -3926,8 +3935,8 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       const checkOut=logResult.data?.check_out_time?new Date(logResult.data.check_out_time):null;
       const {expectedEnd,shiftMinutes,leaveMinutes}=expectedWorkEndForDate(date,schedule,leaveResult.data??[],checkIn);
       if(cancelled) return;
-      const expectedEndHHMM=new Intl.DateTimeFormat("ko-KR",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Seoul"}).format(expectedEnd);
-      const actualCheckoutHHMM=checkOut?new Intl.DateTimeFormat("ko-KR",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Seoul"}).format(checkOut):null;
+      const expectedEndHHMM=kstHHMM(expectedEnd);
+      const actualCheckoutHHMM=checkOut?kstHHMM(checkOut):null;
       setCompBaseline({hasCheckIn:!!checkIn,checkInTime:checkIn?.toISOString()??null,hasCheckOut:!!checkOut,checkOutTime:checkOut?.toISOString()??null,actualCheckoutHHMM,expectedEndTime:expectedEnd.toISOString(),expectedEndHHMM,shiftMinutes,leaveMinutes});
       setCompForm(current=>{
         if(current.work_date!==date||(timeToMinutes(current.start_time)??0)>=(timeToMinutes(expectedEndHHMM)??0)) return current;
@@ -3981,9 +3990,23 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       return {...next,amount_hours:next.request_type==="hourly"&&hours>0?String(hours):next.amount_hours};
     });
   }
+  function handleLeaveStartDate(value:string){
+    setForm(current=>({
+      ...current,
+      start_date:value,
+      end_date:!current.end_date||current.end_date<value?value:current.end_date,
+    }));
+  }
+  function handleLeaveEndDate(value:string){
+    setForm(current=>({
+      ...current,
+      end_date:value<current.start_date?current.start_date:value,
+    }));
+  }
 
   async function submitLeave() {
     setMessage("");
+    if(!form.start_date||!form.end_date||form.end_date<form.start_date) return setMessage("휴가 종료일은 시작일과 같거나 이후여야 합니다.");
     const requestedHours=isHourly?Number(form.amount_hours||0):0;
     const effectiveRequestType=isHourly&&compRemainHours>0?"comp_leave_use":form.request_type;
     const m=LEAVE_TYPE_META[effectiveRequestType]??LEAVE_TYPE_META[form.request_type];
@@ -4111,11 +4134,11 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
           )}
 
           {isSingle ? (
-            <div className="form-row"><label className="label">사용일</label><input className="input" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})} /></div>
+            <div className="form-row"><label className="label">사용일</label><input className="input" type="date" value={form.start_date} onChange={e=>handleLeaveStartDate(e.target.value)} /></div>
           ) : (
             <div className="grid two">
-              <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})} /></div>
-              <div className="form-row"><label className="label">종료일</label><input className="input" type="date" value={form.end_date} onChange={e=>setForm({...form,end_date:e.target.value})} /></div>
+              <div className="form-row"><label className="label">시작일</label><input className="input" type="date" value={form.start_date} onChange={e=>handleLeaveStartDate(e.target.value)} /></div>
+              <div className="form-row"><label className="label">종료일</label><input className="input" type="date" min={form.start_date} value={form.end_date} onChange={e=>handleLeaveEndDate(e.target.value)} /></div>
             </div>
           )}
 
@@ -4866,7 +4889,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(error)setMessage(error.message);else{setMessage(status==="approved"?"휴가 신청을 승인했고 관련 일정에 반영됩니다.":"휴가 신청을 반려했습니다.");await load();onChanged();}
   }
   function compAttendance(request:any){
-    return allLogs.find((log:any)=>log.employee_id===request.employee_id&&localDateStr(log.check_in_time)===request.work_date&&!!log.check_out_time);
+    return allLogs.find((log:any)=>log.employee_id===request.employee_id&&localDateStr(log.check_in_time)===request.work_date);
   }
   function compSchedule(request:any){
     return getScheduleForDate(empMap[request.employee_id],request.work_date,overrides,workTimeRequests.filter(r=>r.status==="approved"));
@@ -4902,8 +4925,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const rejectionNote=status==="rejected"?rejectionNoteOrNull("추가근무 신청"):null;
     if(status==="rejected"&&rejectionNote===null) return;
     const usesActualCheckout=request.work_date>="2026-06-24";
-    const completedLog=compAttendance(request);
-    const scheduledEnd=expectedCompCheckout(request,completedLog);
+    const relatedLog=compAttendance(request);
+    const completedLog=relatedLog?.check_out_time?relatedLog:null;
+    const scheduledEnd=expectedCompCheckout(request,relatedLog);
     const companyConfirmed=companyConfirmedComp(request);
     const result=usesActualCheckout&&completedLog&&!companyConfirmed
       ? await supabase.rpc("review_comp_time_attendance",{p_request_id:request.id,p_status:status,p_scheduled_end:kstHHMM(scheduledEnd),p_review_note:status==="approved"?"실제 퇴근시간 기준 승인":rejectionNote})
@@ -5245,7 +5269,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const pC=compRequests.filter(r=>{
     if(actualCompSettled(r)) return false;
     if(r.status==="pending") return true;
-    return r.status==="approved"&&r.work_date>="2026-06-24"&&!!compAttendance(r);
+    return r.status==="approved"&&r.work_date>="2026-06-24"&&!!compAttendance(r)?.check_out_time;
   });
   const pT=workTimeRequests.filter(r=>r.status==="pending");
   const pA=attendanceCorrectionRequests
@@ -7257,10 +7281,10 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const [localEmployees,setLocalEmployees]=useState<any[]>(employees);
   const [payrollMonthValue,setPayrollMonthValue]=useState(todayIso().slice(0,7));
   useEffect(()=>{setLocalEmployees(employees);},[employees]);
-  const payrollEligibleEmployees=localEmployees.filter((employee:any)=>isEmployeeActive(employee)&&!isTestEmployee(employee)&&!employee.is_unpaid);
-  const emp=empId?payrollEligibleEmployees.find(e=>e.id===empId):null;
+  const payrollBaseEmployees=localEmployees.filter((employee:any)=>!isTestEmployee(employee)&&!employee.is_unpaid);
+  const emp=empId?payrollBaseEmployees.find(e=>e.id===empId):null;
   useEffect(()=>{
-    if(empId&&!payrollEligibleEmployees.some((employee:any)=>employee.id===empId)) setEmpId("");
+    if(empId&&!payrollBaseEmployees.some((employee:any)=>employee.id===empId)) setEmpId("");
   },[empId,localEmployees.length]);
   function recalc(next:any, source:string, fixedOverride?:Record<string,boolean>) {
     const fixed=fixedOverride??payFixed;
@@ -7392,7 +7416,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
-  const payrollSummaryRows=payrollEligibleEmployees.map((employee:any)=>{
+  const payrollSummaryRows=payrollBaseEmployees.map((employee:any)=>{
     const monthStats=payrollScheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges,scheduleEvents);
     const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
     const baseWeeklyDays=Number(employee.weekly_work_days||employee.work_days?.length||0);
@@ -7406,9 +7430,9 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
     const scheduledNetBase=Math.max(0,scheduledGrossPay-rowDeduction);
     const scheduledNetPay=scheduledNetBase?Math.max(0,scheduledNetBase-calcInsurance(scheduledNetBase).employee):0;
     return {employee,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,scheduledGrossPay,scheduledNetPay,rowAbsentDays,rowDeduction};
-  }).filter((row:any)=>Number(row.month?.hours||0)>0||Number(row.month?.days||0)>0);
+  }).filter((row:any)=>(Number(row.month?.hours||0)>0||Number(row.month?.days||0)>0)&&(isEmployeeActive(row.employee)||month.end<todayIso()));
   const payrollSummaryEmployeeIds=new Set(payrollSummaryRows.map((row:any)=>row.employee.id));
-  const payrollSelectableEmployees=payrollEligibleEmployees
+  const payrollSelectableEmployees=payrollBaseEmployees
     .filter((employee:any)=>isEmployeeActive(employee)||payrollSummaryEmployeeIds.has(employee.id))
     .sort(sortEmployeesBySeniority);
   const payrollScheduledGrossPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledGrossPay||0),0);
@@ -7773,6 +7797,8 @@ function ConsentReportPage() {
   workTimeConsents.filter(consent=>consent.consent_version===WORK_TIME_CHANGE_CONSENT_VERSION).forEach(consent=>{if(!latestWorkConsentByEmployee[consent.employee_id]) latestWorkConsentByEmployee[consent.employee_id]=consent;});
   const latestAdminPledgeByEmployee:Record<string,any>={};
   workTimeConsents.filter(consent=>consent.consent_version===ADMIN_CONFIDENTIALITY_CONSENT_VERSION).forEach(consent=>{if(!latestAdminPledgeByEmployee[consent.employee_id]) latestAdminPledgeByEmployee[consent.employee_id]=consent;});
+  const latestAttendancePolicyByEmployee:Record<string,any>={};
+  workTimeConsents.filter(consent=>consent.consent_version===ATTENDANCE_RULE_CONSENT_VERSION).forEach(consent=>{if(!latestAttendancePolicyByEmployee[consent.employee_id]) latestAttendancePolicyByEmployee[consent.employee_id]=consent;});
   const employeeMap:Record<string,any>={};
   employees.forEach(employee=>{employeeMap[employee.id]=employee;});
   const visibleConsentEmployees=employees.filter(employee=>employee.employment_status==="active"&&employee.is_active!==false);
@@ -7824,7 +7850,12 @@ function ConsentReportPage() {
     }
     if(kind==="workTimeConsent") return [record.notice_text??WORK_TIME_CONSENT_TEXT, record.detail_text??WORK_TIME_DETAIL_TEXT];
     if(kind==="adminConfidentiality") return [record.notice_text??ADMIN_CONFIDENTIALITY_NOTICE_TEXT, record.detail_text??ADMIN_CONFIDENTIALITY_DETAIL_TEXT];
-    if(kind==="attendancePolicy") return [record.notice_text??"근태 기준 안내", record.detail_text??ATTENDANCE_RULE_DETAIL_TEXT];
+    if(kind==="attendancePolicy") {
+      const detailLines=Array.isArray(record.detail_text)
+        ? record.detail_text
+        : String(record.detail_text??ATTENDANCE_RULE_DETAIL_TEXT).split("\n");
+      return [record.notice_text??"근태 기준 안내", ...detailLines];
+    }
     if(kind==="attendanceCorrection") return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
     const lines=String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
     const isNoWork=(Array.isArray(record.new_work_days)&&record.new_work_days.length===0)||Number(record.weekly_work_hours||0)===0;
@@ -7894,24 +7925,27 @@ function ConsentReportPage() {
     {message&&<div className="alert error">{message}</div>}
     <section className="card">
       <div className="schedule-board-toolbar">
-        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원별 필수 서명</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근무시간 변경 안내, 근무시간 변경 요청, 출퇴근 기록 정정 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
+        <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-file-certificate" aria-hidden="true"></i>직원별 필수 서명</h2><p className="subtle" style={{margin:0}}>개인정보 동의, 근태 기준 확인, 근무시간 변경 안내, 근무시간 변경 요청, 출퇴근 기록 정정 서명을 한 곳에서 확인하고 PDF로 저장합니다.</p></div>
         <span className="badge good">서명 {totalSigned}건</span>
       </div>
       <div className="table-wrap" style={{marginTop:18}}>
         <table>
           <caption className="table-summary">직원별 최신 필수 동의서</caption>
-          <thead><tr><th>직원</th><th>개인정보 동의</th><th>근무시간 변경 안내</th><th>비밀유지</th><th>관리</th></tr></thead>
+          <thead><tr><th>직원</th><th>개인정보 동의</th><th>근태 기준</th><th>근무시간 변경 안내</th><th>비밀유지</th><th>관리</th></tr></thead>
           <tbody>{visibleConsentEmployees.map(employee=>{
             const consent=latestByEmployee[employee.id];
             const workConsent=latestWorkConsentByEmployee[employee.id];
             const adminPledge=latestAdminPledgeByEmployee[employee.id];
+            const attendancePolicy=latestAttendancePolicyByEmployee[employee.id];
             return <tr key={employee.id}>
               <td><b>{employee.name}</b><br/><span className="subtle">{employee.employee_no}</span></td>
               <td><span className={`badge ${consent?"good":"warn"}`}>{consent?"완료":"미동의"}</span><SignedAt value={consent?.created_at} /></td>
+              <td><span className={`badge ${attendancePolicy?"good":"warn"}`}>{attendancePolicy?"완료":"미서명"}</span><SignedAt value={attendancePolicy?.created_at} /></td>
               <td><span className={`badge ${workConsent?"good":"warn"}`}>{workConsent?"완료":"미서명"}</span><SignedAt value={workConsent?.created_at} /></td>
               <td><span className={`badge ${adminPledge?"good":"warn"}`}>{adminPledge?"완료":"미서명"}</span><SignedAt value={adminPledge?.created_at} /></td>
               <td><div className="actions">
                 <button className="button secondary compact" disabled={!consent} onClick={()=>consent&&setSelected({employee,record:consent,kind:"privacy"})}><i className="ti ti-eye" aria-hidden="true"></i>개인정보</button>
+                <button className="button secondary compact" disabled={!attendancePolicy} onClick={()=>attendancePolicy&&setSelected({employee,record:attendancePolicy,kind:"attendancePolicy"})}><i className="ti ti-checkup-list" aria-hidden="true"></i>근태 기준</button>
                 <button className="button secondary compact" disabled={!workConsent} onClick={()=>workConsent&&setSelected({employee,record:workConsent,kind:"workTimeConsent"})}><i className="ti ti-clock-edit" aria-hidden="true"></i>근무시간</button>
                 <button className="button secondary compact" disabled={!adminPledge} onClick={()=>adminPledge&&setSelected({employee,record:adminPledge,kind:"adminConfidentiality"})}><i className="ti ti-shield-lock" aria-hidden="true"></i>비밀유지</button>
               </div></td>
