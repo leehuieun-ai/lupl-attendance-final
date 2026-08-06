@@ -3617,6 +3617,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
   const [kpiView,setKpiView]=useState<"daily"|"weekly"|"monthly">("daily");
+  const canvasRef=useRef<HTMLCanvasElement>(null);
+  const kpiWrapRef=useRef<HTMLDivElement>(null);
   const isAdmin=currentEmployee.role==="admin";
   const today=todayIso();
   const weekStart=weekStartIso(today);
@@ -3638,6 +3640,39 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     setRnrEntries(rnrResult.data??[]);
   }
   useEffect(()=>{ load(); },[month,currentEmployee.id]);
+
+  useEffect(()=>{
+    const canvas=canvasRef.current;
+    const wrap=kpiWrapRef.current;
+    if(!canvas||!wrap) return;
+    const wr=wrap.getBoundingClientRect();
+    if(wr.width===0) return;
+    canvas.width=wr.width;
+    canvas.height=wr.height;
+    const ctx=canvas.getContext("2d");
+    if(!ctx) return;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    function drawBezier(fromId:string,toId:string,color:string,solid:boolean){
+      const fromEl=wrap!.querySelector(`[data-kpi-id="${fromId}"]`);
+      const toEl=wrap!.querySelector(`[data-kpi-id="${toId}"]`);
+      if(!fromEl||!toEl) return;
+      const fr=fromEl.getBoundingClientRect();
+      const tr=toEl.getBoundingClientRect();
+      const x1=fr.right-wr.left,y1=fr.top+fr.height/2-wr.top;
+      const x2=tr.left-wr.left,y2=tr.top+tr.height/2-wr.top;
+      const cx=(x1+x2)/2;
+      ctx!.beginPath();
+      ctx!.moveTo(x1,y1);
+      ctx!.bezierCurveTo(cx,y1,cx,y2,x2,y2);
+      ctx!.strokeStyle=solid?color+"bb":color+"44";
+      ctx!.lineWidth=solid?1.5:1;
+      ctx!.setLineDash(solid?[]:[4,3]);
+      ctx!.stroke();
+      ctx!.setLineDash([]);
+    }
+    weeklyGoals.forEach((w:any)=>{ if(w.parent_id) drawBezier(w.parent_id,w.id,"#8b5cf6",true); });
+    todayEntries.forEach((d:any)=>{ if(d.parent_id) drawBezier(d.parent_id,d.id,"#059669",d.status==="done"); });
+  },[entries]);
 
   const employeeMap=new Map<string,any>();
   employees.forEach((employee:any)=>employeeMap.set(employee.id,employee));
@@ -3963,13 +3998,6 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
           </div>
         )}
         {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
-        <div className="kpi-view-tabs">
-          {(["daily","weekly","monthly"] as const).map(view=>(
-            <button type="button" key={view} className={kpiView===view?"active":""} onClick={()=>setKpiView(view)}>
-              {view==="daily"?"데일리 KPI":view==="weekly"?"주간 KPI":"월별 KPI"}
-            </button>
-          ))}
-        </div>
         <div className="kpi-score-strip">
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
             const score=scoreForEmployee(employee.id);
@@ -4022,68 +4050,125 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         </section>
       )}
 
-      {kpiView==="daily"&&<section className="card kpi-section-card">
-        <div className="section-head"><h2 className="card-title">데일리 KPI</h2><span className="subtle">오늘 직원별 KPI</span></div>
-        {renderKpiInlineInput("daily")}
-        <div className="kpi-grid four">
-          {entriesByEmployee(todayEntries).length>0 ? entriesByEmployee(todayEntries).map(([employeeId,list])=>(
-            <div className="kpi-person-card" key={employeeId} style={kpiCardStyle(employeeId,kpiCompletionRate(list)??0)}>
-              <div className="kpi-person-head"><b>{personName(employeeId)}</b><span>{kpiCompletionRate(list)??0}%</span></div>
-              <ul>{list.map((entry:any)=><li key={entry.id} className={entry.status==="done"?"done":entry.status==="missed"?"missed":""}>
-                <label className="kpi-done-check" title="완료 체크"><input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={event=>updateKpiStatus(entry,event.target.checked?"done":"pending")} /><span>{kpiStatusLabel(entry.status)}</span></label>
-                <div><b>{entry.title}</b>{entry.updated_by&&entry.updated_by!==entry.created_by&&<small>관리자가 변경하였습니다{entry.admin_note?` · ${entry.admin_note}`:""}</small>}</div>
-                <div className="kpi-row-actions">
-                  <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
-                  <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
-                </div>
-              </li>)}</ul>
-            </div>
-          )) : <p className="body-text">오늘 등록된 데일리 KPI가 없습니다.</p>}
-        </div>
-      </section>}
+      <section className="card kpi-section-card">
+        <div className="section-head"><h2 className="card-title">KPI 흐름</h2><span className="subtle">월 목표 → 주간 → 데일리 순으로 쌓입니다</span></div>
+        <div className="kpi-hierarchy-wrap" ref={kpiWrapRef}>
+          <canvas className="kpi-canvas" ref={canvasRef} />
+          <div className="kpi-hierarchy-inner">
+            <div className="kpi-hierarchy-grid">
 
-      {kpiView==="weekly"&&<section className="card kpi-section-card">
-        <div className="section-head"><h2 className="card-title">주간 KPI</h2><span className="subtle">{weekStart}~{weekEnd}</span></div>
-        {renderKpiInlineInput("weekly")}
-        <div className="kpi-grid four">
-          {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
-            const list=weekDailyEntries.filter((entry:any)=>entry.employee_id===employee.id);
-            const done=list.filter((entry:any)=>entry.status==="done").length;
-            const missed=list.filter((entry:any)=>entry.status==="missed").length;
-            const pending=list.length-done-missed;
-            const rate=kpiCompletionRate(list)??0;
-            return (
-              <div className="kpi-person-card kpi-week-card" key={employee.id} style={kpiCardStyle(employee.id,rate)}>
-                <div className="kpi-person-head"><b>{employee.name}</b><span>{rate}%</span></div>
-                <div className="kpi-week-stats">
-                  <span>완료 <b>{done}</b></span>
-                  <span>미완료 <b>{missed}</b></span>
-                  <span>확인 전 <b>{pending}</b></span>
+              {/* 월별 열 */}
+              <div className="kpi-h-col">
+                <p className="kpi-h-col-label">월 목표</p>
+                <div className="kpi-h-input-wrap">
+                  {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
+                    <option value="">전체</option>
+                    {employees.map((emp:any)=><option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                  </select>}
+                  <div className="kpi-h-input-row">
+                    <input className="kpi-h-input-field" value={quickDrafts.monthly} onChange={e=>setQuickDrafts({...quickDrafts,monthly:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"monthly")} placeholder="이번 달 큰 목표 입력 후 Enter" />
+                    <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("monthly")}>추가</button>
+                  </div>
+                  <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("monthly")}>단계 추천</button>
                 </div>
-                {weeklyGoals.filter((goal:any)=>!goal.employee_id||goal.employee_id===employee.id).slice(0,3).map((goal:any)=><div className="kpi-linked-goal" key={goal.id}><span>{goal.title}</span><div><button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button><button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button></div></div>)}
+                {monthlyGoals.length>0 ? monthlyGoals.map((goal:any)=>{
+                  const linkedW=weeklyGoals.filter((w:any)=>w.parent_id===goal.id);
+                  const pct=linkedW.length>0?Math.round(linkedW.reduce((s:number,w:any)=>{
+                    const dl=weekDailyEntries.filter((d:any)=>d.parent_id===w.id);
+                    return s+(dl.length>0?kpiCompletionRate(dl)??0:0);
+                  },0)/linkedW.length):0;
+                  return (
+                    <div key={goal.id} data-kpi-id={goal.id} className="kpi-h-node monthly" style={{"--monthly-color":kpiEmployeeColor(goal.employee_id)} as React.CSSProperties}>
+                      <p className="kpi-h-title">{goal.title}</p>
+                      <div className="kpi-h-meta">
+                        <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:kpiEmployeeColor(goal.employee_id)}}></div></div>
+                        <span className="kpi-h-pct" style={{color:kpiEmployeeColor(goal.employee_id)}}>{pct}%</span>
+                        <div className="kpi-h-actions">
+                          <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                          <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }) : <p className="kpi-h-empty">월별 KPI를 추가하세요</p>}
               </div>
-            );
-          }) : <p className="body-text">이번 주 KPI가 아직 없습니다.</p>}
-        </div>
-      </section>}
 
-      {kpiView==="monthly"&&<section className="card kpi-section-card">
-        <div className="section-head"><h2 className="card-title">월별 KPI</h2><span className="subtle">월 목표 → 주간 → 데일리</span></div>
-        {renderKpiInlineInput("monthly")}
-        <div className="kpi-month-map">
-          {monthlyGoals.length>0 ? monthlyGoals.map((goal:any)=>(
-            <div className="kpi-month-node" key={goal.id} style={kpiCardStyle(goal.employee_id)}>
-              <b>{goal.title}</b>
-              <span>{personName(goal.employee_id)}</span>
-              <div>
-                {weeklyGoals.filter((weekly:any)=>weekly.parent_id===goal.id).map((weekly:any)=><em key={weekly.id}>{weekly.title}</em>)}
-                {weeklyGoals.filter((weekly:any)=>weekly.parent_id===goal.id).length===0&&<em>주간 KPI 연결 전</em>}
+              {/* 주간 열 */}
+              <div className="kpi-h-col">
+                <p className="kpi-h-col-label">주간 목표</p>
+                <div className="kpi-h-input-wrap">
+                  {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
+                    <option value="">전체</option>
+                    {employees.map((emp:any)=><option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                  </select>}
+                  <select className="select" style={{fontSize:12}} value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
+                    <option value="">연결 월별 KPI 선택</option>
+                    {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+                  </select>
+                  <div className="kpi-h-input-row">
+                    <input className="kpi-h-input-field" value={quickDrafts.weekly} onChange={e=>setQuickDrafts({...quickDrafts,weekly:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"weekly")} placeholder="이번 주 목표 입력 후 Enter" />
+                    <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("weekly")}>추가</button>
+                  </div>
+                  <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("weekly")}>단계 추천</button>
+                </div>
+                {weeklyGoals.length>0 ? weeklyGoals.map((goal:any)=>{
+                  const dl=weekDailyEntries.filter((d:any)=>d.parent_id===goal.id);
+                  const pct=dl.length>0?kpiCompletionRate(dl)??0:0;
+                  return (
+                    <div key={goal.id} data-kpi-id={goal.id} className="kpi-h-node weekly">
+                      <p className="kpi-h-title">{goal.title}</p>
+                      <div className="kpi-h-meta">
+                        <span style={{fontSize:11,color:"#8b5cf6",flexShrink:0}}>{personName(goal.employee_id)}</span>
+                        <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:"#8b5cf6"}}></div></div>
+                        <span className="kpi-h-pct" style={{color:"#8b5cf6"}}>{pct}%</span>
+                        <div className="kpi-h-actions">
+                          <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                          <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }) : <p className="kpi-h-empty">주간 KPI를 추가하세요</p>}
               </div>
-              <div className="kpi-month-actions"><button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button><button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button></div>
+
+              {/* 데일리 열 */}
+              <div className="kpi-h-col">
+                <p className="kpi-h-col-label">데일리</p>
+                <div className="kpi-h-input-wrap">
+                  {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
+                    <option value="">전체</option>
+                    {employees.map((emp:any)=><option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                  </select>}
+                  <select className="select" style={{fontSize:12}} value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
+                    <option value="">연결 주간 KPI 선택</option>
+                    {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+                  </select>
+                  <div className="kpi-h-input-row">
+                    <input className="kpi-h-input-field" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"daily")} placeholder="오늘 할 일 입력 후 Enter" />
+                    <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("daily")}>추가</button>
+                  </div>
+                  <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("daily")}>단계 추천</button>
+                </div>
+                {todayEntries.length>0 ? todayEntries.map((entry:any)=>(
+                  <div key={entry.id} data-kpi-id={entry.id} className={`kpi-h-node daily${entry.status==="done"?" done-item":""}`}>
+                    <div className="kpi-h-daily-row">
+                      <label className={entry.status==="done"?"done-label":""}>
+                        <input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(entry,ev.target.checked?"done":"pending")} style={{accentColor:"#059669",flexShrink:0}} />
+                        {entry.title}
+                      </label>
+                      <div className="kpi-h-actions">
+                        <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                        <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                      </div>
+                    </div>
+                  </div>
+                )) : <p className="kpi-h-empty">오늘 데일리 KPI를 추가하세요</p>}
+              </div>
+
             </div>
-          )) : <p className="body-text">월별 KPI를 먼저 등록하면 주간·데일리 KPI가 이어집니다.</p>}
+          </div>
         </div>
-      </section>}
+      </section>
     </div>
   );
 }
