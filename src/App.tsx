@@ -3613,7 +3613,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
   const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
-  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:""});
+  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:""});
+  const [showDoneKpi,setShowDoneKpi]=useState(false);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
   const [kpiView,setKpiView]=useState<"daily"|"weekly"|"monthly">("daily");
@@ -3929,7 +3930,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   }
   function beginEditKpi(entry:any) {
     setEditingKpi(entry);
-    setEditKpiDraft({title:entry.title??"",admin_note:entry.admin_note??""});
+    setEditKpiDraft({title:entry.title??"",admin_note:entry.admin_note??"",scope:entry.scope??"daily",parentId:entry.parent_id??""});
   }
   async function saveEditedKpi() {
     if(!editingKpi?.id) return;
@@ -3941,15 +3942,21 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     const changeLog=Array.isArray(editingKpi.change_log)?[...editingKpi.change_log,historyEntry]:[historyEntry];
     setSaving(true); setMessage("");
     try {
+      const newScope=editKpiDraft.scope;
+      const newParentId=editKpiDraft.parentId||null;
+      const newWorkDate=newScope==="daily"?today:newScope==="weekly"?weekStart:monthStart;
       let result=await supabase.from("kpi_entries").update({
         title,
+        scope:newScope,
+        parent_id:newParentId,
+        work_date:newWorkDate,
         admin_note:isAdmin?note:null,
         updated_by:currentEmployee.id,
         change_log:changeLog,
         updated_at:new Date().toISOString(),
       }).eq("id",editingKpi.id);
       if(result.error&&/admin_note|updated_by|change_log|schema cache/i.test(result.error.message)){
-        result=await supabase.from("kpi_entries").update({title,updated_at:new Date().toISOString()}).eq("id",editingKpi.id);
+        result=await supabase.from("kpi_entries").update({title,scope:newScope,parent_id:newParentId,work_date:newWorkDate,updated_at:new Date().toISOString()}).eq("id",editingKpi.id);
       }
       if(result.error) throw result.error;
       setEditingKpi(null);
@@ -4069,6 +4076,32 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
           <div className="modal-box kpi-modal" onClick={e=>e.stopPropagation()}>
             <div className="modal-header"><h2 className="card-title" style={{margin:0}}>KPI 수정</h2><button className="modal-close" onClick={()=>setEditingKpi(null)}>×</button></div>
             <div className="form-row"><label className="label">내용</label><input className="input" value={editKpiDraft.title} onChange={e=>setEditKpiDraft({...editKpiDraft,title:e.target.value})} /></div>
+            <div className="form-row">
+              <label className="label">구분 (이동)</label>
+              <select className="select" value={editKpiDraft.scope} onChange={e=>setEditKpiDraft({...editKpiDraft,scope:e.target.value as "daily"|"weekly"|"monthly",parentId:""})}>
+                <option value="monthly">월간 목표</option>
+                <option value="weekly">주간 목표</option>
+                <option value="daily">데일리</option>
+              </select>
+            </div>
+            {editKpiDraft.scope==="weekly"&&(
+              <div className="form-row">
+                <label className="label">연결 월간 KPI</label>
+                <select className="select" value={editKpiDraft.parentId} onChange={e=>setEditKpiDraft({...editKpiDraft,parentId:e.target.value})}>
+                  <option value="">연결 없음</option>
+                  {monthlyGoals.map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
+                </select>
+              </div>
+            )}
+            {editKpiDraft.scope==="daily"&&(
+              <div className="form-row">
+                <label className="label">연결 주간 KPI</label>
+                <select className="select" value={editKpiDraft.parentId} onChange={e=>setEditKpiDraft({...editKpiDraft,parentId:e.target.value})}>
+                  <option value="">연결 없음</option>
+                  {weeklyGoals.map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
+                </select>
+              </div>
+            )}
             {isAdmin&&<div className="form-row"><label className="label">관리자 변경 메모</label><textarea className="textarea compact-textarea" value={editKpiDraft.admin_note} onChange={e=>setEditKpiDraft({...editKpiDraft,admin_note:e.target.value})} placeholder="변경 이유나 직원에게 전달할 말을 적어주세요." /></div>}
             <div className="actions" style={{justifyContent:"flex-end"}}>
               <button className="button ghost" disabled={saving} onClick={()=>setEditingKpi(null)}>취소</button>
@@ -4193,44 +4226,75 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   </div>
                   <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("weekly")}>단계 추천</button>
                 </div>
-                {weeklyGoals.length>0 ? weeklyGoals.map((goal:any)=>{
-                  const dl=weekDailyEntries.filter((d:any)=>d.parent_id===goal.id);
-                  const pct=dl.length>0?kpiCompletionRate(dl)??0:0;
-                  return (
-                    <div
-                      key={goal.id} data-kpi-id={goal.id}
-                      className={`kpi-h-node weekly${dropTargetId===goal.id?" drop-target":""}${draggingKpi?.id===goal.id?" dragging":""}`}
-                      draggable
-                      onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:goal.id,scope:"weekly",sortOrder:goal.sort_order??0});}}
-                      onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
-                      onDragOver={draggingKpi&&draggingKpi.id!==goal.id?e=>{e.preventDefault();setDropTargetId(goal.id);}:undefined}
-                      onDragLeave={()=>setDropTargetId(null)}
-                      onDrop={draggingKpi&&draggingKpi.id!==goal.id?e=>{
-                        e.preventDefault();
-                        if(draggingKpi.scope==="weekly") reorderKpi(draggingKpi.id,draggingKpi.sortOrder,goal.id,goal.sort_order??0);
-                        else if(draggingKpi.scope==="daily") linkKpi(draggingKpi.id,goal.id);
-                      }:undefined}
-                    >
-                      <p className="kpi-h-title">{goal.title}</p>
-                      {goal.parent_id&&(
-                        <div className="kpi-link-badge">
-                          <i className="ti ti-link" style={{fontSize:10}}></i>
-                          {monthlyGoals.find((m:any)=>m.id===goal.parent_id)?.title?.slice(0,18)||"월별"}
-                          <button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(goal)}>×</button>
-                        </div>
-                      )}
-                      <div className="kpi-h-meta">
-                        <span style={{fontSize:11,color:"#8b5cf6",flexShrink:0}}>{personName(goal.employee_id)}</span>
-                        <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:"#8b5cf6"}}></div></div>
-                        <span className="kpi-h-pct" style={{color:"#8b5cf6"}}>{pct}%</span>
-                        <div className="kpi-h-actions">
-                          <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
-                          <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
-                        </div>
+                {weeklyGoals.length>0 ? (()=>{
+                  const pendingW=weeklyGoals.filter((g:any)=>g.status!=="done");
+                  const doneW=weeklyGoals.filter((g:any)=>g.status==="done");
+                  const renderWeekly=(goal:any)=>{
+                    const dl=weekDailyEntries.filter((d:any)=>d.parent_id===goal.id);
+                    const noDailyLinks=dl.length===0;
+                    const pct=noDailyLinks?(goal.status==="done"?100:0):kpiCompletionRate(dl)??0;
+                    return (
+                      <div
+                        key={goal.id} data-kpi-id={goal.id}
+                        className={`kpi-h-node weekly${goal.status==="done"?" done-item":""}${dropTargetId===goal.id?" drop-target":""}${draggingKpi?.id===goal.id?" dragging":""}`}
+                        draggable
+                        onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:goal.id,scope:"weekly",sortOrder:goal.sort_order??0});}}
+                        onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
+                        onDragOver={draggingKpi&&draggingKpi.id!==goal.id?e=>{e.preventDefault();setDropTargetId(goal.id);}:undefined}
+                        onDragLeave={()=>setDropTargetId(null)}
+                        onDrop={draggingKpi&&draggingKpi.id!==goal.id?e=>{
+                          e.preventDefault();
+                          if(draggingKpi.scope==="weekly") reorderKpi(draggingKpi.id,draggingKpi.sortOrder,goal.id,goal.sort_order??0);
+                          else if(draggingKpi.scope==="daily") linkKpi(draggingKpi.id,goal.id);
+                        }:undefined}
+                      >
+                        {goal.parent_id&&(
+                          <div className="kpi-link-badge">
+                            <i className="ti ti-link" style={{fontSize:10}}></i>
+                            <span>{monthlyGoals.find((m:any)=>m.id===goal.parent_id)?.title||"월별"}</span>
+                            <button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(goal)}>×</button>
+                          </div>
+                        )}
+                        {noDailyLinks?(
+                          <div className="kpi-h-daily-row">
+                            <label className={goal.status==="done"?"done-label":""}>
+                              <input type="checkbox" checked={goal.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(goal,ev.target.checked?"done":"pending")} style={{accentColor:"#8b5cf6",flexShrink:0}} />
+                              {goal.title}
+                            </label>
+                            <div className="kpi-h-actions">
+                              <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                              <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                            </div>
+                          </div>
+                        ):(
+                          <>
+                            <p className="kpi-h-title">{goal.title}</p>
+                            <div className="kpi-h-meta">
+                              <span style={{fontSize:11,color:"#8b5cf6",flexShrink:0}}>{personName(goal.employee_id)}</span>
+                              <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:"#8b5cf6"}}></div></div>
+                              <span className="kpi-h-pct" style={{color:"#8b5cf6"}}>{pct}%</span>
+                              <div className="kpi-h-actions">
+                                <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                                <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
-                    </div>
-                  );
-                }) : <p className="kpi-h-empty">주간 KPI를 추가하세요</p>}
+                    );
+                  };
+                  return (<>
+                    {pendingW.map(renderWeekly)}
+                    {doneW.length>0&&(
+                      <div className="kpi-done-stack">
+                        <button className="kpi-done-toggle" onClick={()=>setShowDoneKpi(v=>!v)}>
+                          <i className="ti ti-check" style={{fontSize:11}}></i> 완료 {doneW.length}개 {showDoneKpi?"숨기기":"보기"}
+                        </button>
+                        {showDoneKpi&&doneW.map(renderWeekly)}
+                      </div>
+                    )}
+                  </>);
+                })() : <p className="kpi-h-empty">주간 KPI를 추가하세요</p>}
               </div>
               </div>
 
@@ -4256,36 +4320,66 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   </div>
                   <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("daily")}>단계 추천</button>
                 </div>
-                {todayEntries.length>0 ? todayEntries.map((entry:any)=>(
-                  <div
-                    key={entry.id} data-kpi-id={entry.id}
-                    className={`kpi-h-node daily${entry.status==="done"?" done-item":""}${draggingKpi?.id===entry.id?" dragging":""}`}
-                    draggable
-                    onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}}
-                    onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
-                    onDragOver={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?e=>{e.preventDefault();setDropTargetId(entry.id);}:undefined}
-                    onDragLeave={draggingKpi?.scope==="daily"?()=>setDropTargetId(null):undefined}
-                    onDrop={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?e=>{e.preventDefault();reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);}:undefined}
-                  >
-                    {entry.parent_id&&(
-                      <div className="kpi-link-badge">
-                        <i className="ti ti-link" style={{fontSize:10}}></i>
-                        {weeklyGoals.find((w:any)=>w.id===entry.parent_id)?.title?.slice(0,18)||"주간"}
-                        <button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(entry)}>×</button>
-                      </div>
-                    )}
-                    <div className="kpi-h-daily-row">
-                      <label className={entry.status==="done"?"done-label":""}>
-                        <input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(entry,ev.target.checked?"done":"pending")} style={{accentColor:"#059669",flexShrink:0}} />
-                        {entry.title}
-                      </label>
-                      <div className="kpi-h-actions">
-                        <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
-                        <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                {todayEntries.length>0 ? (()=>{
+                  const pendingD=todayEntries.filter((e:any)=>e.status!=="done");
+                  const doneD=todayEntries.filter((e:any)=>e.status==="done");
+                  function suggestWeekly(title:string){
+                    const tokens=title.toLowerCase().replace(/[^\w가-힣]/g," ").split(/\s+/).filter((t:string)=>t.length>1);
+                    return weeklyGoals.filter((w:any)=>tokens.some((t:string)=>w.title.toLowerCase().includes(t))).slice(0,2);
+                  }
+                  const renderDaily=(entry:any)=>(
+                    <div
+                      key={entry.id} data-kpi-id={entry.id}
+                      className={`kpi-h-node daily${entry.status==="done"?" done-item":""}${draggingKpi?.id===entry.id?" dragging":""}`}
+                      draggable
+                      onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}}
+                      onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
+                      onDragOver={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?e=>{e.preventDefault();setDropTargetId(entry.id);}:undefined}
+                      onDragLeave={draggingKpi?.scope==="daily"?()=>setDropTargetId(null):undefined}
+                      onDrop={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?e=>{e.preventDefault();reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);}:undefined}
+                    >
+                      {entry.parent_id?(
+                        <div className="kpi-link-badge">
+                          <i className="ti ti-link" style={{fontSize:10}}></i>
+                          <span>{weeklyGoals.find((w:any)=>w.id===entry.parent_id)?.title||"주간"}</span>
+                          <button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(entry)}>×</button>
+                        </div>
+                      ):(
+                        suggestWeekly(entry.title).length>0&&(
+                          <div className="kpi-suggest-row">
+                            <span className="kpi-suggest-label">주간 연결 추천</span>
+                            {suggestWeekly(entry.title).map((w:any)=>(
+                              <button key={w.id} className="kpi-suggest-btn" disabled={saving} onClick={()=>linkKpi(entry.id,w.id)}>
+                                {w.title}
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      )}
+                      <div className="kpi-h-daily-row">
+                        <label className={entry.status==="done"?"done-label":""}>
+                          <input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(entry,ev.target.checked?"done":"pending")} style={{accentColor:"#059669",flexShrink:0}} />
+                          {entry.title}
+                        </label>
+                        <div className="kpi-h-actions">
+                          <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                          <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )) : <p className="kpi-h-empty">오늘 데일리 KPI를 추가하세요</p>}
+                  );
+                  return (<>
+                    {pendingD.map(renderDaily)}
+                    {doneD.length>0&&(
+                      <div className="kpi-done-stack">
+                        <button className="kpi-done-toggle" onClick={()=>setShowDoneKpi(v=>!v)}>
+                          <i className="ti ti-check" style={{fontSize:11}}></i> 완료 {doneD.length}개 {showDoneKpi?"숨기기":"보기"}
+                        </button>
+                        {showDoneKpi&&doneD.map(renderDaily)}
+                      </div>
+                    )}
+                  </>);
+                })() : <p className="kpi-h-empty">오늘 데일리 KPI를 추가하세요</p>}
                 {/* 스코프 변경 드롭존 - 주간 드래그 중일 때 */}
                 {draggingKpi?.scope==="weekly"&&<div
                   className={`kpi-scope-dropzone${dropColTarget==="daily"?" active":""}`}
