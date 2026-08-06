@@ -733,6 +733,7 @@ $$;
 create table if not exists public.daily_tasks (
   id uuid primary key default gen_random_uuid(),
   task_date date not null default current_date,
+  due_date date,
   title text not null,
   content text not null,
   attachments jsonb not null default '[]'::jsonb,
@@ -748,6 +749,10 @@ on public.daily_tasks(task_date, is_active, created_at desc);
 
 create index if not exists daily_tasks_target_employee_idx
 on public.daily_tasks(task_date, is_active, target_employee_id, created_at desc);
+
+create index if not exists daily_tasks_due_date_idx
+on public.daily_tasks(due_date, is_active, task_date desc)
+where due_date is not null;
 
 create table if not exists public.rnr_entries (
   id uuid primary key default gen_random_uuid(),
@@ -782,6 +787,7 @@ on public.rnr_entries(is_active, department, position, created_at desc);
 alter table public.daily_tasks enable row level security;
 alter table public.rnr_entries enable row level security;
 alter table public.daily_tasks add column if not exists attachments jsonb not null default '[]'::jsonb;
+alter table public.daily_tasks add column if not exists due_date date;
 alter table public.rnr_entries add column if not exists attachments jsonb not null default '[]'::jsonb;
 alter table public.rnr_entries add column if not exists is_sensitive boolean not null default false;
 alter table public.rnr_entries add column if not exists display_title text;
