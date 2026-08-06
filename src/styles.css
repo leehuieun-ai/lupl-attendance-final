@@ -806,13 +806,13 @@ body { overflow-x: hidden; }
 .kpi-today-list, .kpi-review-list { display: grid; gap: 8px; }
 .kpi-today-row { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; gap: 9px; align-items: center; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 9px 10px; }
 .kpi-today-row span { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; background: #eef3fe; color: var(--blue-dark); font-size: 12px; font-weight: 850; }
-.kpi-today-row b { color: var(--ink); font-size: 14px; overflow-wrap: anywhere; }
-.kpi-today-row em { font-style: normal; font-size: 12px; font-weight: 850; color: var(--muted); white-space: nowrap; }
+.kpi-today-row b { color: var(--ink); font-size: 13px; font-weight: 450; overflow-wrap: anywhere; }
+.kpi-today-row em { font-style: normal; font-size: 11px; font-weight: 600; color: #94a3b8; white-space: nowrap; background: #f1f5f9; border-radius: 99px; padding: 2px 8px; }
 .kpi-today-row.done { background: #f0fbf6; border-color: #bdebd5; }
-.kpi-today-row.done b { color: #667085; text-decoration: line-through; text-decoration-thickness: 2px; }
-.kpi-today-row.done em { color: #0b9b6a; }
+.kpi-today-row.done b { color: #475569; }
+.kpi-today-row.done em { color: #059669; background: #d1fae5; }
 .kpi-today-row.missed { background: #fff7ed; border-color: #fed7aa; }
-.kpi-today-row.missed em { color: #c2410c; }
+.kpi-today-row.missed em { color: #c2410c; background: #fee2e2; }
 .kpi-review-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 10px; }
 .kpi-review-row span { color: var(--ink); font-weight: 750; overflow-wrap: anywhere; }
 .kpi-review-row div { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
@@ -926,6 +926,13 @@ body { overflow-x: hidden; }
 .kpi-month-actions { margin-top: 2px; }
 .kpi-hierarchy-wrap { position: relative; }
 .kpi-hierarchy-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; align-items: start; }
+@media (max-width: 700px) {
+  .kpi-hierarchy-grid { grid-template-columns: 1fr; }
+  .kpi-hierarchy-wrap canvas.kpi-canvas { display: none; }
+  .daily-col { order: 0; }
+  .weekly-col { order: 1; }
+  .monthly-col { order: 2; }
+}
 /* 열 카드 — 업무분장표 Figma 스타일 */
 .kpi-h-col { --col-accent: #2563eb; display: flex; flex-direction: column; border: 1px solid color-mix(in srgb, var(--col-accent) 18%, #e1e7f0); border-top: 2px solid var(--col-accent); border-radius: 8px; overflow: hidden; background: #fff; }
 .kpi-h-col-header { display: flex; justify-content: space-between; align-items: center; background: color-mix(in srgb, var(--col-accent) 5%, #fff); padding: 10px 12px; border-bottom: 1px solid color-mix(in srgb, var(--col-accent) 12%, #eef2f7); }

@@ -3187,6 +3187,7 @@ function HomePage({ employee }: { employee: any }) {
       try { const d=await getDeviceFingerprint(); fp=d.fingerprintHash; info=d.deviceInfo; } catch {/**/}
       const {error}=await supabase.rpc("close_attendance_log",{p_log_id:log.id,p_status:null,p_device_fingerprint_hash:fp,p_device_info:info});
       if(error) throw error;
+      await sendWorksKpiMessage("check_out", log.id);
       setMessage(`${formatDateTime(log.check_in_time)} 출근 기록을 현재 시각으로 퇴근 처리했습니다.`);
       await load();
     } catch(e:any){ setMessage(e.message); } finally { setBusy(false); }
