@@ -2716,7 +2716,7 @@ function HomePage({ employee }: { employee: any }) {
     setTodayKpis(kpiRows??[]);
     setWeeklyKpiOptions(kpiWeeklyRows??[]);
     if(employee.role==="admin"){
-      const {data:todoEmployeeRows}=await supabase.from("employees").select("id,name,employee_no").eq("employment_status","active").order("name");
+      const {data:todoEmployeeRows}=await supabase.from("employees").select("id,name,employee_no").eq("employment_status","active").order("employee_no",{ascending:true});
       setTodoEmployees(todoEmployeeRows??[]);
     } else {
       setTodoEmployees([]);
@@ -3476,6 +3476,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [message,setMessage]=useState("");
   const [saving,setSaving]=useState(false);
   const [goalDraft,setGoalDraft]=useState({scope:"monthly",employee_id:"",parent_id:"",title:""});
+  const [guideOpen,setGuideOpen]=useState(false);
   const isAdmin=currentEmployee.role==="admin";
   const today=todayIso();
   const weekStart=weekStartIso(today);
@@ -3506,6 +3507,18 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const scorePeople=Array.from(employeeMap.values())
     .filter((employee:any)=>employee.id&&((employee.is_active&&employee.employment_status==="active")||entries.some((entry:any)=>entry.employee_id===employee.id)))
     .sort((a:any,b:any)=>String(a.employee_no??a.name).localeCompare(String(b.employee_no??b.name)));
+  function employeeSortValue(id:string) {
+    const employee=employeeMap.get(id);
+    return String(employee?.employee_no??employee?.name??id);
+  }
+  function kpiEmployeeColor(employeeId?:string|null) {
+    if(!employeeId||employeeId==="team") return EMPLOYEE_COLORS[0];
+    return employeeColorFromList(scorePeople,employeeId);
+  }
+  function kpiCardStyle(employeeId?:string|null, rate=0) {
+    const safeRate=Math.max(0,Math.min(100,Number(rate)||0));
+    return {"--employee-color":kpiEmployeeColor(employeeId),"--kpi-rate":`${safeRate}%`} as React.CSSProperties;
+  }
   const dailyEntries=entries.filter((entry:any)=>entry.scope==="daily");
   const todayEntries=dailyEntries.filter((entry:any)=>entry.work_date===today);
   const weekDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
@@ -3521,7 +3534,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       const key=entry.employee_id??"team";
       groups.set(key,[...(groups.get(key)??[]),entry]);
     });
-    return Array.from(groups.entries());
+    return Array.from(groups.entries()).sort(([a],[b])=>employeeSortValue(a).localeCompare(employeeSortValue(b)));
   }
   function scoreForEmployee(employeeId:string) {
     const list=weekDailyEntries.filter((entry:any)=>entry.employee_id===employeeId);
@@ -3572,14 +3585,28 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
             {monthSelectOptions(today,8,2).map(option=><option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </div>
+        <button type="button" className={`kpi-guide-toggle ${guideOpen?"open":""}`} onClick={()=>setGuideOpen(!guideOpen)}>
+          <span><i className="ti ti-info-circle" aria-hidden="true"></i>KPI 사용 방법</span>
+          <i className={`ti ${guideOpen?"ti-chevron-up":"ti-chevron-down"}`} aria-hidden="true"></i>
+        </button>
+        {guideOpen&&(
+          <div className="kpi-guide-panel">
+            <p><b>1. 월별 KPI</b>에서 이번 달 큰 목표를 먼저 내려줍니다.</p>
+            <p><b>2. 주간 KPI</b>를 만들 때 연결할 월별 KPI를 선택하면 아래 월별 지도에 이어집니다.</p>
+            <p><b>3. 데일리 KPI</b>는 출근한 직원이 오늘 할 일을 적고, 퇴근 전 완료/미완료를 체크합니다.</p>
+          </div>
+        )}
         {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
         <div className="kpi-score-strip">
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
             const score=scoreForEmployee(employee.id);
             return (
-              <div className="kpi-score-card" key={employee.id}>
-                <div><b>{employee.name}</b><strong>{score.rate}%</strong></div>
-                <span className="kpi-score-ring" style={{"--kpi-rate":`${score.rate}%`} as any}>{score.done}/{score.total}</span>
+              <div className="kpi-score-card" key={employee.id} style={kpiCardStyle(employee.id,score.rate)}>
+                <i aria-hidden="true"></i>
+                <b>{employee.name}</b>
+                <strong>{score.rate}<small>%</small></strong>
+                <span>완료 {score.done} / 전체 {score.total}</span>
+                <div className="kpi-progress-track"><em></em></div>
               </div>
             );
           }) : <p className="body-text">이번 달 KPI 기록이 아직 없습니다.</p>}
@@ -3590,7 +3617,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         <div className="section-head"><h2 className="card-title">데일리 KPI</h2><span className="subtle">오늘 직원별 KPI</span></div>
         <div className="kpi-grid four">
           {entriesByEmployee(todayEntries).length>0 ? entriesByEmployee(todayEntries).map(([employeeId,list])=>(
-            <div className="kpi-person-card" key={employeeId}>
+            <div className="kpi-person-card" key={employeeId} style={kpiCardStyle(employeeId,kpiCompletionRate(list)??0)}>
               <div className="kpi-person-head"><b>{personName(employeeId)}</b><span>{kpiCompletionRate(list)??0}%</span></div>
               <ul>{list.map((entry:any)=><li key={entry.id} className={entry.status==="done"?"done":entry.status==="missed"?"missed":""}><span>{kpiStatusLabel(entry.status)}</span>{entry.title}</li>)}</ul>
             </div>
@@ -3606,9 +3633,10 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
             const done=list.filter((entry:any)=>entry.status==="done").length;
             const missed=list.filter((entry:any)=>entry.status==="missed").length;
             const pending=list.length-done-missed;
+            const rate=kpiCompletionRate(list)??0;
             return (
-              <div className="kpi-person-card" key={employee.id}>
-                <div className="kpi-person-head"><b>{employee.name}</b><span>{kpiCompletionRate(list)??0}%</span></div>
+              <div className="kpi-person-card kpi-week-card" key={employee.id} style={kpiCardStyle(employee.id,rate)}>
+                <div className="kpi-person-head"><b>{employee.name}</b><span>{rate}%</span></div>
                 <div className="kpi-week-stats">
                   <span>완료 <b>{done}</b></span>
                   <span>미완료 <b>{missed}</b></span>
@@ -3624,28 +3652,31 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       <section className="card">
         <div className="section-head"><h2 className="card-title">월별 KPI</h2><span className="subtle">월 목표 → 주간 → 데일리</span></div>
         {isAdmin&&(
-          <div className="kpi-goal-editor">
-            <select className="select" value={goalDraft.scope} onChange={e=>setGoalDraft({...goalDraft,scope:e.target.value,parent_id:""})}>
-              <option value="monthly">월별 KPI</option>
-              <option value="weekly">주간 KPI</option>
-            </select>
-            <select className="select" value={goalDraft.employee_id} onChange={e=>setGoalDraft({...goalDraft,employee_id:e.target.value})}>
-              <option value="">전체</option>
-              {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
-            </select>
-            {goalDraft.scope==="weekly"&&(
-              <select className="select" value={goalDraft.parent_id} onChange={e=>setGoalDraft({...goalDraft,parent_id:e.target.value})}>
-                <option value="">월별 KPI 연결 없음</option>
-                {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+          <div className="kpi-goal-editor-wrap">
+            <div className="kpi-goal-editor-title"><b>관리자 KPI 내려주기</b><span>월별 목표를 만들고, 주간 KPI 저장 시 월별 KPI를 선택해 연결합니다.</span></div>
+            <div className="kpi-goal-editor">
+              <select className="select" value={goalDraft.scope} onChange={e=>setGoalDraft({...goalDraft,scope:e.target.value,parent_id:""})}>
+                <option value="monthly">월별 KPI</option>
+                <option value="weekly">주간 KPI</option>
               </select>
-            )}
-            <input className="input" value={goalDraft.title} onChange={e=>setGoalDraft({...goalDraft,title:e.target.value})} placeholder="예: 8월 교육 운영 안정화" />
-            <button className="button compact" disabled={saving} onClick={saveGoal}>저장</button>
+              <select className="select" value={goalDraft.employee_id} onChange={e=>setGoalDraft({...goalDraft,employee_id:e.target.value})}>
+                <option value="">전체</option>
+                {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+              </select>
+              {goalDraft.scope==="weekly"&&(
+                <select className="select" value={goalDraft.parent_id} onChange={e=>setGoalDraft({...goalDraft,parent_id:e.target.value})}>
+                  <option value="">연결할 월별 KPI 선택</option>
+                  {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+                </select>
+              )}
+              <input className="input" value={goalDraft.title} onChange={e=>setGoalDraft({...goalDraft,title:e.target.value})} placeholder="예: 8월 교육 운영 안정화" />
+              <button className="button compact" disabled={saving} onClick={saveGoal}>저장</button>
+            </div>
           </div>
         )}
         <div className="kpi-month-map">
           {monthlyGoals.length>0 ? monthlyGoals.map((goal:any)=>(
-            <div className="kpi-month-node" key={goal.id}>
+            <div className="kpi-month-node" key={goal.id} style={kpiCardStyle(goal.employee_id)}>
               <b>{goal.title}</b>
               <span>{personName(goal.employee_id)}</span>
               <div>
@@ -4698,7 +4729,7 @@ function AdminCompGrantCard({currentEmployee,onChanged}:{currentEmployee:any;onC
   const [employees,setEmployees]=useState<any[]>([]);
   const [form,setForm]=useState({employee_id:"",work_date:todayIso(),start_time:"18:00",end_time:"20:00",hours:2,reason:""});
   const [message,setMessage]=useState("");
-  useEffect(()=>{supabase.from("employees").select("id,name,employee_no,employment_status").eq("employment_status","active").order("name").then(({data})=>setEmployees(data??[]));},[]);
+  useEffect(()=>{supabase.from("employees").select("id,name,employee_no,employment_status").eq("employment_status","active").order("employee_no",{ascending:true}).then(({data})=>setEmployees(data??[]));},[]);
   function empName(id:string){return employees.find(e=>e.id===id)?.name??"직원";}
   function updateTime(field:"start_time"|"end_time",value:string){
     const next={...form,[field]:value};
@@ -8643,14 +8674,14 @@ function ReportsPage() {
     const scheduledMinutes=info?.workday ? Math.round(Number(info.hours||0)*60) : 0;
     return scheduledMinutes>0 ? Math.min(raw,scheduledMinutes) : raw;
   }
-  const baseVisibleEmployees=employees.filter(reportEmployeeVisible);
+  const baseVisibleEmployees=employees.filter(reportEmployeeVisible).sort(sortEmployeesBySeniority);
   const visibleLogs=logsWithRefs.filter((log:any)=>reportEmployeeVisible(employeeForLog(log)));
   const extraLogEmployeeMap=new Map<string,any>();
   visibleLogs.forEach((log:any)=>{
     const logEmployee=employeeForLog(log);
     if(logEmployee?.id&&!baseVisibleEmployees.some((visible:any)=>visible.id===logEmployee.id)&&!extraLogEmployeeMap.has(logEmployee.id)) extraLogEmployeeMap.set(logEmployee.id,logEmployee);
   });
-  const extraLogEmployees=Array.from(extraLogEmployeeMap.values());
+  const extraLogEmployees=Array.from(extraLogEmployeeMap.values()).sort(sortEmployeesBySeniority);
   const visibleEmployees=[...baseVisibleEmployees,...extraLogEmployees];
   useEffect(()=>{
     if(visibleEmployees.length&&!visibleEmployees.some((employee:any)=>employee.id===calendarEmployeeId)) setCalendarEmployeeId(visibleEmployees[0].id);
