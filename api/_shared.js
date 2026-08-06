@@ -18,7 +18,7 @@ export function readJsonBody(req) {
   return typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
 }
 
-export async function requireAdmin(req) {
+export async function requireActiveEmployee(req) {
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
   const auth = req.headers.authorization || "";
@@ -44,7 +44,17 @@ export async function requireAdmin(req) {
   });
   if (!empRes.ok) throw new Error("직원 정보를 확인할 수 없습니다.");
   const employee = (await empRes.json())[0];
-  if (!employee || employee.role !== "admin" || !employee.is_active || employee.employment_status !== "active") {
+  if (!employee || !employee.is_active || employee.employment_status !== "active") {
+    const error = new Error("활성 직원만 사용할 수 있습니다.");
+    error.statusCode = 403;
+    throw error;
+  }
+  return employee;
+}
+
+export async function requireAdmin(req) {
+  const employee = await requireActiveEmployee(req);
+  if (employee.role !== "admin") {
     const error = new Error("관리자만 사용할 수 있습니다.");
     error.statusCode = 403;
     throw error;

@@ -1,11 +1,11 @@
-import { parseJsonText, readJsonBody, requireAdmin, send } from "./_shared.js";
+import { parseJsonText, readJsonBody, requireActiveEmployee, send } from "./_shared.js";
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return send(res, 405, { error: "POST만 지원합니다." });
   try {
-    await requireAdmin(req);
+    await requireActiveEmployee(req);
     const apiKey = process.env.LUPL_attendance_API_KEY;
     if (!apiKey) return send(res, 500, { error: "LUPL_attendance_API_KEY 환경변수가 없습니다." });
 

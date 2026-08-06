@@ -1152,7 +1152,8 @@ body { overflow-x: hidden; }
 .rnr-card .textarea, .rnr-textarea { min-height: 150px; }
 .rnr-paste-hint { margin: -8px 0 10px; }
 .rnr-suggestion-box {
-  min-height: 220px;
+  min-height: 100%;
+  height: 100%;
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 14px;
@@ -1167,7 +1168,7 @@ body { overflow-x: hidden; }
 .rnr-role-guide-row strong { color: #182235; font-size: 14px; }
 .rnr-role-guide-row span { color: #596579; font-size: 13px; line-height: 1.55; }
 .rnr-checklist { margin: 0 0 14px; padding-left: 18px; line-height: 1.55; color: #364154; }
-.rnr-today-panel { border: 1px solid #dbe5f5; border-radius: 8px; background: #fbfdff; padding: 14px; margin: 12px 0 16px; }
+.rnr-today-panel, .rnr-review-panel { border: 1px solid #dbe5f5; border-radius: 8px; background: #fbfdff; padding: 14px; margin: 12px 0 16px; }
 .rnr-panel-title { margin: 0 0 10px; }
 .rnr-today-list { display: grid; gap: 8px; }
 .rnr-today-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: start; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 12px; }
@@ -1176,8 +1177,17 @@ body { overflow-x: hidden; }
 .rnr-today-row p { margin: 6px 0 5px; color: #364154; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rnr-today-actions { align-items: center; justify-content: flex-end; }
 .rnr-today-edit { border: 1px solid #bfd0ee; border-radius: 8px; background: #fff; padding: 12px; }
+.rnr-review-list { display: grid; gap: 8px; }
+.rnr-review-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: start; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 12px; }
+.rnr-review-row span, .rnr-review-row small { display: block; color: #64748b; font-size: 12px; font-weight: 750; }
+.rnr-review-row b { display: block; margin-top: 3px; color: #172033; font-size: 15px; }
+.rnr-review-row p { margin: 6px 0 5px; color: #364154; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rnr-review-actions { justify-content: flex-end; flex-wrap: nowrap; }
 .rnr-ai-grid { align-items: stretch; }
-.rnr-ai-empty { height: 100%; display: grid; align-content: start; gap: 8px; color: #596579; }
+.rnr-input-box { height: 100%; display: flex; flex-direction: column; min-width: 0; }
+.rnr-input-box .form-row { flex: 1; display: flex; flex-direction: column; }
+.rnr-input-box .textarea { flex: 1; min-height: 220px; resize: vertical; }
+.rnr-ai-empty { min-height: 100%; display: grid; align-content: start; gap: 8px; color: #596579; }
 .rnr-ai-empty b { color: #182235; font-size: 16px; }
 .rnr-ai-empty p { margin: 0; }
 .rnr-assignment-box { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 12px 0; border: 1px solid #e2e8f0; border-radius: 8px; background: #fbfdff; padding: 12px; }
@@ -1188,17 +1198,29 @@ body { overflow-x: hidden; }
 .rnr-workgroup-chip:hover { border-color: #b9c8de; background: #f8fafc; }
 .rnr-workgroup-chip.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; box-shadow: 0 0 0 2px rgba(37,99,235,.08); }
 .rnr-workgroup-input { min-height: 38px; font-size: 13px; }
-.rnr-task-date-control { display: grid; grid-template-columns: auto 132px; gap: 8px; align-items: center; }
+.rnr-task-date-control { display: grid; grid-template-columns: minmax(0,1fr); gap: 4px; align-items: start; min-width: 166px; }
 .rnr-task-date-control .label { margin: 0; white-space: nowrap; }
-.rnr-task-date-control .input { min-height: 38px; }
-.rnr-modal-box { max-width: min(1040px, calc(100vw - 32px)); }
-.rnr-modal-actions { flex-wrap: nowrap; }
+.rnr-task-date-control .input { min-height: 38px; min-width: 0; background: #fff; }
+.rnr-modal-box { max-width: min(1120px, calc(100vw - 32px)); }
+.rnr-modal-actions { flex-wrap: wrap; align-items: end; gap: 10px; }
 .rnr-modal-actions .button { min-width: 82px; padding-inline: 12px; white-space: nowrap; }
 .work-map-page { display: grid; gap: 18px; background: #fbfcfe; }
 .work-map-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid #e1e7f0; border-radius: 8px; background: #fff; padding: 18px 20px; }
 .work-map-hero span { display: block; margin-bottom: 5px; color: #8a95a8; font-size: 12px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; }
 .work-map-hero h2 { display: flex; align-items: center; gap: 8px; margin: 0; color: #111827; font-size: 22px; letter-spacing: 0; }
 .work-map-hero > i { color: #3a6df0; font-size: 30px; }
+.rnr-employee-submit { border: 1px solid #dbe5f5; border-radius: 8px; background: #fff; padding: 14px; display: grid; gap: 12px; }
+.rnr-review-grid { display: grid; grid-template-columns: minmax(0,1.05fr) minmax(0,.95fr); gap: 14px; align-items: stretch; }
+.rnr-review-write, .rnr-review-preview { min-width: 0; border: 1px solid #e2e8f0; border-radius: 8px; background: #fbfdff; padding: 12px; }
+.rnr-review-write { display: grid; gap: 10px; }
+.rnr-review-preview { display: grid; align-content: start; gap: 8px; color: #596579; }
+.rnr-review-preview > b { color: #182235; font-size: 15px; }
+.rnr-review-preview p { margin: 0; color: #596579; font-size: 13px; line-height: 1.55; }
+.rnr-review-result { display: grid; gap: 5px; }
+.rnr-review-result strong { color: #172033; font-size: 15px; }
+.rnr-review-result span { color: #64748b; font-size: 12px; font-weight: 800; line-height: 1.45; }
+.rnr-review-history { display: flex; flex-wrap: wrap; gap: 7px; }
+.rnr-review-history span { border: 1px solid #e2e8f0; border-radius: 999px; background: #f8fafc; color: #475569; padding: 6px 9px; font-size: 12px; font-weight: 800; }
 .work-map-overview { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-bottom: 14px; }
 .work-map-overview div { border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 14px 16px; text-align: center; }
 .work-map-overview span, .work-map-overview b { display: block; }
@@ -1361,6 +1383,13 @@ body { overflow-x: hidden; }
   }
   .rnr-assignment-box {
     grid-template-columns: minmax(0,1fr);
+  }
+  .rnr-review-grid,
+  .rnr-review-row {
+    grid-template-columns: minmax(0,1fr);
+  }
+  .rnr-review-actions {
+    justify-content: flex-start;
   }
   .rnr-task-date-control {
     width: 100%;

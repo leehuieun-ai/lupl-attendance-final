@@ -1472,13 +1472,14 @@ export default function App() {
         setWorkTimeConsent(workTimeConsentResult.data??null);
         setAdminPledgeConsent(adminPledgeResult.data??null);
         if (r.employee.role === "admin") {
-          const [w, rq, c, d, lg, wt] = await Promise.all([
+          const [w, rq, c, d, lg, wt, rr] = await Promise.all([
             supabase.from("workplaces").select("id, approval_status"),
             supabase.from("attendance_requests").select("id, status"),
             supabase.from("comp_time_requests").select("*"),
             supabase.from("registered_devices").select("id, status"),
             supabase.from("attendance_logs").select("id, status, check_in_time, check_out_time"),
             supabase.from("work_time_change_requests").select("id, status"),
+            supabase.from("rnr_review_requests").select("id, status"),
           ]);
           if(seq!==loadSeqRef.current) return;
           let settledCompIdsForBadge=new Set<string>();
@@ -1495,6 +1496,7 @@ export default function App() {
             actionableCompCount +
             (d.data??[]).filter((x:any)=>x.status==="pending").length +
             (wt.data??[]).filter((x:any)=>x.status==="pending").length +
+            (rr.error?0:(rr.data??[]).filter((x:any)=>x.status==="pending").length) +
             (lg.data??[]).filter((x:any)=>{
               const openToday=!x.check_out_time&&isToday(x.check_in_time);
               if(x.status==="확인 완료"||openToday) return false;
@@ -4047,6 +4049,28 @@ function enrichRnrSuggestion(suggestion:any, text:string) {
   const draft={...suggestion,title,summary,display_title:displayTitle,work_group:workGroup,flow_notes:flowNotes,target_scope:targetScope,category};
   return {...draft,is_public:suggestion?.is_public===false?false:!rnrIsSensitive(draft),public_note:String(suggestion?.public_note??"").trim()};
 }
+function localRnrSuggestionFromText(text:string, employee?:any) {
+  const normalized=text.toLowerCase();
+  const employeeDepartment=normalizeDepartmentName(employee?.department);
+  const picked=RNR_BASELINE_ROLES.find(role=>employeeDepartment&&normalizeDepartmentName(role.department)===employeeDepartment)
+    ?? RNR_BASELINE_ROLES.find(role=>role.keywords.some(keyword=>normalized.includes(keyword.toLowerCase())))
+    ?? RNR_BASELINE_ROLES[0];
+  const category=classifyRnrCategory(text);
+  const department=employeeDepartment||picked.department;
+  const position=employee?.position||picked.position;
+  return enrichRnrSuggestion({
+    title:professionalRnrTitle(text,category),
+    summary:text.trim(),
+    department,
+    position,
+    category,
+    priority:"normal",
+    checklist:picked.duties,
+    assigned_person_name:employee?.name||"",
+    assigned_employee_id:employee?.id||"",
+    target_scope:employee?.id?"employee":"employee",
+  }, text);
+}
 function rnrPublicTitle(entry:any) {
   const manual=String(entry?.display_title??"").trim();
   if(manual) return manual;
@@ -5266,41 +5290,107 @@ function WorkMapBoard({ entries, employees=[], onOpen }: { entries:any[]; employ
 function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
   const [entries,setEntries]=useState<any[]>([]);
   const [employees,setEmployees]=useState<any[]>([]);
+  const [reviewTitle,setReviewTitle]=useState("");
+  const [reviewMemo,setReviewMemo]=useState("");
+  const [reviewSuggestion,setReviewSuggestion]=useState<any|null>(null);
+  const [reviewRequests,setReviewRequests]=useState<any[]>([]);
+  const [reviewBusy,setReviewBusy]=useState(false);
   const [loading,setLoading]=useState(true);
   const [message,setMessage]=useState("");
-  useEffect(()=>{
-    let alive=true;
-    async function load(){
-      setLoading(true); setMessage("");
-      let result=await supabase
+  async function loadWorkMap(){
+    setLoading(true); setMessage("");
+    let result=await supabase
+      .from("rnr_entries")
+      .select("*")
+      .eq("is_active",true)
+      .eq("is_public",true)
+      .eq("is_sensitive",false)
+      .order("department",{ascending:true})
+      .order("work_group",{ascending:true})
+      .order("created_at",{ascending:false})
+      .limit(300);
+    if(result.error&&/is_public|is_sensitive|work_group|schema cache/i.test(result.error.message)){
+      result=await supabase
         .from("rnr_entries")
         .select("*")
         .eq("is_active",true)
-        .eq("is_public",true)
-        .eq("is_sensitive",false)
-        .order("department",{ascending:true})
-        .order("work_group",{ascending:true})
         .order("created_at",{ascending:false})
         .limit(300);
-      if(result.error&&/is_public|is_sensitive|work_group|schema cache/i.test(result.error.message)){
-        result=await supabase
-          .from("rnr_entries")
-          .select("*")
-          .eq("is_active",true)
-          .order("created_at",{ascending:false})
-          .limit(300);
-      }
+    }
+    const {data,error}=result;
+    if(error) setMessage(error.message);
+    setEntries(data??[]);
+    const [empResult,reviewResult]=await Promise.all([
+      supabase.from("employees").select("id,name,department,is_active,employment_status").eq("is_active",true).order("created_at",{ascending:false}),
+      supabase.from("rnr_review_requests").select("*").eq("requester_id",currentEmployee.id).order("created_at",{ascending:false}).limit(10),
+    ]);
+    setEmployees(empResult.data??[]);
+    if(reviewResult.error&&/rnr_review_requests|schema cache|relation/i.test(reviewResult.error.message)) {
+      setReviewRequests([]);
+    } else {
+      setReviewRequests(reviewResult.data??[]);
+    }
+    setLoading(false);
+  }
+  useEffect(()=>{
+    let alive=true;
+    async function load(){
       if(!alive) return;
-      const {data,error}=result;
-      if(error) setMessage(error.message);
-      setEntries(data??[]);
-      const empResult=await supabase.from("employees").select("id,name,department,is_active,employment_status").eq("is_active",true).order("created_at",{ascending:false});
-      if(alive) setEmployees(empResult.data??[]);
-      setLoading(false);
+      await loadWorkMap();
     }
     load();
     return ()=>{alive=false;};
   },[currentEmployee?.id]);
+  async function previewReviewSuggestion() {
+    const source=[reviewTitle,reviewMemo].filter(Boolean).join("\n").trim();
+    if(!source) return setMessage("제안할 업무 내용을 입력해주세요.");
+    setReviewBusy(true); setMessage("");
+    try {
+      const {data:sessionData}=await supabase.auth.getSession();
+      const token=sessionData.session?.access_token;
+      if(!token) throw new Error("로그인이 필요합니다.");
+      const response=await fetch("/api/rnr-suggest",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+        body:JSON.stringify({
+          input:source,
+          employees:[{id:currentEmployee.id,name:currentEmployee.name,department:currentEmployee.department,position:currentEmployee.position,role:currentEmployee.role}],
+          existing:entries.slice(0,40).map((entry:any)=>({title:entry.title,department:entry.department,position:entry.position,category:entry.category,work_group:rnrWorkGroup(entry)})),
+          categories:RNR_CATEGORY_OPTIONS.filter(Boolean),
+          work_groups:allRnrWorkGroupOptions(),
+          baseline:RNR_BASELINE_ROLES,
+        }),
+      });
+      const data=await response.json();
+      if(!response.ok) throw new Error(data?.error||"AI 정리 실패");
+      setReviewSuggestion({...enrichRnrSuggestion(data?.suggestion??localRnrSuggestionFromText(source,currentEmployee),source),target_scope:"employee",assigned_employee_id:currentEmployee.id,assigned_person_name:currentEmployee.name});
+    } catch(e:any) {
+      setReviewSuggestion(localRnrSuggestionFromText(source,currentEmployee));
+      setMessage(`AI 호출 대신 기본 추천으로 정리했습니다. ${e.message}`);
+    } finally {
+      setReviewBusy(false);
+    }
+  }
+  async function submitReviewRequest() {
+    const source=[reviewTitle,reviewMemo].filter(Boolean).join("\n").trim();
+    if(!source) return setMessage("관리자에게 넘길 업무 내용을 입력해주세요.");
+    const suggestion=reviewSuggestion??localRnrSuggestionFromText(source,currentEmployee);
+    const title=String(reviewTitle||suggestion.display_title||suggestion.title||"업무 R&R 제안").trim();
+    const payload={
+      requester_id:currentEmployee.id,
+      raw_input:source,
+      title,
+      summary:String(suggestion.summary||source).trim(),
+      suggestion:{...suggestion,target_scope:"employee",assigned_employee_id:currentEmployee.id,assigned_person_name:currentEmployee.name},
+      status:"pending",
+    };
+    const {error}=await supabase.from("rnr_review_requests").insert(payload);
+    if(error) return setMessage(error.message.includes("rnr_review_requests")?"R&R 검토함 테이블이 아직 없습니다. 관리자에게 Supabase SQL 패치 실행을 요청해주세요.":error.message);
+    setMessage("관리자 검토 요청을 보냈습니다.");
+    setReviewTitle(""); setReviewMemo(""); setReviewSuggestion(null);
+    await loadWorkMap();
+  }
+  const recentReviews=reviewRequests.slice(0,3);
   return <section className="card work-map-page">
     <div className="work-map-hero">
       <div>
@@ -5310,7 +5400,33 @@ function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
       </div>
       <i className="ti ti-route-square-2" aria-hidden="true"></i>
     </div>
-    {message&&<div className="alert error">{message}</div>}
+    {message&&<div className={`alert ${message.includes("보냈")?"success":"error"}`}>{message}</div>}
+    <div className="rnr-employee-submit">
+      <div className="rnr-section-title rnr-panel-title">
+        <b>내 업무 제안</b>
+        <span>직원이 직접 적고 관리자 검토 후 업무분장표에 반영합니다.</span>
+      </div>
+      <div className="rnr-review-grid">
+        <div className="rnr-review-write">
+          <div className="form-row"><label className="label">한줄 정리</label><input className="input" value={reviewTitle} onChange={e=>setReviewTitle(e.target.value)} placeholder="예: 지원사업 정산 자료 정리" /></div>
+          <div className="form-row"><label className="label">업무 메모</label><textarea className="textarea compact-textarea" value={reviewMemo} onChange={e=>setReviewMemo(e.target.value)} placeholder="무슨 일을 하는지, 누구와 연결되는지 편하게 적어주세요." /></div>
+          <div className="actions"><button className="button secondary compact" disabled={reviewBusy} onClick={previewReviewSuggestion}><i className="ti ti-sparkles" aria-hidden="true"></i>{reviewBusy?"정리 중":"자동 정리"}</button><button className="button compact" onClick={submitReviewRequest}><i className="ti ti-send" aria-hidden="true"></i>관리자 검토 요청</button></div>
+        </div>
+        <div className="rnr-review-preview">
+          <b>AI 자동 정리 결과</b>
+          {reviewSuggestion ? (
+            <div className="rnr-review-result">
+              <strong>{reviewSuggestion.display_title||reviewSuggestion.title}</strong>
+              <span>{reviewSuggestion.department||"부서 미정"} · {reviewSuggestion.position||"직책 미정"} · {reviewSuggestion.work_group||"업무 묶음 미정"}</span>
+              <p>{reviewSuggestion.summary}</p>
+            </div>
+          ) : <p>한줄 정리와 업무 메모를 입력하고 자동 정리를 누르면 이곳에 검토용 초안이 표시됩니다.</p>}
+        </div>
+      </div>
+      {recentReviews.length>0&&<div className="rnr-review-history">
+        {recentReviews.map((row:any)=><span key={row.id}>{row.status==="pending"?"검토 대기":row.status==="approved"?"승인됨":"반려됨"} · {row.title}</span>)}
+      </div>}
+    </div>
     {loading ? <p className="subtle">불러오는 중...</p> : <WorkMapBoard entries={entries} employees={employees} />}
   </section>;
 }
@@ -5330,6 +5446,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [absences,setAbsences]=useState<any[]>([]);
   const [allLogs,setAllLogs]=useState<any[]>([]);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
+  const [rnrReviewRequests,setRnrReviewRequests]=useState<any[]>([]);
   const [dailyTasks,setDailyTasks]=useState<any[]>([]);
   const [rnrInput,setRnrInput]=useState("");
   const [rnrAttachments,setRnrAttachments]=useState<any[]>([]);
@@ -5375,7 +5492,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const list=emps??[]; const map:Record<string,any>={};
     list.forEach((e:any)=>{map[e.id]=e;});
     setEmployees(list); setEmpMap(map);
-    const [d,w,r,c,wt,ac,a,ov,ab,lg,rn,dt]=await Promise.all([
+    const [d,w,r,c,wt,ac,a,ov,ab,lg,rn,rr,dt]=await Promise.all([
       supabase.from("registered_devices").select("*").order("created_at",{ascending:false}),
       supabase.from("workplaces").select("*").order("created_at",{ascending:false}),
       supabase.from("attendance_requests").select("*").order("created_at",{ascending:false}),
@@ -5387,9 +5504,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       supabase.from("employee_absences").select("*").order("start_date",{ascending:false}),
       supabase.from("attendance_logs").select("id, employee_id, workplace_id, check_in_time, check_out_time, original_check_out_time, scheduled_check_out_time, overtime_review_status, status, workplaces(name,type)").order("check_in_time",{ascending:false}).limit(300),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
+      supabase.from("rnr_review_requests").select("*").order("created_at",{ascending:false}).limit(100),
       supabase.from("daily_tasks").select("*").eq("is_active",true).order("task_date",{ascending:false}).order("created_at",{ascending:false}).limit(200),
     ]);
-    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setDailyTasks(dt.data??[]);
+    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setRnrReviewRequests(rr.error?[]:rr.data??[]); setDailyTasks(dt.data??[]);
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
@@ -5415,6 +5533,23 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   function dailyTaskDueLabel(task:any) {
     const due=String(task?.due_date??"").slice(0,10);
     return due ? `기한 ${due}` : "";
+  }
+  const pendingRnrReviewRequests=rnrReviewRequests.filter((row:any)=>row.status==="pending");
+  function rnrReviewRequester(row:any) {
+    return empMap[row.requester_id]??employees.find((employee:any)=>employee.id===row.requester_id)??null;
+  }
+  function rnrSuggestionFromReview(row:any) {
+    const requester=rnrReviewRequester(row);
+    return enrichRnrSuggestion({
+      ...(row.suggestion??{}),
+      title:row.title,
+      summary:row.summary,
+      assigned_employee_id:row.requester_id,
+      assigned_person_name:requester?.name??"",
+      department:requester?.department||row.suggestion?.department,
+      position:requester?.position||row.suggestion?.position,
+      target_scope:"employee",
+    }, row.raw_input);
   }
 
   function leaveForEmployee(empId:string) {
@@ -5493,20 +5628,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     await load(); onChanged();
   }
   function localRnrSuggestion(text:string) {
-    const normalized=text.toLowerCase();
-    const picked=RNR_BASELINE_ROLES.find(role=>role.keywords.some(keyword=>normalized.includes(keyword.toLowerCase())))??RNR_BASELINE_ROLES[0];
-    const category=classifyRnrCategory(text);
-    return enrichRnrSuggestion({
-      title:professionalRnrTitle(text,category),
-      summary:text.trim(),
-      department:picked.department,
-      position:picked.position,
-      category,
-      priority:"normal",
-      checklist:picked.duties,
-      assigned_person_name:"",
-      target_scope:"employee",
-    }, text);
+    return localRnrSuggestionFromText(text);
   }
   async function handleRnrPaste(event:any) {
     const files=Array.from(event.clipboardData?.files??[]).filter((file:any)=>String(file.type??"").startsWith("image/")) as File[];
@@ -5601,6 +5723,63 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const {error}=result;
     if(error) setRnrMsg(error.message);
     else { setRnrMsg("업무 R&R이 저장되었습니다."); setRnrInput(""); setRnrAttachments([]); setRnrSuggestion(null); setRnrAssigneeId(""); await load(); }
+  }
+  async function approveRnrReview(row:any) {
+    const requester=rnrReviewRequester(row);
+    const suggestion=rnrSuggestionFromReview(row);
+    const category=suggestion.category||classifyRnrCategory(`${row.title} ${row.summary}`);
+    const department=normalizeDepartmentName(requester?.department||suggestion.department||"");
+    const position=requester?.position||suggestion.position||"";
+    const workGroup=normalizeRnrWorkGroup(suggestion.work_group,`${row.raw_input}\n${row.summary}`,category,department);
+    const payload={
+      raw_input:String(row.raw_input??row.title??"").trim(),
+      title:String(row.title??suggestion.title??"업무 R&R 제안").trim(),
+      summary:String(row.summary??suggestion.summary??row.raw_input??"").trim(),
+      display_title:String(suggestion.display_title??row.title??suggestion.title??"업무 R&R").trim(),
+      work_group:workGroup,
+      flow_notes:stringListFromUnknown(suggestion.flow_notes).length?stringListFromUnknown(suggestion.flow_notes):inferRnrFlowLines(`${row.raw_input}\n${row.summary}`,category),
+      target_scope:"employee",
+      is_public:suggestion.is_public!==false,
+      public_note:String(suggestion.public_note??"").trim()||null,
+      department,
+      position,
+      category,
+      priority:suggestion.priority||"normal",
+      checklist:Array.isArray(suggestion.checklist)?suggestion.checklist:[],
+      assigned_employee_id:row.requester_id,
+      assigned_person_name:requester?.name||suggestion.assigned_person_name||"",
+      created_by:currentEmployee.id,
+      source:"employee_review_request",
+      attachments:Array.isArray(suggestion.attachments)?suggestion.attachments:[],
+      is_active:true,
+    };
+    const sensitive=rnrIsSensitive(payload);
+    (payload as any).is_sensitive=sensitive;
+    if(sensitive) (payload as any).is_public=false;
+    const insertResult=await supabase.from("rnr_entries").insert(payload).select("id").single();
+    if(insertResult.error) return setRnrMsg(insertResult.error.message);
+    const updateResult=await supabase.from("rnr_review_requests").update({
+      status:"approved",
+      reviewed_by:currentEmployee.id,
+      reviewed_at:new Date().toISOString(),
+      rnr_entry_id:insertResult.data?.id,
+      updated_at:new Date().toISOString(),
+    }).eq("id",row.id);
+    if(updateResult.error) setRnrMsg(updateResult.error.message);
+    else { setRnrMsg("직원 제안을 승인해 업무분장표에 반영했습니다."); await load(); onChanged(); }
+  }
+  async function rejectRnrReview(row:any) {
+    const note=window.prompt("반려 사유를 입력해주세요.", row.review_note||"업무 묶음 또는 담당 범위를 다시 확인해주세요.");
+    if(note===null) return;
+    const {error}=await supabase.from("rnr_review_requests").update({
+      status:"rejected",
+      review_note:note,
+      reviewed_by:currentEmployee.id,
+      reviewed_at:new Date().toISOString(),
+      updated_at:new Date().toISOString(),
+    }).eq("id",row.id);
+    if(error) setRnrMsg(error.message);
+    else { setRnrMsg("직원 제안을 반려했습니다."); await load(); onChanged(); }
   }
   function openRnr(entry:any){
     setSelectedRnr(entry);
@@ -6973,6 +7152,34 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         <h2 className="card-title"><i className="ti ti-sitemap" aria-hidden="true"></i>업무 R&R 정리</h2>
         <p className="subtle" style={{marginBottom:12}}>업무를 편하게 적으면 부서/직책/업무명으로 정리해서 누적합니다. 다음 직원이 같은 역할을 맡을 때 기준 업무로 볼 수 있습니다.</p>
         {rnrMsg&&<div className={`alert ${rnrMsg.includes("저장")?"success":""}`}>{rnrMsg}</div>}
+        <div className="rnr-review-panel">
+          <div className="rnr-section-title rnr-panel-title">
+            <b>직원 제출 검토 {pendingRnrReviewRequests.length>0&&<span className="count-badge">{pendingRnrReviewRequests.length}</span>}</b>
+            <span>직원이 올린 업무 제안을 승인하면 공개 업무분장표에 반영됩니다.</span>
+          </div>
+          {pendingRnrReviewRequests.length===0 ? (
+            <p className="rnr-empty-work">검토 대기 중인 직원 업무 제안이 없습니다.</p>
+          ) : (
+            <div className="rnr-review-list">
+              {pendingRnrReviewRequests.map((row:any)=>{
+                const requester=rnrReviewRequester(row);
+                const suggestion=rnrSuggestionFromReview(row);
+                return <div className="rnr-review-row" key={row.id}>
+                  <div>
+                    <span>{requester?.name??"직원"} · {normalizeDepartmentName(requester?.department)||suggestion.department||"부서 미정"} · {formatDateTime(row.created_at)}</span>
+                    <b>{suggestion.display_title||row.title}</b>
+                    <p>{row.summary}</p>
+                    <small>{suggestion.work_group||"업무 묶음 미정"} · {suggestion.position||requester?.position||"직책 미정"}</small>
+                  </div>
+                  <div className="actions rnr-review-actions">
+                    <button className="button compact" onClick={()=>approveRnrReview(row)}><i className="ti ti-check" aria-hidden="true"></i>승인</button>
+                    <button className="button danger ghost compact" onClick={()=>rejectRnrReview(row)}><i className="ti ti-x" aria-hidden="true"></i>반려</button>
+                  </div>
+                </div>;
+              })}
+            </div>
+          )}
+        </div>
         <div className="rnr-today-panel">
           <div className="rnr-section-title rnr-panel-title">
             <b>오늘의 할일 모음</b>
@@ -7009,7 +7216,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           )}
         </div>
         <div className="grid two rnr-ai-grid">
-          <div>
+          <div className="rnr-input-box">
             <div className="form-row"><label className="label">업무 메모</label><textarea className="textarea rnr-textarea" value={rnrInput} onChange={e=>setRnrInput(e.target.value)} onPaste={handleRnrPaste} placeholder="예: 내일 오전에 학교 제출용 서류 정리하고, 영수증은 민지한테 맡기고, 교육장 비품은 사무보조가 체크하게 해줘." /></div>
             <p className="subtle rnr-paste-hint">이미지는 업무 메모 칸에 Ctrl+V로 여러 장 붙여넣을 수 있습니다.</p>
             {rnrAttachments.length>0&&<div className="rnr-attachments">{rnrAttachments.map((attachment:any)=><button type="button" key={attachment.id} onClick={()=>setRnrAttachments(current=>current.filter(item=>item.id!==attachment.id))} title="첨부 삭제"><img src={attachment.data_url} alt={attachment.name} /></button>)}</div>}
