@@ -1163,6 +1163,9 @@ function monthEndIso(month:string) {
   const [y,m]=month.split("-").map(Number);
   return isoDate(new Date(y,m,0));
 }
+function isAfterBusinessClose(date=new Date()) {
+  return date.getHours()>=18;
+}
 function kpiLinesFromText(text:string) {
   return text
     .split(/\r?\n/)
@@ -2648,6 +2651,7 @@ function HomePage({ employee }: { employee: any }) {
   const [attendanceRuleConsent,setAttendanceRuleConsent] = useState<any|null>(null);
   const [attendanceRuleChecked,setAttendanceRuleChecked] = useState(false);
   const [todayTasks,setTodayTasks] = useState<any[]>([]);
+  const [todayTaskCompletions,setTodayTaskCompletions] = useState<any[]>([]);
   const [todayKpis,setTodayKpis] = useState<any[]>([]);
   const [weeklyKpiOptions,setWeeklyKpiOptions] = useState<any[]>([]);
   const [todoDraft,setTodoDraft] = useState({title:"",content:"",due_date:""});
@@ -2663,9 +2667,11 @@ function HomePage({ employee }: { employee: any }) {
   const [notificationPermission,setNotificationPermission] = useState<NotificationPermission|"unsupported">("unsupported");
   const [lastReminderMessage,setLastReminderMessage] = useState("");
   const sentReminderKeys = useRef<Set<string>>(new Set());
+  const completedTodayTaskIds=new Set(todayTaskCompletions.map((row:any)=>row.task_id));
+  const employeeTodayTasks=todayTasks.filter((task:any)=>!completedTodayTaskIds.has(task.id));
   const todayTask = employee.role==="admin"
     ? (todayTasks.find((task:any)=>String(task.target_employee_id??"")===todoTargetEmployeeId)??null)
-    : (todayTasks.find((task:any)=>!task.target_employee_id||task.target_employee_id===employee.id)??null);
+    : (employeeTodayTasks.find((task:any)=>!task.target_employee_id||task.target_employee_id===employee.id)??null);
   const todoTargetLabel = todoTargetEmployeeId
     ? (todoEmployees.find((e:any)=>e.id===todoTargetEmployeeId)?.name??"선택 직원")
     : "전체 직원";
@@ -2711,7 +2717,7 @@ function HomePage({ employee }: { employee: any }) {
     const today=todayIso();
     const weekStart=weekStartIso(today);
     const weekEnd=weekEndIso(today);
-    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:leaveRows},{data:taskRows},{data:rnrRows},{data:correctionRows,error:correctionError},{data:ruleConsent,error:ruleError},{data:kpiRows},{data:kpiWeeklyRows}]=await Promise.all([
+    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:leaveRows},{data:taskRows},{data:taskCompletionRows,error:taskCompletionError},{data:rnrRows},{data:correctionRows,error:correctionError},{data:ruleConsent,error:ruleError},{data:kpiRows},{data:kpiWeeklyRows}]=await Promise.all([
       supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name"),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("check_in_time",{ascending:false}).limit(80),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).is("check_out_time",null).order("check_in_time",{ascending:false}),
@@ -2720,6 +2726,7 @@ function HomePage({ employee }: { employee: any }) {
       supabase.from("work_time_change_requests").select("*").eq("employee_id",employee.id).eq("status","approved").order("created_at",{ascending:false}).limit(100),
       supabase.from("attendance_requests").select("*").eq("employee_id",employee.id).eq("status","approved").lte("start_date",today).gte("end_date",today).order("created_at",{ascending:false}),
       supabase.from("daily_tasks").select("*").eq("task_date",today).eq("is_active",true).order("created_at",{ascending:false}).limit(100),
+      supabase.from("daily_task_completions").select("*").eq("employee_id",employee.id).gte("completed_at",`${today}T00:00:00+09:00`).order("completed_at",{ascending:false}).limit(200),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(80),
       supabase.from("attendance_correction_requests").select("*").eq("employee_id",employee.id).eq("status","pending").order("created_at",{ascending:true}).limit(10),
       supabase.from("work_time_change_consents").select("*").eq("employee_id",employee.id).eq("consent_version",ATTENDANCE_RULE_CONSENT_VERSION).maybeSingle(),
@@ -2735,6 +2742,7 @@ function HomePage({ employee }: { employee: any }) {
     setAttendanceRuleConsent(ruleError?{skipped:true}:ruleConsent??null);
     setAttendanceRuleChecked(true);
     setTodayTasks(taskRows??[]);
+    setTodayTaskCompletions(taskCompletionError?[]:taskCompletionRows??[]);
     setTodayKpis(kpiRows??[]);
     setWeeklyKpiOptions(kpiWeeklyRows??[]);
     if(employee.role==="admin"){
@@ -2835,14 +2843,17 @@ function HomePage({ employee }: { employee: any }) {
     const saveContent=content;
     const due_date=todoDraft.due_date||null;
     const target_employee_id=todoTargetEmployeeId||null;
-    const payload={task_date:todayIso(),title:saveTitle,content:saveContent,due_date,is_active:true,created_by:employee.id,target_employee_id};
+    const taskDate=isAfterBusinessClose()&&window.confirm("오후 6시 이후입니다. 이 할일을 내일로 넘기겠습니까?")
+      ? addIsoDays(todayIso(),1)
+      : todayIso();
+    const payload={task_date:taskDate,title:saveTitle,content:saveContent,due_date,is_active:true,created_by:employee.id,target_employee_id};
     let result=todayTask?.id
-      ? await supabase.from("daily_tasks").update({title:saveTitle,content:saveContent,due_date,is_active:true,target_employee_id,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
+      ? await supabase.from("daily_tasks").update({task_date:taskDate,title:saveTitle,content:saveContent,due_date,is_active:true,target_employee_id,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
       : await supabase.from("daily_tasks").insert(payload).select().single();
     if(result.error&&/due_date|schema cache/i.test(result.error.message)){
       const {due_date:_,...fallbackPayload}=payload;
       result=todayTask?.id
-        ? await supabase.from("daily_tasks").update({title:saveTitle,content:saveContent,is_active:true,target_employee_id,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
+        ? await supabase.from("daily_tasks").update({task_date:taskDate,title:saveTitle,content:saveContent,is_active:true,target_employee_id,updated_at:new Date().toISOString()}).eq("id",todayTask.id).select().single()
         : await supabase.from("daily_tasks").insert(fallbackPayload).select().single();
     }
     if(result.error) setTodoMessage(result.error.message);
@@ -2853,6 +2864,73 @@ function HomePage({ employee }: { employee: any }) {
     const {error}=await supabase.from("daily_tasks").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",todayTask.id);
     if(error) setTodoMessage(error.message);
     else { setTodoDraft({title:"",content:"",due_date:""}); setTodoMessage("오늘의 할일을 숨겼습니다."); await load(); }
+  }
+  async function syncTodayTaskToDailyKpi(task:any) {
+    if(!task?.id) return;
+    const workDate=String(task.task_date??todayIso()).slice(0,10);
+    const existing=todayKpis.find((entry:any)=>entry.source_daily_task_id===task.id || (entry.title===task.title&&entry.work_date===workDate));
+    const nowIso=new Date().toISOString();
+    if(existing?.id) {
+      let updateResult=await supabase.from("kpi_entries").update({
+        status:"done",
+        description:task.content||null,
+        source_daily_task_id:task.id,
+        source_rnr_entry_id:task.source_rnr_entry_id||null,
+        updated_by:employee.id,
+        updated_at:nowIso,
+      }).eq("id",existing.id);
+      if(updateResult.error&&/description|source_daily_task_id|source_rnr_entry_id|updated_by|schema cache/i.test(updateResult.error.message)){
+        updateResult=await supabase.from("kpi_entries").update({status:"done",updated_at:nowIso}).eq("id",existing.id);
+      }
+      if(updateResult.error) throw updateResult.error;
+      return;
+    }
+    const payload={
+      employee_id:employee.id,
+      employee_name:employee.name,
+      attendance_log_id:todayLog?.id??null,
+      parent_id:weeklyKpiOptions.find((entry:any)=>!entry.employee_id||entry.employee_id===employee.id)?.id??null,
+      scope:"daily",
+      work_date:workDate,
+      title:task.title||"오늘의 할일",
+      description:task.content||null,
+      source_daily_task_id:task.id,
+      source_rnr_entry_id:task.source_rnr_entry_id||null,
+      status:"done",
+      sort_order:todayKpis.length+1,
+      is_public:true,
+      is_active:true,
+      created_by:employee.id,
+      updated_by:employee.id,
+    };
+    let insertResult=await supabase.from("kpi_entries").insert(payload);
+    if(insertResult.error&&/description|source_daily_task_id|source_rnr_entry_id|updated_by|schema cache/i.test(insertResult.error.message)){
+      const {description,source_daily_task_id,source_rnr_entry_id,updated_by,...fallbackPayload}=payload;
+      insertResult=await supabase.from("kpi_entries").insert(fallbackPayload);
+    }
+    if(insertResult.error) throw insertResult.error;
+  }
+  async function completeTodayTask(task:any=todayTask) {
+    if(!task?.id) return;
+    setTodoMessage("");
+    setBusy(true);
+    try {
+      let completionResult=await supabase.from("daily_task_completions").upsert({
+        task_id:task.id,
+        employee_id:employee.id,
+      },{onConflict:"task_id,employee_id"});
+      if(completionResult.error&&/daily_task_completions|schema cache|relation/i.test(completionResult.error.message)){
+        completionResult=await supabase.from("daily_tasks").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",task.id);
+      }
+      if(completionResult.error) throw completionResult.error;
+      await syncTodayTaskToDailyKpi(task);
+      setTodoMessage("완료 처리했고 데일리 KPI에도 반영했습니다.");
+      await load();
+    } catch(e:any) {
+      setTodoMessage(e.message);
+    } finally {
+      setBusy(false);
+    }
   }
   function openCheckInKpiModal(attendanceLogId?:string|null) {
     const currentText=todayKpis.map((entry:any,index:number)=>`${index+1}. ${entry.title}`).join("\n");
@@ -3422,7 +3500,7 @@ function HomePage({ employee }: { employee: any }) {
       {(employee.role==="admin"||todayTask)&&(
         <section className="card today-task-desktop">
           <h2 className="card-title"><i className="ti ti-clipboard-list" aria-hidden="true"></i>오늘의 할일</h2>
-          {employee.role==="admin"&&todoMessage&&<div className="alert" style={{marginTop:10}}>{todoMessage}</div>}
+          {todoMessage&&<div className="alert" style={{marginTop:10}}>{todoMessage}</div>}
           {employee.role==="admin" ? (
             <div className="today-task-editor">
               <div className="form-row">
@@ -3461,6 +3539,9 @@ function HomePage({ employee }: { employee: any }) {
               {todayTask.due_date&&<span className="today-task-due">기한 {String(todayTask.due_date).slice(0,10)}</span>}
               <p>{todayTask.content}</p>
               {Array.isArray(todayTask.attachments)&&todayTask.attachments.length>0&&<div className="rnr-attachments readonly">{todayTask.attachments.map((attachment:any,index:number)=>isImageAttachment(attachment)?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+              <div className="actions">
+                <button className="button success compact" disabled={busy} onClick={()=>completeTodayTask(todayTask)}><i className="ti ti-check" aria-hidden="true"></i>완료</button>
+              </div>
             </div>
           ) : (
             <div className="today-task-button">
@@ -3510,6 +3591,14 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [message,setMessage]=useState("");
   const [saving,setSaving]=useState(false);
   const [goalDraft,setGoalDraft]=useState({scope:"monthly",employee_id:"",parent_id:"",title:""});
+  const [quickDrafts,setQuickDrafts]=useState({monthly:"",weekly:"",daily:""});
+  const [quickEmployeeId,setQuickEmployeeId]=useState("");
+  const [quickMonthlyParentId,setQuickMonthlyParentId]=useState("");
+  const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
+  const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
+  const [editingKpi,setEditingKpi]=useState<any|null>(null);
+  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:""});
+  const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
   const isAdmin=currentEmployee.role==="admin";
   const today=todayIso();
@@ -3520,14 +3609,16 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
 
   async function load() {
     setMessage("");
-    const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status").order("employee_no",{ascending:true});
-    const [entryResult,employeeResult]=await Promise.all([
+    const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status,department,position").order("employee_no",{ascending:true});
+    const [entryResult,employeeResult,rnrResult]=await Promise.all([
       supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",monthStart).lte("work_date",monthEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true}),
       isAdmin ? employeeQuery : employeeQuery.eq("id",currentEmployee.id),
+      supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
     ]);
     if(entryResult.error) setMessage("KPI 테이블이 아직 반영되지 않았습니다. Supabase SQL 패치를 먼저 실행해주세요.");
     setEntries(entryResult.data??[]);
     setEmployees(employeeResult.data??[]);
+    setRnrEntries(rnrResult.data??[]);
   }
   useEffect(()=>{ load(); },[month,currentEmployee.id]);
 
@@ -3574,6 +3665,148 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     const list=weekDailyEntries.filter((entry:any)=>entry.employee_id===employeeId);
     const rate=kpiCompletionRate(list);
     return {rate:rate??0,total:list.length,done:list.filter((entry:any)=>entry.status==="done").length};
+  }
+  function quickTargetEmployee() {
+    const employeeId=isAdmin ? quickEmployeeId : currentEmployee.id;
+    return employeeId ? employees.find((employee:any)=>employee.id===employeeId) : null;
+  }
+  function relevantRnrEntries() {
+    const target=quickTargetEmployee()??currentEmployee;
+    const targetDept=normalizeDepartmentName(target?.department);
+    const targetPosition=String(target?.position??"").trim();
+    return rnrEntries.filter((entry:any)=>{
+      if(entry.assigned_employee_id) return entry.assigned_employee_id===target?.id;
+      return (!!targetDept&&normalizeDepartmentName(entry.department)===targetDept) || (!!targetPosition&&String(entry.position??"").trim()===targetPosition) || rnrTargetScope(entry)==="common";
+    });
+  }
+  function kpiStepCandidates(title:string) {
+    const query=title.trim().toLowerCase();
+    const related=relevantRnrEntries().find((entry:any)=>{
+      const text=[rnrPublicTitle(entry),entry.summary,entry.work_group,entry.category,rnrFlowLines(entry).join(" ")].join(" ").toLowerCase();
+      return query && (text.includes(query) || query.split(/\s+/).some(word=>word.length>1&&text.includes(word)));
+    });
+    const fromRnr=related?rnrFlowLines(related):[];
+    const fallback=[
+      `${title} 목표와 완료 기준 확인`,
+      "필요 자료와 담당자 확인",
+      "우선순위에 따라 실행 순서 정리",
+      "진행 결과와 막힌 점 공유",
+      "완료 산출물 점검 및 기록",
+    ];
+    return (fromRnr.length?fromRnr:fallback).slice(0,8).map((step:string,index:number)=>({
+      id:`step-${index}`,
+      title:step,
+      source_rnr_entry_id:related?.id??null,
+    }));
+  }
+  function openKpiSuggestion(scope:string) {
+    const title=quickDrafts[scope as keyof typeof quickDrafts].trim();
+    if(!title) return setMessage(`${scope==="monthly"?"월간":scope==="weekly"?"주간":"데일리"} KPI를 먼저 입력해주세요.`);
+    const steps=kpiStepCandidates(title);
+    setKpiSuggestion({
+      scope,
+      title,
+      steps,
+      selected:steps.reduce((map:Record<string,boolean>,step:any)=>({...map,[step.id]:true}),{}),
+    });
+  }
+  async function insertKpiRows(scope:string, titles:string[], options:any={}) {
+    if(titles.length===0) return;
+    const target=quickTargetEmployee();
+    const employeeId=target?.id ?? (isAdmin ? null : currentEmployee.id);
+    const employeeName=target?.name ?? (employeeId ? currentEmployee.name : "전체");
+    const workDate=scope==="monthly" ? monthStart : scope==="weekly" ? weekStart : today;
+    const parentId=scope==="weekly" ? (quickMonthlyParentId||null) : scope==="daily" ? (quickWeeklyParentId||null) : null;
+    const payloads=titles.map((title,index)=>({
+      employee_id:employeeId,
+      employee_name:employeeName,
+      parent_id:parentId,
+      scope,
+      work_date:workDate,
+      title,
+      description:options.description??null,
+      source_rnr_entry_id:options.source_rnr_entry_id??null,
+      status:"pending",
+      sort_order:entries.filter((entry:any)=>entry.scope===scope).length+index+1,
+      is_public:true,
+      is_active:true,
+      created_by:currentEmployee.id,
+      updated_by:currentEmployee.id,
+    }));
+    let result=await supabase.from("kpi_entries").insert(payloads);
+    if(result.error&&/description|source_rnr_entry_id|updated_by|schema cache/i.test(result.error.message)){
+      const fallbackPayloads=payloads.map(({description,source_rnr_entry_id,updated_by,...fallbackPayload}:any)=>fallbackPayload);
+      result=await supabase.from("kpi_entries").insert(fallbackPayloads);
+    }
+    if(result.error) throw result.error;
+  }
+  async function saveQuickKpi(scope:string) {
+    const title=quickDrafts[scope as keyof typeof quickDrafts].trim();
+    if(!title) return setMessage("KPI 내용을 입력해주세요.");
+    setSaving(true); setMessage("");
+    try {
+      await insertKpiRows(scope,[title]);
+      setQuickDrafts({...quickDrafts,[scope]:""});
+      await load();
+      setMessage("KPI를 저장했습니다. 아래에서 업무 순서와 단계 추천도 받을 수 있습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function addSuggestedSteps(targetScope:string) {
+    if(!kpiSuggestion) return;
+    const checkedSteps=kpiSuggestion.steps.filter((step:any)=>kpiSuggestion.selected[step.id]);
+    if(checkedSteps.length===0) return setMessage("추가할 단계를 하나 이상 체크해주세요.");
+    setSaving(true); setMessage("");
+    try {
+      await insertKpiRows(targetScope,checkedSteps.map((step:any)=>step.title),{
+        description:`${kpiSuggestion.title}에서 추천된 단계`,
+        source_rnr_entry_id:checkedSteps.find((step:any)=>step.source_rnr_entry_id)?.source_rnr_entry_id??null,
+      });
+      setKpiSuggestion(null);
+      await load();
+      setMessage(`${targetScope==="daily"?"데일리":"주간"} KPI에 추천 단계를 추가했습니다.`);
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  function beginEditKpi(entry:any) {
+    setEditingKpi(entry);
+    setEditKpiDraft({title:entry.title??"",admin_note:entry.admin_note??""});
+  }
+  async function saveEditedKpi() {
+    if(!editingKpi?.id) return;
+    const title=editKpiDraft.title.trim();
+    if(!title) return setMessage("KPI 내용을 입력해주세요.");
+    const previousTitle=editingKpi.title;
+    const note=editKpiDraft.admin_note.trim();
+    const historyEntry={at:new Date().toISOString(),by:currentEmployee.id,from:previousTitle,to:title,note};
+    const changeLog=Array.isArray(editingKpi.change_log)?[...editingKpi.change_log,historyEntry]:[historyEntry];
+    setSaving(true); setMessage("");
+    try {
+      let result=await supabase.from("kpi_entries").update({
+        title,
+        admin_note:isAdmin?note:null,
+        updated_by:currentEmployee.id,
+        change_log:changeLog,
+        updated_at:new Date().toISOString(),
+      }).eq("id",editingKpi.id);
+      if(result.error&&/admin_note|updated_by|change_log|schema cache/i.test(result.error.message)){
+        result=await supabase.from("kpi_entries").update({title,updated_at:new Date().toISOString()}).eq("id",editingKpi.id);
+      }
+      if(result.error) throw result.error;
+      setEditingKpi(null);
+      await load();
+      setMessage(isAdmin?"관리자 수정 내용을 저장했습니다.":"KPI를 수정했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
   }
   async function saveGoal() {
     if(!isAdmin) return;
@@ -3647,13 +3880,78 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         </div>
       </section>
 
+      <section className="card kpi-section-card kpi-flow-editor">
+        <div className="section-head"><h2 className="card-title">KPI 입력</h2><span className="subtle">월간 · 주간 · 데일리 한 줄 연결</span></div>
+        <div className="kpi-flow-controls">
+          {isAdmin&&(
+            <select className="select" value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
+              <option value="">전체</option>
+              {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+            </select>
+          )}
+          <select className="select" value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
+            <option value="">주간 KPI 연결 월간 목표</option>
+            {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+          </select>
+          <select className="select" value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
+            <option value="">데일리 KPI 연결 주간 목표</option>
+            {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+          </select>
+        </div>
+        <div className="kpi-quick-grid">
+          {(["monthly","weekly","daily"] as const).map(scope=>(
+            <div className="kpi-quick-row" key={scope}>
+              <label>{scope==="monthly"?"월간 KPI":scope==="weekly"?"주간 KPI":"데일리 KPI"}</label>
+              <input className="input" value={quickDrafts[scope]} onChange={e=>setQuickDrafts({...quickDrafts,[scope]:e.target.value})} placeholder={scope==="monthly"?"이번 달 큰 목표":scope==="weekly"?"이번 주 실행 목표":"오늘 할 일 한 줄"} />
+              <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi(scope)}>저장</button>
+              <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion(scope)}>단계 추천</button>
+            </div>
+          ))}
+        </div>
+        {kpiSuggestion&&(
+          <div className="kpi-ai-steps">
+            <div className="kpi-ai-steps-head">
+              <b>업무 순서와 단계를 추천받으시겠습니까?</b>
+              <button className="icon-button" title="닫기" onClick={()=>setKpiSuggestion(null)}><i className="ti ti-x" aria-hidden="true"></i></button>
+            </div>
+            <p>{kpiSuggestion.title}</p>
+            <div className="kpi-step-list">
+              {kpiSuggestion.steps.map((step:any)=>(
+                <label key={step.id}>
+                  <input type="checkbox" checked={!!kpiSuggestion.selected[step.id]} onChange={e=>setKpiSuggestion({...kpiSuggestion,selected:{...kpiSuggestion.selected,[step.id]:e.target.checked}})} />
+                  <span>{step.title}</span>
+                </label>
+              ))}
+            </div>
+            <div className="actions">
+              <button className="button secondary compact" disabled={saving} onClick={()=>addSuggestedSteps("weekly")}>주간으로 넣기</button>
+              <button className="button compact" disabled={saving} onClick={()=>addSuggestedSteps("daily")}>데일리로 넣기</button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {editingKpi&&(
+        <div className="modal-backdrop" onClick={()=>setEditingKpi(null)}>
+          <div className="modal-box kpi-modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-header"><h2 className="card-title" style={{margin:0}}>KPI 수정</h2><button className="modal-close" onClick={()=>setEditingKpi(null)}>×</button></div>
+            <div className="form-row"><label className="label">내용</label><input className="input" value={editKpiDraft.title} onChange={e=>setEditKpiDraft({...editKpiDraft,title:e.target.value})} /></div>
+            {isAdmin&&<div className="form-row"><label className="label">관리자 변경 메모</label><textarea className="textarea compact-textarea" value={editKpiDraft.admin_note} onChange={e=>setEditKpiDraft({...editKpiDraft,admin_note:e.target.value})} placeholder="변경 이유나 직원에게 전달할 말을 적어주세요." /></div>}
+            <div className="actions" style={{justifyContent:"flex-end"}}>
+              <button className="button ghost" disabled={saving} onClick={()=>setEditingKpi(null)}>취소</button>
+              <button className="button" disabled={saving} onClick={saveEditedKpi}>수정 저장</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="card kpi-section-card">
         <div className="section-head"><h2 className="card-title">데일리 KPI</h2><span className="subtle">오늘 직원별 KPI</span></div>
         <div className="kpi-grid four">
           {entriesByEmployee(todayEntries).length>0 ? entriesByEmployee(todayEntries).map(([employeeId,list])=>(
             <div className="kpi-person-card" key={employeeId} style={kpiCardStyle(employeeId,kpiCompletionRate(list)??0)}>
               <div className="kpi-person-head"><b>{personName(employeeId)}</b><span>{kpiCompletionRate(list)??0}%</span></div>
-              <ul>{list.map((entry:any)=><li key={entry.id} className={entry.status==="done"?"done":entry.status==="missed"?"missed":""}><span>{kpiStatusLabel(entry.status)}</span>{entry.title}</li>)}</ul>
+              <ul>{list.map((entry:any)=><li key={entry.id} className={entry.status==="done"?"done":entry.status==="missed"?"missed":""}><span>{kpiStatusLabel(entry.status)}</span><div><b>{entry.title}</b>{entry.updated_by&&entry.updated_by!==entry.created_by&&<small>관리자가 변경하였습니다{entry.admin_note?` · ${entry.admin_note}`:""}</small>}</div><button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button></li>)}</ul>
             </div>
           )) : <p className="body-text">오늘 등록된 데일리 KPI가 없습니다.</p>}
         </div>
@@ -3685,29 +3983,6 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
 
       <section className="card kpi-section-card">
         <div className="section-head"><h2 className="card-title">월별 KPI</h2><span className="subtle">월 목표 → 주간 → 데일리</span></div>
-        {isAdmin&&(
-          <div className="kpi-goal-editor-wrap">
-            <div className="kpi-goal-editor-title"><b>관리자 KPI 내려주기</b><span>월별 목표를 만들고, 주간 KPI 저장 시 월별 KPI를 선택해 연결합니다.</span></div>
-            <div className="kpi-goal-editor">
-              <select className="select" value={goalDraft.scope} onChange={e=>setGoalDraft({...goalDraft,scope:e.target.value,parent_id:""})}>
-                <option value="monthly">월별 KPI</option>
-                <option value="weekly">주간 KPI</option>
-              </select>
-              <select className="select" value={goalDraft.employee_id} onChange={e=>setGoalDraft({...goalDraft,employee_id:e.target.value})}>
-                <option value="">전체</option>
-                {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
-              </select>
-              {goalDraft.scope==="weekly"&&(
-                <select className="select" value={goalDraft.parent_id} onChange={e=>setGoalDraft({...goalDraft,parent_id:e.target.value})}>
-                  <option value="">연결할 월별 KPI 선택</option>
-                  {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
-                </select>
-              )}
-              <input className="input" value={goalDraft.title} onChange={e=>setGoalDraft({...goalDraft,title:e.target.value})} placeholder="예: 8월 교육 운영 안정화" />
-              <button className="button compact" disabled={saving} onClick={saveGoal}>저장</button>
-            </div>
-          </div>
-        )}
         <div className="kpi-month-map">
           {monthlyGoals.length>0 ? monthlyGoals.map((goal:any)=>(
             <div className="kpi-month-node" key={goal.id} style={kpiCardStyle(goal.employee_id)}>
@@ -5879,8 +6154,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   async function sendRnrToTodayTask(entry:any, dateOverride?:string, dueOverride?:string){
     const contentLines=rnrFlowLines(entry).map((item:string)=>`- ${item}`).join("\n");
-    const taskDate=dateOverride||(selectedRnr?.id===entry.id?rnrTaskDate:"")||nextTaskDateForRnr(entry);
-    const dueDate=dueOverride||(selectedRnr?.id===entry.id?rnrTaskDueDate:"")||taskDate;
+    let taskDate=dateOverride||(selectedRnr?.id===entry.id?rnrTaskDate:"")||nextTaskDateForRnr(entry);
+    let dueDate=dueOverride||(selectedRnr?.id===entry.id?rnrTaskDueDate:"")||taskDate;
+    if(taskDate===todayIso()&&isAfterBusinessClose()&&window.confirm("오후 6시 이후입니다. 이 할일을 내일로 넘기겠습니까?")){
+      taskDate=addIsoDays(todayIso(),1);
+      if(!dueDate||dueDate===todayIso()) dueDate=taskDate;
+    }
     const targetScope=rnrTargetScope(entry);
     const department=normalizeDepartmentName(entry.department);
     const departmentTargets=targetScope==="department"
@@ -5991,13 +6270,20 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       parent_id:null,
       scope:"monthly",
       work_date:workDate,
+      description:rnrFlowLines(entry).join("\n"),
+      source_rnr_entry_id:entry.id,
       status:"pending",
       sort_order:index+1,
       is_public:true,
       is_active:true,
       created_by:currentEmployee.id,
     }));
-    const {error}=await supabase.from("kpi_entries").insert(payloads);
+    let result=await supabase.from("kpi_entries").insert(payloads);
+    if(result.error&&/description|source_rnr_entry_id|schema cache/i.test(result.error.message)){
+      const fallbackPayloads=payloads.map(({description,source_rnr_entry_id,...fallbackPayload}:any)=>fallbackPayload);
+      result=await supabase.from("kpi_entries").insert(fallbackPayloads);
+    }
+    const {error}=result;
     if(error) return setRnrMsg(error.message);
     const label=employeeTargets.length>0 ? `${employeeTargets.length}명` : targetRows[0].employee_name;
     setRnrMsg(`${label} ${monthValue} 월간 KPI로 보냈습니다.`);

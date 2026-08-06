@@ -877,8 +877,11 @@ body { overflow-x: hidden; }
 .kpi-person-head b { max-width: 100%; color: var(--kpi-body); font-size: 15px; font-weight: 760; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kpi-person-head span { color: var(--employee-color); font-size: 25px; line-height: 1; font-weight: 740; font-variant-numeric: tabular-nums; }
 .kpi-person-card ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }
-.kpi-person-card li { display: grid; grid-template-columns: 58px minmax(0,1fr); gap: 8px; align-items: start; color: var(--kpi-body); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; text-align: left; }
+.kpi-person-card li { display: grid; grid-template-columns: 58px minmax(0,1fr) auto; gap: 8px; align-items: start; color: var(--kpi-body); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; text-align: left; }
 .kpi-person-card li span { border-radius: 999px; background: color-mix(in srgb,var(--employee-color) 10%,white); color: var(--employee-color); padding: 3px 7px; font-size: 11px; font-weight: 740; text-align: center; }
+.kpi-person-card li div { min-width: 0; display: grid; gap: 3px; }
+.kpi-person-card li b { color: inherit; font-size: 13px; font-weight: 720; overflow-wrap: anywhere; }
+.kpi-person-card li small { color: #2563eb; font-size: 11px; font-weight: 760; line-height: 1.4; }
 .kpi-person-card li.done { color: var(--kpi-muted); text-decoration: none; }
 .kpi-person-card li.done span { background: #e9f8f0; color: #0b9b6a; }
 .kpi-person-card li.missed span { background: #fff1f1; color: #d92d20; }
@@ -891,6 +894,18 @@ body { overflow-x: hidden; }
 .kpi-goal-editor-title b { color: var(--kpi-ink); font-size: 15px; font-weight: 760; }
 .kpi-goal-editor-title span { color: var(--kpi-muted); font-size: 12px; font-weight: 650; line-height: 1.45; }
 .kpi-goal-editor { display: grid; grid-template-columns: 128px 132px 170px minmax(180px,1fr) auto; gap: 8px; align-items: center; }
+.kpi-flow-editor { display: grid; gap: 12px; }
+.kpi-flow-controls { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+.kpi-quick-grid { display: grid; gap: 8px; }
+.kpi-quick-row { display: grid; grid-template-columns: 92px minmax(0,1fr) auto auto; gap: 8px; align-items: center; border: 1px solid var(--kpi-line); border-radius: var(--kpi-radius); background: #fff; padding: 10px; }
+.kpi-quick-row label { color: var(--kpi-body); font-size: 13px; font-weight: 780; white-space: nowrap; }
+.kpi-ai-steps { display: grid; gap: 10px; border: 1px solid #cfe0f8; border-radius: var(--kpi-radius); background: #fbfdff; padding: 14px; }
+.kpi-ai-steps-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.kpi-ai-steps-head b { color: var(--kpi-ink); font-size: 15px; }
+.kpi-ai-steps p { margin: 0; color: var(--kpi-muted); font-size: 13px; font-weight: 700; }
+.kpi-step-list { display: grid; gap: 7px; }
+.kpi-step-list label { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 8px; align-items: start; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 9px 10px; color: #344054; font-size: 13px; font-weight: 720; line-height: 1.45; }
+.kpi-step-list input { margin-top: 2px; }
 .kpi-month-map { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
 .kpi-month-node { --employee-color: var(--blue); border: 1px solid var(--kpi-line); border-top: 4px solid var(--employee-color); border-radius: var(--kpi-radius); background: var(--kpi-surface); padding: 15px; display: grid; justify-items: center; gap: 8px; text-align: center; }
 .kpi-month-node b { color: var(--kpi-ink); font-size: 15px; font-weight: 760; overflow-wrap: anywhere; }
@@ -1409,6 +1424,20 @@ body { overflow-x: hidden; }
   }
   .rnr-modal-actions .button {
     width: 100%;
+  }
+  .kpi-flow-controls,
+  .kpi-quick-row {
+    grid-template-columns: minmax(0,1fr);
+  }
+  .kpi-quick-row .button {
+    width: 100%;
+  }
+  .kpi-person-card li {
+    grid-template-columns: 58px minmax(0,1fr);
+  }
+  .kpi-person-card li .icon-button {
+    grid-column: 2;
+    justify-self: start;
   }
   .improvement-list-toggle {
     align-items: flex-start;
