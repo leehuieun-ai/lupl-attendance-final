@@ -196,24 +196,20 @@ const RNR_CATEGORY_OPTIONS = ["", ...RNR_CATEGORY_RULES.map(rule=>rule.label), "
 const DEPARTMENT_OPTIONS = ["", ...Array.from(new Set(RNR_BASELINE_ROLES.map(role=>role.department)))];
 const POSITION_OPTIONS = ["","대표","본부장","책임","선임","매니저","인턴"];
 const RNR_FALLBACK_WORK_GROUPS = [
-  "신규 인원 온보딩 준비",
-  "문서 관리",
-  "운영 기획",
-  "고객 문의 응대 관리",
-  "서비스 기능 및 이슈 관리",
-  "콘텐츠·홍보",
-  "교육 운영",
-  "행사 운영",
-  "전시 운영",
+  "온보딩 및 교육",
+  "문서 및 자료 관리",
+  "운영 매뉴얼 관리",
+  "내부 커뮤니케이션",
+  "일정 및 진행 관리",
 ];
 const RNR_DEPARTMENT_WORK_GROUPS:Record<string,string[]> = {
-  공통:["신입사원 OJT 준비 및 실시","신규 인원 온보딩 준비","공통 교육","운영 매뉴얼 정리"],
-  경영지원부서:["신규 인원 온보딩 준비","문서 관리","세금 및 신고","문서 및 제출 자료 관리","지원사업 메일 관리 업무","운영 기획"],
-  홍보마케팅부서:["홍보 콘텐츠 운영 관리","블로그·SNS 홍보","언론 보도","홍보자료 검수","콘텐츠 일정 관리"],
-  기획부서:["교육 기획","행사 기획","전시 기획","프로그램 운영","파트너십·대외협력","시장 조사","신규 사업 기획"],
-  개발부서:["홈페이지 개발 및 운영","서비스 기능 개발","서비스 기능 및 이슈 관리","장애인 AI 플랫폼 개발","내부 SaaS 사용 안내"],
-  AI부서:["AI 수업 운영","AI 교육안 제작","AI 자동화 기획","데이터 정리"],
-  디자인부서:["디자인 제작 자료 관리","브랜드 자료 관리","콘텐츠 디자인"],
+  공통:["온보딩 및 교육","문서 및 자료 관리","운영 매뉴얼 관리","내부 커뮤니케이션","일정 및 진행 관리"],
+  경영지원부서:["인사·온보딩 관리","계약 및 문서 관리","세무·정산 관리","지원사업 관리","총무·운영 지원","내부 자료 관리"],
+  홍보마케팅부서:["콘텐츠 기획·제작","SNS·블로그 운영","언론·보도 관리","홍보자료 관리","브랜드 커뮤니케이션"],
+  기획부서:["교육 기획","행사 기획","전시 기획","프로그램 기획·운영","파트너십·대외협력","시장 조사·신규사업"],
+  개발부서:["서비스 개발","기능 개선·이슈 관리","홈페이지 운영","내부 시스템 관리","외부 SaaS 연동·사용 관리"],
+  AI부서:["AI 교육 콘텐츠","AI 수업 운영","AI 자동화 기획","데이터 정리·분석","AI 서비스 기획·운영"],
+  디자인부서:["콘텐츠 디자인","브랜드 디자인","홍보물 제작","UI·화면 디자인","디자인 자료 관리"],
 };
 const WORK_TIME_CHANGE_MODE_LABELS:Record<string,string> = {
   work_time:"근무 일정 확인",
@@ -3902,6 +3898,40 @@ function normalizeDepartmentName(value:any) {
   const matched=DEPARTMENT_OPTIONS.filter(Boolean).find(option=>option.replace(/\s+/g,"")===compact);
   return matched||raw;
 }
+function allRnrWorkGroupOptions() {
+  return Array.from(new Set([
+    ...Object.values(RNR_DEPARTMENT_WORK_GROUPS).flat(),
+    ...RNR_FALLBACK_WORK_GROUPS,
+  ].filter(Boolean)));
+}
+function normalizeRnrWorkGroup(value:any,text:any="",category:any="",department:any="") {
+  const raw=String(value??"").trim();
+  if(!raw&&!String(text??"").trim()&&!String(category??"").trim()) return "";
+  const known=allRnrWorkGroupOptions();
+  if(raw&&known.includes(raw)) return raw;
+  const source=[raw,text,category].filter(Boolean).join("\n");
+  const normalizedDepartment=normalizeDepartmentName(department);
+  if(/신규|신입|온보딩|입사|사번|계정|웍스|works|권한|OJT/i.test(source)) return normalizedDepartment==="경영지원부서" ? "인사·온보딩 관리" : "온보딩 및 교육";
+  if(/지원사업|정부지원|사업비|보조금|메일\s*관리|이메일\s*관리/.test(source)) return "지원사업 관리";
+  if(/부가가치세|부가세|국세|지방세|원천세|세금|신고|정산|증빙|현금영수증|강사|프리랜서|급여|지급/.test(source)) return "세무·정산 관리";
+  if(/계약|계약서|협약|문서|서류|제출|자료|노션|파일|양식/.test(source)) return normalizedDepartment==="경영지원부서" ? "계약 및 문서 관리" : "문서 및 자료 관리";
+  if(/매뉴얼|가이드|운영\s*규칙|업무\s*절차/.test(source)) return "운영 매뉴얼 관리";
+  if(/교육|강의|수업|커리큘럼|교안|연수|멘토링/.test(source)) return normalizedDepartment==="기획부서" ? "교육 기획" : normalizedDepartment==="AI부서" ? "AI 교육 콘텐츠" : "온보딩 및 교육";
+  if(/행사|워크숍|캠프|사생대회|퍼실|운영진/.test(source)) return normalizedDepartment==="기획부서" ? "행사 기획" : "프로그램 기획·운영";
+  if(/전시|작품|갤러리|큐레이션|도슨트/.test(source)) return "전시 기획";
+  if(/프로그램|운영안|운영\s*계획/.test(source)) return normalizedDepartment==="기획부서" ? "프로그램 기획·운영" : "일정 및 진행 관리";
+  if(/파트너|협력|대외|제휴|기관/.test(source)) return "파트너십·대외협력";
+  if(/시장|리서치|조사|신규\s*사업|사업\s*기획/.test(source)) return "시장 조사·신규사업";
+  if(/블로그|인스타|SNS|소셜|채널/.test(source)) return "SNS·블로그 운영";
+  if(/기사|언론|보도|송부/.test(source)) return "언론·보도 관리";
+  if(/홍보자료|검수|브랜드|카드뉴스|콘텐츠|마케팅/.test(source)) return "콘텐츠 기획·제작";
+  if(/개발|기능|버그|이슈|배포|장애/.test(source)) return /버그|이슈|장애/.test(source) ? "기능 개선·이슈 관리" : "서비스 개발";
+  if(/홈페이지|웹사이트|랜딩/.test(source)) return "홈페이지 운영";
+  if(/SaaS|사스|시스템|연동|자동화/.test(source)) return normalizedDepartment==="AI부서" ? "AI 자동화 기획" : "내부 시스템 관리";
+  if(/데이터|분석|정리|시트|엑셀/.test(source)) return normalizedDepartment==="AI부서" ? "데이터 정리·분석" : "문서 및 자료 관리";
+  if(/디자인|시안|이미지|UI|화면/.test(source)) return /UI|화면/.test(source) ? "UI·화면 디자인" : "콘텐츠 디자인";
+  return raw||String(category??"업무").trim()||"업무";
+}
 function rnrWorkGroupOptionsForDepartment(department:any,current:any="") {
   const normalized=normalizeDepartmentName(department)||"공통";
   const options=[
@@ -3909,7 +3939,7 @@ function rnrWorkGroupOptionsForDepartment(department:any,current:any="") {
     ...(normalized!=="공통" ? RNR_DEPARTMENT_WORK_GROUPS.공통 : []),
     ...RNR_FALLBACK_WORK_GROUPS,
   ];
-  const currentValue=String(current??"").trim();
+  const currentValue=normalizeRnrWorkGroup(current,"","",normalized);
   return Array.from(new Set([currentValue,...options].filter(Boolean)));
 }
 function rnrTitleSearchText(entry:any) {
@@ -3980,18 +4010,9 @@ function stringListFromUnknown(value:any) {
   if(typeof value==="string") return value.split(/\r?\n|[,;]+/).map(item=>item.trim()).filter(Boolean);
   return [];
 }
-function inferRnrWorkGroup(text:any, category:any) {
+function inferRnrWorkGroup(text:any, category:any, department:any="") {
   const source=String(text??"");
-  if(/부가가치세|부가세|국세|지방세|원천세|세금|신고/.test(source)) return "세금 및 신고";
-  if(/현금영수증|강사|프리랜서|급여|지급/.test(source)) return "지급 및 증빙";
-  if(/신규|신입|온보딩|입사|사번|계정|웍스|works|권한/.test(source)) return "신규 인원 온보딩 준비";
-  if(/교육|강의|수업|커리큘럼|교안|연수|멘토링/.test(source)) return "교육 운영";
-  if(/행사|프로그램|운영진|워크숍|캠프|사생대회|퍼실/.test(source)) return "행사 운영";
-  if(/전시|작품|갤러리|큐레이션|도슨트/.test(source)) return "전시 운영";
-  if(/노션|문서|자료|OJT|온보딩|매뉴얼/.test(source)) return "문서 관리";
-  if(/블로그|인스타|SNS|홍보|기사|언론/.test(source)) return "콘텐츠·홍보";
-  if(/명단|시장|운영|사생대회|행사|교육/.test(source)) return "운영 기획";
-  return String(category??"업무").trim()||"업무";
+  return normalizeRnrWorkGroup("",source,category,department);
 }
 function inferRnrFlowLines(text:any, category:any) {
   const source=String(text??"").trim();
@@ -4016,7 +4037,9 @@ function enrichRnrSuggestion(suggestion:any, text:string) {
   const title=String(suggestion?.title??"").trim()||professionalRnrTitle(text,category);
   const summary=String(suggestion?.summary??text??title).trim();
   const displayTitle=String(suggestion?.display_title??suggestion?.public_title??"").trim()||title;
-  const workGroup=String(suggestion?.work_group??suggestion?.category_group??"").trim()||inferRnrWorkGroup(`${text}\n${summary}`,category);
+  const department=normalizeDepartmentName(suggestion?.department);
+  const suggestedWorkGroup=String(suggestion?.work_group??suggestion?.category_group??"").trim();
+  const workGroup=normalizeRnrWorkGroup(suggestedWorkGroup,`${text}\n${summary}`,category,department);
   const flowNotes=stringListFromUnknown(suggestion?.flow_notes).length
     ? stringListFromUnknown(suggestion?.flow_notes)
     : inferRnrFlowLines(`${text}\n${summary}`,category);
@@ -4032,7 +4055,7 @@ function rnrPublicTitle(entry:any) {
   return shouldPolish ? (polishedRnrTitle(entry)||saved) : saved;
 }
 function rnrWorkGroup(entry:any) {
-  return String(entry?.work_group??entry?.category??"업무").trim()||"업무";
+  return normalizeRnrWorkGroup(entry?.work_group, rnrTitleSearchText(entry), entry?.category, entry?.department);
 }
 function rnrTargetScope(entry:any) {
   const scope=String(entry?.target_scope??"").trim();
@@ -5511,8 +5534,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         body:JSON.stringify({
           input:raw,
           employees:employees.map((e:any)=>({id:e.id,name:e.name,department:e.department,position:e.position,role:e.role})),
-          existing:rnrEntries.slice(0,80).map((e:any)=>({title:e.title,department:e.department,position:e.position,category:e.category})),
+          existing:rnrEntries.slice(0,80).map((e:any)=>({title:e.title,department:e.department,position:e.position,category:e.category,work_group:rnrWorkGroup(e)})),
           categories:RNR_CATEGORY_OPTIONS.filter(Boolean),
+          work_groups:allRnrWorkGroupOptions(),
           baseline:RNR_BASELINE_ROLES,
         }),
       });
@@ -5542,12 +5566,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const displayTitle=displayTitleSeed;
     const department=normalizeDepartmentName(targetScope==="common"?"공통":targetScope==="employee"?(assignee?.department||rnrSuggestion.department||""):(rnrSuggestion.department||""));
     const position=targetScope==="common"?"":targetScope==="employee"?(assignee?.position||rnrSuggestion.position||""):(rnrSuggestion.position||"");
+    const workGroup=normalizeRnrWorkGroup(rnrSuggestion.work_group,`${rnrInput}\n${summary}`,category,department);
     const payload={
       raw_input:rnrInput.trim()||rawTitle,
       title:rawTitle,
       summary,
       display_title:displayTitle,
-      work_group:String(rnrSuggestion.work_group??"").trim()||inferRnrWorkGroup(`${rnrInput}\n${summary}`,category),
+      work_group:workGroup,
       flow_notes:stringListFromUnknown(rnrSuggestion.flow_notes).length?stringListFromUnknown(rnrSuggestion.flow_notes):inferRnrFlowLines(`${rnrInput}\n${summary}`,category),
       target_scope:targetScope,
       is_public:rnrSuggestion.is_public!==false,
@@ -5613,12 +5638,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const flowNotes=String(editingRnr.flowNotesText??"").split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
     const department=normalizeDepartmentName(targetScope==="common"?"공통":targetScope==="employee"?(assignee?.department||editingRnr.department||""):(editingRnr.department||""));
     const position=targetScope==="common"?"":targetScope==="employee"?(assignee?.position||editingRnr.position||""):(editingRnr.position||"");
+    const workGroup=normalizeRnrWorkGroup(editingRnr.work_group,`${title}\n${summary}`,category,department);
     const payload={
       raw_input:title,
       title,
       summary,
       display_title:String(editingRnr.display_title??title).trim()||title,
-      work_group:String(editingRnr.work_group??"").trim()||inferRnrWorkGroup(`${title}\n${summary}`,category),
+      work_group:workGroup,
       flow_notes:flowNotes.length?flowNotes:inferRnrFlowLines(`${title}\n${summary}`,category),
       target_scope:targetScope,
       is_public:editingRnr.is_public!==false,
