@@ -489,6 +489,10 @@ drop policy if exists work_time_change_requests_insert_self on public.work_time_
 create policy work_time_change_requests_insert_self on public.work_time_change_requests
 for insert to authenticated with check (employee_id = public.current_employee_id() and status = 'pending');
 
+drop policy if exists work_time_change_requests_admin_insert on public.work_time_change_requests;
+create policy work_time_change_requests_admin_insert on public.work_time_change_requests
+for insert to authenticated with check (public.is_admin());
+
 drop policy if exists work_time_change_requests_admin_update on public.work_time_change_requests;
 create policy work_time_change_requests_admin_update on public.work_time_change_requests
 for update to authenticated using (public.is_admin()) with check (public.is_admin());

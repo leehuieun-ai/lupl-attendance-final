@@ -1034,7 +1034,7 @@ function getScheduleForDate(emp:any, dateIso:string, overrides:any[]=[], workTim
   };
   const weekStart=weekStartIso(dateIso);
   const ov=overrides.find((o:any)=>o.employee_id===emp.id && o.week_start===weekStart);
-  const ovDays=Array.isArray(ov?.work_days) ? ov.work_days.filter((day:string)=>baseDays.includes(day)) : undefined;
+  const ovDays=Array.isArray(ov?.work_days) ? orderedDays(ov.work_days) : undefined;
   return {
     work_days: ovDays ?? baseDays,
     work_start: ov?.work_start ?? emp.work_start ?? "09:00",
@@ -3575,7 +3575,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
 
   return (
     <div className="kpi-dashboard-page">
-      <section className="card">
+      <section className="card kpi-hero-card">
         <div className="kpi-dashboard-head">
           <div>
             <h2 className="card-title"><i className="ti ti-target-arrow" aria-hidden="true"></i>KPI 대시보드</h2>
@@ -3613,7 +3613,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         </div>
       </section>
 
-      <section className="card">
+      <section className="card kpi-section-card">
         <div className="section-head"><h2 className="card-title">데일리 KPI</h2><span className="subtle">오늘 직원별 KPI</span></div>
         <div className="kpi-grid four">
           {entriesByEmployee(todayEntries).length>0 ? entriesByEmployee(todayEntries).map(([employeeId,list])=>(
@@ -3625,7 +3625,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         </div>
       </section>
 
-      <section className="card">
+      <section className="card kpi-section-card">
         <div className="section-head"><h2 className="card-title">주간 KPI</h2><span className="subtle">{weekStart}~{weekEnd}</span></div>
         <div className="kpi-grid four">
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
@@ -3649,7 +3649,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         </div>
       </section>
 
-      <section className="card">
+      <section className="card kpi-section-card">
         <div className="section-head"><h2 className="card-title">월별 KPI</h2><span className="subtle">월 목표 → 주간 → 데일리</span></div>
         {isAdmin&&(
           <div className="kpi-goal-editor-wrap">
@@ -3892,6 +3892,12 @@ function datePartsToIso(year:number,month:number,day:number) {
   if(month<1||month>12||day<1||day>31) return null;
   return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
 }
+function hasDateIntent(text:string) {
+  return /(?:\d{1,2}\s*월|\d{1,2}\s*일|20\d{2}[./-]\d{1,2}[./-]\d{1,2}|\d{1,2}[./-]\d{1,2}|부터|이후|까지|매\s*주)/.test(text);
+}
+function hasWeeklyRepeatIntent(text:string) {
+  return /매\s*주|주마다/.test(text);
+}
 function hasOpenEndedDateSuffix(text:string,endIndex:number) {
   return /^\s*(?:부터는|부터|이후)/.test(text.slice(endIndex));
 }
@@ -4066,7 +4072,7 @@ function koreanNumberToInt(value:string) {
 }
 function parsePromptTime(meridiem:string|undefined,hourText:string,minuteText?:string) {
   let hour=koreanNumberToInt(hourText);
-  const minute=minuteText?koreanNumberToInt(minuteText):0;
+  const minute=minuteText==="반"?30:(minuteText?koreanNumberToInt(minuteText):0);
   if(hour==null||minute==null||hour<0||hour>24||minute<0||minute>59) return null;
   const marker=(meridiem??"").trim();
   if(["오후","저녁","밤","낮"].includes(marker)&&hour<12) hour+=12;
@@ -4074,11 +4080,15 @@ function parsePromptTime(meridiem:string|undefined,hourText:string,minuteText?:s
   if(hour===24) hour=0;
   return `${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}`;
 }
+function normalizeKoreanTimeText(text:string) {
+  return text.replace(/시\s*반/g,"시 30분");
+}
 function parsePromptTimeRange(text:string) {
+  const normalized=normalizeKoreanTimeText(text);
   const timeWord="(?:\\d{1,2}|한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉)?|스무|스물(?:한|두|세|네)?|일|이|삼|사|오|육|칠|팔|구|십|이십(?:일|이|삼|사)?)";
   const timePoint=`(?:(오전|오후|아침|낮|저녁|밤)\\s*)?(${timeWord})\\s*(?:시\\s*(?:(\\d{1,2}|[가-힣]{1,4})\\s*분)?|:\\s*(\\d{1,2}))`;
   const re=new RegExp(`${timePoint}\\s*(?:부터|에서|~|-)\\s*${timePoint}`);
-  const match=text.match(re);
+  const match=normalized.match(re);
   if(!match) return null;
   const start=parsePromptTime(match[1],match[2],match[3]??match[4]);
   let end=parsePromptTime(match[5],match[6],match[7]??match[8]);
@@ -4090,9 +4100,10 @@ function parsePromptTimeRange(text:string) {
   return start&&end?{start,end}:null;
 }
 function parsePromptSingleTime(text:string) {
+  const normalized=normalizeKoreanTimeText(text);
   const timeWord="(?:\\d{1,2}|한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉)?|스무|스물(?:한|두|세|네)?|일|이|삼|사|오|육|칠|팔|구|십|이십(?:일|이|삼|사)?)";
   const re=new RegExp(`(?:(오전|오후|아침|낮|저녁|밤)\\s*)?(${timeWord})\\s*(?:시\\s*(?:(\\d{1,2}|[가-힣]{1,4})\\s*분)?|:\\s*(\\d{1,2}))`);
-  const match=text.match(re);
+  const match=normalized.match(re);
   return match ? parsePromptTime(match[1],match[2],match[3]??match[4]) : null;
 }
 function parsePromptTimeRanges(text:string) {
@@ -7062,10 +7073,17 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
     return {employee_id:employeeId,title:"",event_type:"info",start_date:date,end_date:date,start_time:"",end_time:"",note:"",apply_all:false};
   }
   function commandDays(text:string, fallback:string[]){
-    if(/평일|월\s*~\s*금|월-금/.test(text)) return ["mon","tue","wed","thu","fri"];
-    const found=ALL_DAYS.filter(day=>{
-      if(day==="sun") return /일\s*요일|일요일/.test(text);
-      return new RegExp(`${DAY_LABELS[day]}\\s*(?:요일)?`).test(text);
+    const cleaned=text
+      .replace(/(?:(?:20\d{2})년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일?/g," ")
+      .replace(/(?<![가-힣])\d{1,2}\s*월/g," ")
+      .replace(/요일|일정|일자|오전|오후|아침|낮|저녁|밤|부터|까지|에서|근무|출근|퇴근|변경|매\s*주|매주/g," ");
+    if(/평일|월\s*~\s*금|월-금/.test(cleaned)) return ["mon","tue","wed","thu","fri"];
+    const found:string[]=[];
+    const compact=cleaned.replace(/[^월화수목금토일]/g,"");
+    const byLabel:Record<string,string>={월:"mon",화:"tue",수:"wed",목:"thu",금:"fri",토:"sat",일:"sun"};
+    Array.from(compact).forEach(label=>{
+      const day=byLabel[label];
+      if(day&&!found.includes(day)) found.push(day);
     });
     return found.length>0?found:fallback;
   }
@@ -7156,6 +7174,47 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
     }
     return {days,hours:Math.round(hours*10)/10};
   }
+  async function saveApprovedRecurringWorkChange(employee:any, period:any, newDays:string[], newStart:string, newEnd:string, raw:string) {
+    const oldDays=employee.work_days??["mon","tue","wed","thu","fri"];
+    const oldStart=timeLabel(employee.work_start??"09:00");
+    const oldEnd=timeLabel(employee.work_end??"18:00");
+    const startMin=timeToMinutes(newStart);
+    const endMinRaw=timeToMinutes(newEnd);
+    const endMin=startMin!=null&&endMinRaw!=null&&endMinRaw<=startMin ? endMinRaw+24*60 : endMinRaw;
+    const workMinutes=startMin!=null&&endMin!=null ? Math.max(0,endMin-startMin) : 0;
+    const hasLunchBreak=workMinutes>4*60 && startMin!=null && endMin!=null && startMin<13*60 && endMin>12*60;
+    const nextBreakStart=hasLunchBreak?"12:00":newEnd;
+    const nextBreakEnd=hasLunchBreak?"13:00":newEnd;
+    const periodStats=countDaysInRange(period.start_date,period.end_date,newDays);
+    const periodPayload=[{...period,total_days:periodStats.totalDays,work_days_count:periodStats.workDays}];
+    const weeklyHours=Math.round(netDailyHours(newStart,newEnd,nextBreakStart,nextBreakEnd)*newDays.length*10)/10;
+    const documentText=buildWorkTimeChangeDocument(employee,periodPayload,newDays,newStart,newEnd,nextBreakStart,nextBreakEnd,raw,"work_time");
+    const {error}=await supabase.from("work_time_change_requests").insert({
+      employee_id:employee.id,
+      old_work_days:oldDays,
+      old_work_start:oldStart,
+      old_work_end:oldEnd,
+      old_break_start:"12:00",
+      old_break_end:"13:00",
+      new_work_days:newDays,
+      new_work_start:newStart,
+      new_work_end:newEnd,
+      new_break_start:nextBreakStart,
+      new_break_end:nextBreakEnd,
+      periods:periodPayload,
+      total_calendar_days:periodStats.totalDays,
+      total_work_days:periodStats.workDays,
+      weekly_work_hours:weeklyHours,
+      reason:raw,
+      legal_notice_version:WORK_TIME_LEGAL_NOTICE_VERSION,
+      document_text:documentText,
+      status:"approved",
+      reviewed_by:currentEmployee.id,
+      reviewed_at:new Date().toISOString(),
+      review_note:"관리자 한 줄 일정 변경",
+    });
+    if(error) throw error;
+  }
   async function applyScheduleCommand(){
     if(readOnly) return;
     const raw=scheduleCommand.trim();
@@ -7163,7 +7222,8 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
     const employee=commandTargetEmployee(raw);
     if(!employee) return setMessage("직원 이름을 찾지 못했습니다. 예: 홍준기 월화수 09:00~18:00");
     const noWork=/출근\s*(?:안|못|불가)|근무\s*(?:안|못|불가)|일\s*(?:안|못)|안\s*함|못\s*(?:나오|나|함)|휴무|쉬는|쉼/.test(raw);
-    const openEndedDateRange=noWork?parseOpenEndedDateRange(raw,0):null;
+    const recurringDays=!noWork&&hasWeeklyRepeatIntent(raw)?commandDays(raw,[]):[];
+    const openEndedDateRange=(noWork||recurringDays.length>0)?parseOpenEndedDateRange(raw,0):null;
     const parsedDateRanges=openEndedDateRange?null:parseScheduleCommandDateRanges(raw);
     const fallbackDateRange=openEndedDateRange??parseKoreanDateRange(raw,0);
     const commandDateRanges=parsedDateRanges??(fallbackDateRange?[fallbackDateRange]:null);
@@ -7171,6 +7231,31 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
     const parsedTimeRanges=parsePromptTimeRanges(raw);
     const parsedTime=parsedTimeRanges[0]??parsePromptTimeRange(raw);
     const singleTime=parsedTime?null:parsePromptSingleTime(raw);
+    if(openEndedDateRange&&recurringDays.length>0){
+      const schedule=getScheduleForDate(employee,openEndedDateRange.start_date,overrides,workTimeChanges);
+      let nextStart=parsedTime?.start??String(schedule.work_start??employee.work_start??"09:00").slice(0,5);
+      let nextEnd=parsedTime?.end??String(schedule.work_end??employee.work_end??"18:00").slice(0,5);
+      const startMin=timeToMinutes(nextStart);
+      const endMin=timeToMinutes(nextEnd);
+      if(startMin!=null&&endMin!=null&&endMin<=startMin) nextEnd=minutesToTime(startMin+8*60);
+      const preview=[
+        `${employee.name} 직원의 근무조건을 ${periodRangeLabel(openEndedDateRange)} 적용으로 저장합니다.`,
+        `변경: 매주 ${daysLabel(recurringDays)} · ${timeLabel(nextStart)}~${timeLabel(nextEnd)}`,
+        "",
+        "기본 근무일정 전체를 덮어쓰지 않고, 이 기간에만 적용되는 승인된 근무조건으로 저장합니다.",
+        "이대로 반영할까요?"
+      ].join("\n");
+      if(!window.confirm(preview)) return;
+      try {
+        await saveApprovedRecurringWorkChange(employee,openEndedDateRange,recurringDays,nextStart,nextEnd,raw);
+        setScheduleCommand("");
+        setMessage(`${employee.name} ${periodRangeLabel(openEndedDateRange)} 매주 ${daysLabel(recurringDays)} 근무조건을 저장했습니다.`);
+        await onChanged();
+      } catch(error:any) {
+        setMessage(`일정 변경 실패: ${error.message}`);
+      }
+      return;
+    }
     if(dateRange){
       const dateRangeList=commandDateRanges??[dateRange];
       const schedule=getScheduleForDate(employee,dateRange.start_date,overrides,workTimeChanges);
@@ -7282,6 +7367,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
       await onChanged();
       return;
     }
+    if(hasDateIntent(raw)) return setMessage("날짜·반복 표현을 해석하지 못해 기본 근무일정을 바꾸지 않았습니다. 예: 정혜리 8월 27일부터 매주 화, 목 오전 여덟시 반부터 오후 열두시 반까지 근무");
     const oldDays=employee.work_days??["mon","tue","wed","thu","fri"];
     const nextDays=commandDays(raw,oldDays);
     const nextStart=parsedTime?.start??String(employee.work_start??"09:00").slice(0,5);
@@ -7624,10 +7710,10 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
       {!readOnly&&<>
         <div className="schedule-command-bar">
           <i className="ti ti-sparkles" aria-hidden="true"></i>
-          <input className="input" value={scheduleCommand} onChange={e=>setScheduleCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyScheduleCommand()} placeholder="예: 정혜리 8월 20일부터 근무 안함 / 이희은 7월 10일 11:00 출근" />
+          <input className="input" value={scheduleCommand} onChange={e=>setScheduleCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyScheduleCommand()} placeholder="예: 정혜리 8월 27일부터 매주 화, 목 오전 여덟시 반부터 오후 열두시 반까지 근무" />
           <button className="button secondary" onClick={applyScheduleCommand}>일정 변경</button>
         </div>
-        <p className="subtle schedule-command-help">날짜를 쓰면 해당 날짜만, “부터”를 쓰면 계속 적용됩니다. 날짜 없이 요일과 시간을 쓰면 기본 근무일정과 월 근무시간 기준에 반영됩니다.</p>
+        <p className="subtle schedule-command-help">날짜를 쓰면 해당 날짜만, “부터+매주”를 쓰면 기간형 근무조건으로 저장됩니다. 날짜 없이 요일과 시간을 쓰는 경우에만 기본 근무일정을 바꿉니다.</p>
         {message&&<div className={`alert ${message.includes("실패")?"error":"success"}`} style={{marginTop:14}}>{message}</div>}
         {movingBase&&<div className="alert" style={{marginTop:14}}>{movingBase.employeeName}의 {DAY_LABELS[dayKeyFromDate(dateFromIso(movingBase.sourceDate))]}요일 근무를 이동할 날짜 칸을 눌러주세요.</div>}
       </>}
