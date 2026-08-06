@@ -949,6 +949,17 @@ body { overflow-x: hidden; }
 .kpi-h-input-row { display: flex; gap: 6px; align-items: center; }
 .kpi-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 0; }
 .kpi-hierarchy-inner { position: relative; z-index: 1; }
+.kpi-h-node[draggable="true"] { cursor: grab; user-select: none; }
+.kpi-h-node[draggable="true"]:active { cursor: grabbing; }
+.kpi-h-node.dragging { opacity: .45; }
+.kpi-h-node.drop-target { outline: 2px dashed #2563eb; outline-offset: 2px; background: #eff6ff; }
+.kpi-h-node.weekly.drop-target { outline-color: #8b5cf6; background: #f5f3ff; }
+.kpi-h-node.daily.drop-target { outline-color: #059669; background: #f0fdf4; }
+.kpi-drag-hint { background: #1e293b; color: #f1f5f9; font-size: 12px; text-align: center; padding: 7px 14px; border-radius: 6px; margin-bottom: 10px; letter-spacing: .01em; }
+.kpi-drag-hint kbd { background: #334155; border-radius: 3px; padding: 1px 5px; font-size: 11px; font-family: inherit; }
+.kpi-link-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #64748b; background: #f1f5f9; border-radius: 4px; padding: 2px 7px; margin-bottom: 5px; max-width: 100%; overflow: hidden; }
+.kpi-unlink-btn { background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 13px; line-height: 1; padding: 0 1px; margin-left: 2px; flex-shrink: 0; }
+.kpi-unlink-btn:hover { color: #ef4444; }
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .improvement-fab {
   position: fixed;

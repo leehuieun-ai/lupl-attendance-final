@@ -3608,7 +3608,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [saving,setSaving]=useState(false);
   const [goalDraft,setGoalDraft]=useState({scope:"monthly",employee_id:"",parent_id:"",title:""});
   const [quickDrafts,setQuickDrafts]=useState({monthly:"",weekly:"",daily:""});
-  const [quickEmployeeId,setQuickEmployeeId]=useState("");
+  const [quickEmployeeId,setQuickEmployeeId]=useState(currentEmployee.id);
   const [quickMonthlyParentId,setQuickMonthlyParentId]=useState("");
   const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
   const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
@@ -3617,6 +3617,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
   const [kpiView,setKpiView]=useState<"daily"|"weekly"|"monthly">("daily");
+  const [draggingKpi,setDraggingKpi]=useState<{id:string,scope:"daily"|"weekly",sortOrder:number}|null>(null);
+  const [dropTargetId,setDropTargetId]=useState<string|null>(null);
   const canvasRef=useRef<HTMLCanvasElement>(null);
   const kpiWrapRef=useRef<HTMLDivElement>(null);
   const isAdmin=currentEmployee.role==="admin";
@@ -3640,6 +3642,35 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     setRnrEntries(rnrResult.data??[]);
   }
   useEffect(()=>{ load(); },[month,currentEmployee.id]);
+
+  async function linkKpi(childId:string,parentId:string) {
+    if(saving) return;
+    setSaving(true);
+    await supabase.from("kpi_entries").update({parent_id:parentId}).eq("id",childId);
+    setDraggingKpi(null);
+    setDropTargetId(null);
+    await load();
+    setSaving(false);
+  }
+  async function unlinkKpi(entry:any) {
+    if(saving) return;
+    setSaving(true);
+    await supabase.from("kpi_entries").update({parent_id:null}).eq("id",entry.id);
+    await load();
+    setSaving(false);
+  }
+  async function reorderKpi(dragId:string,dragSortOrder:number,targetId:string,targetSortOrder:number) {
+    if(saving||dragId===targetId) return;
+    setSaving(true);
+    await Promise.all([
+      supabase.from("kpi_entries").update({sort_order:targetSortOrder}).eq("id",dragId),
+      supabase.from("kpi_entries").update({sort_order:dragSortOrder}).eq("id",targetId),
+    ]);
+    setDraggingKpi(null);
+    setDropTargetId(null);
+    await load();
+    setSaving(false);
+  }
 
   useEffect(()=>{
     const canvas=canvasRef.current;
@@ -4055,6 +4086,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         <div className="kpi-hierarchy-wrap" ref={kpiWrapRef}>
           <canvas className="kpi-canvas" ref={canvasRef} />
           <div className="kpi-hierarchy-inner">
+            {draggingKpi&&<div className="kpi-drag-hint">{draggingKpi.scope==="daily"?"주간 KPI 카드 위에 드롭해서 연결":"월별 KPI 카드 위에 드롭해서 연결"} &nbsp;·&nbsp; <kbd>Esc</kbd>로 취소</div>}
             <div className="kpi-hierarchy-grid">
 
               {/* 월별 열 */}
@@ -4074,11 +4106,18 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                 {monthlyGoals.length>0 ? monthlyGoals.map((goal:any)=>{
                   const linkedW=weeklyGoals.filter((w:any)=>w.parent_id===goal.id);
                   const pct=linkedW.length>0?Math.round(linkedW.reduce((s:number,w:any)=>{
-                    const dl=weekDailyEntries.filter((d:any)=>d.parent_id===w.id);
+                    const dl=dailyEntries.filter((d:any)=>d.parent_id===w.id);
                     return s+(dl.length>0?kpiCompletionRate(dl)??0:0);
                   },0)/linkedW.length):0;
                   return (
-                    <div key={goal.id} data-kpi-id={goal.id} className="kpi-h-node monthly" style={{"--monthly-color":kpiEmployeeColor(goal.employee_id)} as React.CSSProperties}>
+                    <div
+                      key={goal.id} data-kpi-id={goal.id}
+                      className={`kpi-h-node monthly${dropTargetId===goal.id?" drop-target":""}`}
+                      style={{"--monthly-color":kpiEmployeeColor(goal.employee_id)} as React.CSSProperties}
+                      onDragOver={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();setDropTargetId(goal.id);}:undefined}
+                      onDragLeave={draggingKpi?.scope==="weekly"?()=>setDropTargetId(null):undefined}
+                      onDrop={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();linkKpi(draggingKpi.id,goal.id);}:undefined}
+                    >
                       <p className="kpi-h-title">{goal.title}</p>
                       <div className="kpi-h-meta">
                         <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:kpiEmployeeColor(goal.employee_id)}}></div></div>
@@ -4115,8 +4154,28 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   const dl=weekDailyEntries.filter((d:any)=>d.parent_id===goal.id);
                   const pct=dl.length>0?kpiCompletionRate(dl)??0:0;
                   return (
-                    <div key={goal.id} data-kpi-id={goal.id} className="kpi-h-node weekly">
+                    <div
+                      key={goal.id} data-kpi-id={goal.id}
+                      className={`kpi-h-node weekly${dropTargetId===goal.id?" drop-target":""}${draggingKpi?.id===goal.id?" dragging":""}`}
+                      draggable
+                      onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:goal.id,scope:"weekly",sortOrder:goal.sort_order??0});}}
+                      onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
+                      onDragOver={draggingKpi&&draggingKpi.id!==goal.id?e=>{e.preventDefault();setDropTargetId(goal.id);}:undefined}
+                      onDragLeave={()=>setDropTargetId(null)}
+                      onDrop={draggingKpi&&draggingKpi.id!==goal.id?e=>{
+                        e.preventDefault();
+                        if(draggingKpi.scope==="weekly") reorderKpi(draggingKpi.id,draggingKpi.sortOrder,goal.id,goal.sort_order??0);
+                        else if(draggingKpi.scope==="daily") linkKpi(draggingKpi.id,goal.id);
+                      }:undefined}
+                    >
                       <p className="kpi-h-title">{goal.title}</p>
+                      {goal.parent_id&&(
+                        <div className="kpi-link-badge">
+                          <i className="ti ti-link" style={{fontSize:10}}></i>
+                          {monthlyGoals.find((m:any)=>m.id===goal.parent_id)?.title?.slice(0,18)||"월별"}
+                          <button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(goal)}>×</button>
+                        </div>
+                      )}
                       <div className="kpi-h-meta">
                         <span style={{fontSize:11,color:"#8b5cf6",flexShrink:0}}>{personName(goal.employee_id)}</span>
                         <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:"#8b5cf6"}}></div></div>
@@ -4150,7 +4209,23 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("daily")}>단계 추천</button>
                 </div>
                 {todayEntries.length>0 ? todayEntries.map((entry:any)=>(
-                  <div key={entry.id} data-kpi-id={entry.id} className={`kpi-h-node daily${entry.status==="done"?" done-item":""}`}>
+                  <div
+                    key={entry.id} data-kpi-id={entry.id}
+                    className={`kpi-h-node daily${entry.status==="done"?" done-item":""}${draggingKpi?.id===entry.id?" dragging":""}`}
+                    draggable
+                    onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}}
+                    onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
+                    onDragOver={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?e=>{e.preventDefault();setDropTargetId(entry.id);}:undefined}
+                    onDragLeave={draggingKpi?.scope==="daily"?()=>setDropTargetId(null):undefined}
+                    onDrop={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?e=>{e.preventDefault();reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);}:undefined}
+                  >
+                    {entry.parent_id&&(
+                      <div className="kpi-link-badge">
+                        <i className="ti ti-link" style={{fontSize:10}}></i>
+                        {weeklyGoals.find((w:any)=>w.id===entry.parent_id)?.title?.slice(0,18)||"주간"}
+                        <button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(entry)}>×</button>
+                      </div>
+                    )}
                     <div className="kpi-h-daily-row">
                       <label className={entry.status==="done"?"done-label":""}>
                         <input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(entry,ev.target.checked?"done":"pending")} style={{accentColor:"#059669",flexShrink:0}} />
