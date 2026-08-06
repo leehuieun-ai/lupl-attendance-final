@@ -3892,6 +3892,9 @@ function datePartsToIso(year:number,month:number,day:number) {
   if(month<1||month>12||day<1||day>31) return null;
   return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
 }
+function hasOpenEndedDateSuffix(text:string,endIndex:number) {
+  return /^\s*(?:부터는|부터|이후)/.test(text.slice(endIndex));
+}
 function parseKoreanDateRange(text:string, index=0) {
   const year=new Date().getFullYear();
   const rangeMatch=text.match(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일?\s*(?:부터|에서|~|-)\s*(?:(?:(\d{4})년\s*)?(\d{1,2})월\s*)?(\d{1,2})일?\s*(?:까지)?/);
@@ -3930,17 +3933,19 @@ function parseKoreanDateRange(text:string, index=0) {
     if(start&&end) return {id:`p${Date.now()}-${index}`,start_date:start,end_date:end};
   }
   const matches=Array.from(text.matchAll(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일/g));
-  const dates=matches.map(match=>{
+  const dates=matches.filter(match=>!hasOpenEndedDateSuffix(text,(match.index??0)+match[0].length)).map(match=>{
     const y=Number(match[1]??year);
     const m=String(Number(match[2])).padStart(2,"0");
     const d=String(Number(match[3])).padStart(2,"0");
     return `${y}-${m}-${d}`;
   });
   Array.from(text.matchAll(new RegExp(numericDatePattern,"g"))).forEach(match=>{
+    if(hasOpenEndedDateSuffix(text,(match.index??0)+match[0].length)) return;
     const iso=datePartsToIso(Number(match[1]??year),Number(match[2]),Number(match[3]));
     if(iso) dates.push(iso);
   });
   Array.from(text.matchAll(/(?<!\d)(?:(\d{4})?(\d{2})(\d{2}))(?!\d)/g)).forEach(match=>{
+    if(hasOpenEndedDateSuffix(text,(match.index??0)+match[0].length)) return;
     const iso=datePartsToIso(Number(match[1]??year),Number(match[2]),Number(match[3]));
     if(iso) dates.push(iso);
   });
@@ -3955,12 +3960,12 @@ function parseOpenEndedDateRange(text:string, index=0) {
     const start=datePartsToIso(Number(monthOnly[1]??year),Number(monthOnly[2]),1);
     return start?{id:`p${Date.now()}-${index}`,start_date:start,end_date:"2099-12-31",open_ended:true}:null;
   }
-  const dateOnly=text.match(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일?\s*(?:부터|이후|부터는)(?!\s*(?:\d{1,2}월|\d{4}[./-]|\d{1,2}[./-]))/);
+  const dateOnly=text.match(/(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일?\s*(?:부터|이후|부터는)(?!\s*(?:\d{1,2}월|\d{4}[./-]|\d{1,2}[./-]|\d{1,2}일?))/);
   if(dateOnly){
     const start=datePartsToIso(Number(dateOnly[1]??year),Number(dateOnly[2]),Number(dateOnly[3]));
     return start?{id:`p${Date.now()}-${index}`,start_date:start,end_date:"2099-12-31",open_ended:true}:null;
   }
-  const numeric=text.match(/(?<![\d.])(?:(\d{4})[./-])?(\d{1,2})[./-](\d{1,2})\s*(?:부터|이후|부터는)/);
+  const numeric=text.match(/(?<![\d.])(?:(\d{4})[./-])?(\d{1,2})[./-](\d{1,2})\s*(?:부터|이후|부터는)(?!\s*(?:\d{1,2}월|\d{4}[./-]|\d{1,2}[./-]|\d{1,2}일?))/);
   if(numeric){
     const start=datePartsToIso(Number(numeric[1]??year),Number(numeric[2]),Number(numeric[3]));
     return start?{id:`p${Date.now()}-${index}`,start_date:start,end_date:"2099-12-31",open_ended:true}:null;
@@ -4012,6 +4017,7 @@ function parseScheduleCommandDateRanges(text:string) {
   Array.from(source.matchAll(singlePattern)).forEach(match=>{
     const start=match.index??0;
     const end=start+match[0].length;
+    if(hasOpenEndedDateSuffix(source,end)) return;
     if(occupied.some(span=>start>=span.start&&end<=span.end)) {
       if(match[1]) currentYear=Number(match[1]);
       if(match[2]) currentMonth=Number(match[2]);
@@ -6103,8 +6109,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(!raw) return setApprovalCommandMsg("한 줄로 입력해주세요. 예: 이희은 7월 14일 추가근무 3시간");
     const employee=approvalCommandTargetEmployee(raw);
     if(!employee) return setApprovalCommandMsg("직원 이름 또는 사번을 찾지 못했습니다.");
-    const noWork=/출근\s*안|근무\s*안|일\s*안|안\s*함|휴무|쉬는|쉼/.test(raw);
-    const dateRange=parseKoreanDateRange(raw,0)??(noWork?parseOpenEndedDateRange(raw,0):null);
+    const noWork=/출근\s*(?:안|못|불가)|근무\s*(?:안|못|불가)|일\s*(?:안|못)|안\s*함|못\s*(?:나오|나|함)|휴무|쉬는|쉼/.test(raw);
+    const openEndedDateRange=noWork?parseOpenEndedDateRange(raw,0):null;
+    const dateRange=openEndedDateRange??parseKoreanDateRange(raw,0);
     if(!dateRange) return setApprovalCommandMsg("적용할 날짜를 함께 적어주세요. 예: 이희은 7월 14일 추가근무 3시간");
     if(looksLikeOvertimeCommand(raw)) return applyApprovalOvertimeCommand(raw,employee,dateRange);
     if(looksLikeAttendanceCorrectionCommand(raw)) return applyAttendanceCorrectionCommand(raw,employee,dateRange);
@@ -7156,8 +7163,9 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
     const employee=commandTargetEmployee(raw);
     if(!employee) return setMessage("직원 이름을 찾지 못했습니다. 예: 홍준기 월화수 09:00~18:00");
     const noWork=/출근\s*(?:안|못|불가)|근무\s*(?:안|못|불가)|일\s*(?:안|못)|안\s*함|못\s*(?:나오|나|함)|휴무|쉬는|쉼/.test(raw);
-    const parsedDateRanges=parseScheduleCommandDateRanges(raw);
-    const fallbackDateRange=parseKoreanDateRange(raw,0)??(noWork?parseOpenEndedDateRange(raw,0):null);
+    const openEndedDateRange=noWork?parseOpenEndedDateRange(raw,0):null;
+    const parsedDateRanges=openEndedDateRange?null:parseScheduleCommandDateRanges(raw);
+    const fallbackDateRange=openEndedDateRange??parseKoreanDateRange(raw,0);
     const commandDateRanges=parsedDateRanges??(fallbackDateRange?[fallbackDateRange]:null);
     const dateRange=commandDateRanges?.[0]??null;
     const parsedTimeRanges=parsePromptTimeRanges(raw);
@@ -7237,7 +7245,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
         "이 일정대로 반영할까요?"
       ].join("\n");
       if(!window.confirm(preview)) return;
-      const replaceOverlappingNoWork=noWork&&dateRangeList.length>1;
+      const replaceOverlappingNoWork=noWork;
       const replacedIds=new Set<string>();
       if(replaceOverlappingNoWork){
         const overlapIds=events
@@ -7616,10 +7624,10 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
       {!readOnly&&<>
         <div className="schedule-command-bar">
           <i className="ti ti-sparkles" aria-hidden="true"></i>
-          <input className="input" value={scheduleCommand} onChange={e=>setScheduleCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyScheduleCommand()} placeholder="예: 이희은 7월 10일 오전 열한시 출근 / 홍준기 월화수 09:00~18:00" />
+          <input className="input" value={scheduleCommand} onChange={e=>setScheduleCommand(e.target.value)} onKeyDown={e=>e.key==="Enter"&&applyScheduleCommand()} placeholder="예: 정혜리 8월 20일부터 근무 안함 / 이희은 7월 10일 11:00 출근" />
           <button className="button secondary" onClick={applyScheduleCommand}>일정 변경</button>
         </div>
-        <p className="subtle schedule-command-help">날짜를 쓰면 해당 날짜만 바뀌고, 날짜 없이 요일과 시간을 쓰면 기본 근무일정과 월 근무시간 기준에 반영됩니다.</p>
+        <p className="subtle schedule-command-help">날짜를 쓰면 해당 날짜만, “부터”를 쓰면 계속 적용됩니다. 날짜 없이 요일과 시간을 쓰면 기본 근무일정과 월 근무시간 기준에 반영됩니다.</p>
         {message&&<div className={`alert ${message.includes("실패")?"error":"success"}`} style={{marginTop:14}}>{message}</div>}
         {movingBase&&<div className="alert" style={{marginTop:14}}>{movingBase.employeeName}의 {DAY_LABELS[dayKeyFromDate(dateFromIso(movingBase.sourceDate))]}요일 근무를 이동할 날짜 칸을 눌러주세요.</div>}
       </>}
