@@ -176,6 +176,7 @@ const ADMIN_CONFIDENTIALITY_DETAIL_TEXT = [
 const WORK_TIME_CONSENT_CHECK_TEXT = "근무요일, 근무시간, 휴게시간이 변경되는 경우 앱에서 변경 내용을 확인하고 전자서명할 수 있으며, 실제 변경은 건별 요청 및 회사 승인 후 적용된다는 설명을 확인했습니다.";
 const ANNUAL_LEAVE_LEGAL_NOTE = "파트타임이라는 이유만으로 연차가 항상 없는 것은 아닙니다. 4주 평균 1주 소정근로시간이 15시간 미만이면 연차 규정 적용 제외가 가능하고, 15시간 이상 단시간근로자는 연차가 발생할 수 있습니다.";
 const RNR_BASELINE_ROLES = [
+  {department:"운영 총괄", position:"대표", keywords:["대표","운영 총괄","총괄","의사결정","승인","전략","사업 방향","리스크","예산","채용","대외협력"], duties:["회사 운영 방향과 우선순위 결정","부서별 주요 업무 진행 상황 점검","예산·계약·채용 등 주요 의사결정 승인","대외협력 및 파트너십 방향 조율","업무 리스크 확인 및 최종 책임 관리"]},
   {department:"홍보마케팅부서", position:"선임", keywords:["홍보","마케팅","광고","SNS","콘텐츠","제휴"], duties:["홍보 콘텐츠 기획","SNS/광고 운영","제휴 제안 정리","성과 지표 확인","브랜드 메시지 관리"]},
   {department:"경영지원부서", position:"선임", keywords:["문서","서류","계약","인사","정산","운영"], duties:["문서/계약 자료 정리","인사·근태 자료 확인","정산 기초자료 취합","운영 일정 조율"]},
   {department:"경영지원부서", position:"매니저", keywords:["일정","비품","입력","응대","지원","사무"], duties:["사무 지원","데이터 입력","비품/소모품 확인","전화/방문 응대","부서 요청 접수"]},
@@ -204,6 +205,7 @@ const RNR_FALLBACK_WORK_GROUPS = [
 ];
 const RNR_DEPARTMENT_WORK_GROUPS:Record<string,string[]> = {
   공통:["온보딩 및 교육","문서 및 자료 관리","운영 매뉴얼 관리","내부 커뮤니케이션","일정 및 진행 관리"],
+  "운영 총괄":["경영·운영 총괄","주요 의사결정","대외협력","예산·계약 승인","리스크 관리"],
   경영지원부서:["인사·온보딩 관리","계약 및 문서 관리","세무·정산 관리","지원사업 관리","총무·운영 지원","내부 자료 관리"],
   홍보마케팅부서:["콘텐츠 기획·제작","SNS·블로그 운영","언론·보도 관리","홍보자료 관리","브랜드 커뮤니케이션"],
   기획부서:["교육 기획","행사 기획","전시 기획","프로그램 기획·운영","파트너십·대외협력","시장 조사·신규사업"],
@@ -1168,7 +1170,7 @@ function isAfterBusinessClose(date=new Date()) {
 }
 function kpiLinesFromText(text:string) {
   return text
-    .split(/\r?\n/)
+    .split(/\r?\n|[,，]/)
     .map(line=>line.replace(/^\s*(?:[-*]|\d+[.)])\s*/,"").trim())
     .filter(Boolean)
     .slice(0,20);
@@ -3614,6 +3616,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:""});
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
+  const [kpiView,setKpiView]=useState<"daily"|"weekly"|"monthly">("daily");
   const isAdmin=currentEmployee.role==="admin";
   const today=todayIso();
   const weekStart=weekStartIso(today);
@@ -3755,18 +3758,69 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     if(result.error) throw result.error;
   }
   async function saveQuickKpi(scope:string) {
-    const title=quickDrafts[scope as keyof typeof quickDrafts].trim();
-    if(!title) return setMessage("KPI 내용을 입력해주세요.");
+    const titles=kpiLinesFromText(quickDrafts[scope as keyof typeof quickDrafts]);
+    if(titles.length===0) return setMessage("KPI 내용을 입력해주세요.");
     setSaving(true); setMessage("");
     try {
-      await insertKpiRows(scope,[title]);
+      await insertKpiRows(scope,titles);
       setQuickDrafts({...quickDrafts,[scope]:""});
       await load();
-      setMessage("KPI를 저장했습니다. 아래에서 업무 순서와 단계 추천도 받을 수 있습니다.");
+      setMessage(`${titles.length}개 KPI를 저장했습니다.`);
     } catch(e:any) {
       setMessage(e.message);
     } finally {
       setSaving(false);
+    }
+  }
+  async function updateKpiStatus(entry:any,status:"pending"|"done"|"missed") {
+    if(!entry?.id) return;
+    setSaving(true); setMessage("");
+    try {
+      let result=await supabase.from("kpi_entries").update({
+        status,
+        updated_by:currentEmployee.id,
+        updated_at:new Date().toISOString(),
+      }).eq("id",entry.id);
+      if(result.error&&/updated_by|schema cache/i.test(result.error.message)){
+        result=await supabase.from("kpi_entries").update({status,updated_at:new Date().toISOString()}).eq("id",entry.id);
+      }
+      const {error}=result;
+      if(error) throw error;
+      await load();
+      setMessage(status==="done"?"KPI를 완료 처리했습니다.":"KPI 상태를 변경했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function deleteKpiEntry(entry:any) {
+    if(!entry?.id) return;
+    if(!window.confirm(`${entry.title} KPI를 삭제할까요?`)) return;
+    setSaving(true); setMessage("");
+    try {
+      let result=await supabase.from("kpi_entries").update({
+        is_active:false,
+        updated_by:currentEmployee.id,
+        updated_at:new Date().toISOString(),
+      }).eq("id",entry.id);
+      if(result.error&&/updated_by|schema cache/i.test(result.error.message)){
+        result=await supabase.from("kpi_entries").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",entry.id);
+      }
+      const {error}=result;
+      if(error) throw error;
+      await load();
+      setMessage("KPI를 삭제했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  function handleQuickKpiKeyDown(event:React.KeyboardEvent<HTMLInputElement>, scope:string) {
+    if(event.key==="Enter") {
+      event.preventDefault();
+      saveQuickKpi(scope);
     }
   }
   async function addSuggestedSteps(targetScope:string) {
@@ -3853,6 +3907,35 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       setSaving(false);
     }
   }
+  function renderKpiInlineInput(scope:"daily"|"weekly"|"monthly") {
+    const label=scope==="daily"?"데일리 KPI":scope==="weekly"?"주간 KPI":"월별 KPI";
+    const placeholder=scope==="daily"?"오늘 할 일을 입력하고 Enter 또는 쉼표로 여러 개 추가":scope==="weekly"?"이번 주 목표를 입력하고 Enter": "이번 달 큰 목표를 입력하고 Enter";
+    return (
+      <div className="kpi-inline-input">
+        {isAdmin&&(
+          <select className="select" value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
+            <option value="">전체</option>
+            {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+          </select>
+        )}
+        {scope==="weekly"&&(
+          <select className="select" value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
+            <option value="">연결 월별 KPI 선택</option>
+            {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+          </select>
+        )}
+        {scope==="daily"&&(
+          <select className="select" value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
+            <option value="">연결 주간 KPI 선택</option>
+            {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+          </select>
+        )}
+        <input className="input" value={quickDrafts[scope]} onKeyDown={event=>handleQuickKpiKeyDown(event,scope)} onChange={e=>setQuickDrafts({...quickDrafts,[scope]:e.target.value})} placeholder={placeholder} />
+        <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi(scope)}>{label} 추가</button>
+        <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion(scope)}>단계 추천</button>
+      </div>
+    );
+  }
 
   return (
     <div className="kpi-dashboard-page">
@@ -3875,9 +3958,18 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
             <p><b>1. 월별 KPI</b>에서 이번 달 큰 목표를 먼저 내려줍니다.</p>
             <p><b>2. 주간 KPI</b>를 만들 때 연결할 월별 KPI를 선택하면 아래 월별 지도에 이어집니다.</p>
             <p><b>3. 데일리 KPI</b>는 출근한 직원이 오늘 할 일을 적고, 퇴근 전 완료/미완료를 체크합니다.</p>
+            <p><b>4. 입력 방식</b>은 각 데일리·주간·월별 칸 안의 한 줄 입력칸에서 Enter 또는 쉼표로 여러 KPI를 나눠 저장합니다.</p>
+            <p><b>5. 단계 추천</b>은 업무분장표 세부내역을 기준으로 실행 순서를 골라 데일리 또는 주간 KPI로 넣는 기능입니다.</p>
           </div>
         )}
         {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
+        <div className="kpi-view-tabs">
+          {(["daily","weekly","monthly"] as const).map(view=>(
+            <button type="button" key={view} className={kpiView===view?"active":""} onClick={()=>setKpiView(view)}>
+              {view==="daily"?"데일리 KPI":view==="weekly"?"주간 KPI":"월별 KPI"}
+            </button>
+          ))}
+        </div>
         <div className="kpi-score-strip">
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
             const score=scoreForEmployee(employee.id);
@@ -3894,57 +3986,6 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         </div>
       </section>
 
-      <section className="card kpi-section-card kpi-flow-editor">
-        <div className="section-head"><h2 className="card-title">KPI 입력</h2><span className="subtle">월간 · 주간 · 데일리 한 줄 연결</span></div>
-        <div className="kpi-flow-controls">
-          {isAdmin&&(
-            <select className="select" value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
-              <option value="">전체</option>
-              {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
-            </select>
-          )}
-          <select className="select" value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
-            <option value="">주간 KPI 연결 월간 목표</option>
-            {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
-          </select>
-          <select className="select" value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
-            <option value="">데일리 KPI 연결 주간 목표</option>
-            {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
-          </select>
-        </div>
-        <div className="kpi-quick-grid">
-          {(["monthly","weekly","daily"] as const).map(scope=>(
-            <div className="kpi-quick-row" key={scope}>
-              <label>{scope==="monthly"?"월간 KPI":scope==="weekly"?"주간 KPI":"데일리 KPI"}</label>
-              <input className="input" value={quickDrafts[scope]} onChange={e=>setQuickDrafts({...quickDrafts,[scope]:e.target.value})} placeholder={scope==="monthly"?"이번 달 큰 목표":scope==="weekly"?"이번 주 실행 목표":"오늘 할 일 한 줄"} />
-              <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi(scope)}>저장</button>
-              <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion(scope)}>단계 추천</button>
-            </div>
-          ))}
-        </div>
-        {kpiSuggestion&&(
-          <div className="kpi-ai-steps">
-            <div className="kpi-ai-steps-head">
-              <b>업무 순서와 단계를 추천받으시겠습니까?</b>
-              <button className="icon-button" title="닫기" onClick={()=>setKpiSuggestion(null)}><i className="ti ti-x" aria-hidden="true"></i></button>
-            </div>
-            <p>{kpiSuggestion.title}</p>
-            <div className="kpi-step-list">
-              {kpiSuggestion.steps.map((step:any)=>(
-                <label key={step.id}>
-                  <input type="checkbox" checked={!!kpiSuggestion.selected[step.id]} onChange={e=>setKpiSuggestion({...kpiSuggestion,selected:{...kpiSuggestion.selected,[step.id]:e.target.checked}})} />
-                  <span>{step.title}</span>
-                </label>
-              ))}
-            </div>
-            <div className="actions">
-              <button className="button secondary compact" disabled={saving} onClick={()=>addSuggestedSteps("weekly")}>주간으로 넣기</button>
-              <button className="button compact" disabled={saving} onClick={()=>addSuggestedSteps("daily")}>데일리로 넣기</button>
-            </div>
-          </div>
-        )}
-      </section>
-
       {editingKpi&&(
         <div className="modal-backdrop" onClick={()=>setEditingKpi(null)}>
           <div className="modal-box kpi-modal" onClick={e=>e.stopPropagation()}>
@@ -3959,20 +4000,51 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         </div>
       )}
 
-      <section className="card kpi-section-card">
+      {kpiSuggestion&&(
+        <section className="card kpi-section-card kpi-ai-steps">
+          <div className="kpi-ai-steps-head">
+            <b>업무 순서와 단계를 추천받으시겠습니까?</b>
+            <button className="icon-button" title="닫기" onClick={()=>setKpiSuggestion(null)}><i className="ti ti-x" aria-hidden="true"></i></button>
+          </div>
+          <p>{kpiSuggestion.title}</p>
+          <div className="kpi-step-list">
+            {kpiSuggestion.steps.map((step:any)=>(
+              <label key={step.id}>
+                <input type="checkbox" checked={!!kpiSuggestion.selected[step.id]} onChange={e=>setKpiSuggestion({...kpiSuggestion,selected:{...kpiSuggestion.selected,[step.id]:e.target.checked}})} />
+                <span>{step.title}</span>
+              </label>
+            ))}
+          </div>
+          <div className="actions">
+            <button className="button secondary compact" disabled={saving} onClick={()=>addSuggestedSteps("weekly")}>주간으로 넣기</button>
+            <button className="button compact" disabled={saving} onClick={()=>addSuggestedSteps("daily")}>데일리로 넣기</button>
+          </div>
+        </section>
+      )}
+
+      {kpiView==="daily"&&<section className="card kpi-section-card">
         <div className="section-head"><h2 className="card-title">데일리 KPI</h2><span className="subtle">오늘 직원별 KPI</span></div>
+        {renderKpiInlineInput("daily")}
         <div className="kpi-grid four">
           {entriesByEmployee(todayEntries).length>0 ? entriesByEmployee(todayEntries).map(([employeeId,list])=>(
             <div className="kpi-person-card" key={employeeId} style={kpiCardStyle(employeeId,kpiCompletionRate(list)??0)}>
               <div className="kpi-person-head"><b>{personName(employeeId)}</b><span>{kpiCompletionRate(list)??0}%</span></div>
-              <ul>{list.map((entry:any)=><li key={entry.id} className={entry.status==="done"?"done":entry.status==="missed"?"missed":""}><span>{kpiStatusLabel(entry.status)}</span><div><b>{entry.title}</b>{entry.updated_by&&entry.updated_by!==entry.created_by&&<small>관리자가 변경하였습니다{entry.admin_note?` · ${entry.admin_note}`:""}</small>}</div><button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button></li>)}</ul>
+              <ul>{list.map((entry:any)=><li key={entry.id} className={entry.status==="done"?"done":entry.status==="missed"?"missed":""}>
+                <label className="kpi-done-check" title="완료 체크"><input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={event=>updateKpiStatus(entry,event.target.checked?"done":"pending")} /><span>{kpiStatusLabel(entry.status)}</span></label>
+                <div><b>{entry.title}</b>{entry.updated_by&&entry.updated_by!==entry.created_by&&<small>관리자가 변경하였습니다{entry.admin_note?` · ${entry.admin_note}`:""}</small>}</div>
+                <div className="kpi-row-actions">
+                  <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                  <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                </div>
+              </li>)}</ul>
             </div>
           )) : <p className="body-text">오늘 등록된 데일리 KPI가 없습니다.</p>}
         </div>
-      </section>
+      </section>}
 
-      <section className="card kpi-section-card">
+      {kpiView==="weekly"&&<section className="card kpi-section-card">
         <div className="section-head"><h2 className="card-title">주간 KPI</h2><span className="subtle">{weekStart}~{weekEnd}</span></div>
+        {renderKpiInlineInput("weekly")}
         <div className="kpi-grid four">
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
             const list=weekDailyEntries.filter((entry:any)=>entry.employee_id===employee.id);
@@ -3988,15 +4060,16 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   <span>미완료 <b>{missed}</b></span>
                   <span>확인 전 <b>{pending}</b></span>
                 </div>
-                {weeklyGoals.filter((goal:any)=>!goal.employee_id||goal.employee_id===employee.id).slice(0,3).map((goal:any)=><p className="kpi-linked-goal" key={goal.id}>{goal.title}</p>)}
+                {weeklyGoals.filter((goal:any)=>!goal.employee_id||goal.employee_id===employee.id).slice(0,3).map((goal:any)=><div className="kpi-linked-goal" key={goal.id}><span>{goal.title}</span><div><button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button><button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button></div></div>)}
               </div>
             );
           }) : <p className="body-text">이번 주 KPI가 아직 없습니다.</p>}
         </div>
-      </section>
+      </section>}
 
-      <section className="card kpi-section-card">
+      {kpiView==="monthly"&&<section className="card kpi-section-card">
         <div className="section-head"><h2 className="card-title">월별 KPI</h2><span className="subtle">월 목표 → 주간 → 데일리</span></div>
+        {renderKpiInlineInput("monthly")}
         <div className="kpi-month-map">
           {monthlyGoals.length>0 ? monthlyGoals.map((goal:any)=>(
             <div className="kpi-month-node" key={goal.id} style={kpiCardStyle(goal.employee_id)}>
@@ -4006,10 +4079,11 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                 {weeklyGoals.filter((weekly:any)=>weekly.parent_id===goal.id).map((weekly:any)=><em key={weekly.id}>{weekly.title}</em>)}
                 {weeklyGoals.filter((weekly:any)=>weekly.parent_id===goal.id).length===0&&<em>주간 KPI 연결 전</em>}
               </div>
+              <div className="kpi-month-actions"><button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button><button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button></div>
             </div>
           )) : <p className="body-text">월별 KPI를 먼저 등록하면 주간·데일리 KPI가 이어집니다.</p>}
         </div>
-      </section>
+      </section>}
     </div>
   );
 }
@@ -5512,7 +5586,25 @@ function LeaveManageModal({ emp, requests, adjustments, compRequests, currentEmp
 function WorkMapBoard({ entries, employees=[], onOpen, currentEmployee }: { entries:any[]; employees?:any[]; onOpen?:(entry:any)=>void; currentEmployee?:any }) {
   const currentDept=normalizeDepartmentName(currentEmployee?.department);
   const currentPosition=String(currentEmployee?.position??"").trim();
-  const publicEntries=entries.filter((entry:any)=>{
+  const representativeEntry={
+    id:"__representative_ops",
+    is_active:true,
+    is_public:true,
+    target_scope:"department",
+    department:"운영 총괄",
+    position:"대표",
+    assigned_person_name:"대표",
+    title:"운영 총괄",
+    display_title:"운영 총괄",
+    summary:"회사 운영 방향, 우선순위, 주요 승인과 대외협력 흐름을 총괄합니다.",
+    work_group:"경영·운영 총괄",
+    flow_notes:["회사 운영 방향과 우선순위 결정","부서별 주요 업무 진행 상황 점검","예산·계약·채용 등 주요 의사결정 승인","대외협력 및 파트너십 방향 조율","업무 리스크 확인 및 최종 책임 관리"],
+    checklist:["주요 의사결정 확인","부서별 진행 상황 점검","리스크 및 대외 이슈 확인"],
+  };
+  const sourceEntries=entries.some((entry:any)=>normalizeDepartmentName(entry.department)==="운영 총괄"||String(entry.position??"")==="대표")
+    ? entries
+    : [representativeEntry,...entries];
+  const publicEntries=sourceEntries.filter((entry:any)=>{
     if(!currentEmployee) return rnrIsPublicBoardEntry(entry);
     if(entry?.is_active===false) return false;
     if(rnrIsPublicBoardEntry(entry)) return true;
