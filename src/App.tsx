@@ -1564,6 +1564,7 @@ export default function App() {
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"team-schedule",label:"팀 일정",icon:"ti-calendar-week"},
     {id:"work-map",label:"업무 분장표",icon:"ti-hierarchy-3"},
+    {id:"kpi",label:"KPI",icon:"ti-target-arrow"},
     {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
@@ -1629,7 +1630,7 @@ export default function App() {
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
           {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
           {tab==="work-map" && <PublicWorkMapPage currentEmployee={employee} />}
-          {tab==="kpi" && adminCan(employee,"kpi","read") && <KpiDashboardPage currentEmployee={employee} />}
+          {tab==="kpi" && <KpiDashboardPage currentEmployee={employee} />}
           {tab==="admin-dashboard" && adminCan(employee,"admin-dashboard","read") && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
           {tab==="approvals" && adminCan(employee,"approvals","read") && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
           {tab==="employees" && adminCan(employee,"employees","read") && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
@@ -3616,6 +3617,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
   const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:""});
   const [showDoneKpi,setShowDoneKpi]=useState(false);
+  const [kpiTreeGoal,setKpiTreeGoal]=useState<any|null>(null);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
   const [kpiView,setKpiView]=useState<"daily"|"weekly"|"monthly">("daily");
@@ -4072,6 +4074,49 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         </div>
       </section>
 
+      {kpiTreeGoal&&(
+        <div className="modal-backdrop" onClick={()=>setKpiTreeGoal(null)}>
+          <div className="modal-box kpi-tree-modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="card-title" style={{margin:0,fontSize:15}}>
+                <i className="ti ti-target-arrow" style={{marginRight:6,color:"#2563eb"}}></i>
+                {kpiTreeGoal.title}
+              </h2>
+              <button className="modal-close" onClick={()=>setKpiTreeGoal(null)}>×</button>
+            </div>
+            <div className="kpi-tree-body">
+              {weeklyGoals.filter((w:any)=>w.parent_id===kpiTreeGoal.id).length===0
+                ? <p className="kpi-h-empty">연결된 주간 KPI가 없습니다</p>
+                : weeklyGoals.filter((w:any)=>w.parent_id===kpiTreeGoal.id).map((w:any)=>{
+                    const wDailies=dailyEntries.filter((d:any)=>d.parent_id===w.id);
+                    return (
+                      <div key={w.id} className="kpi-tree-weekly">
+                        <div className="kpi-tree-weekly-header">
+                          <span className={`kpi-tree-status-dot ${w.status==="done"?"done":""}`}></span>
+                          <span className="kpi-tree-weekly-title">{w.title}</span>
+                          <em className={`kpi-tree-badge ${w.status==="done"?"done":wDailies.length>0&&wDailies.every((d:any)=>d.status==="done")?"done":""}`}>
+                            {w.status==="done"?"완료":wDailies.length>0?`${wDailies.filter((d:any)=>d.status==="done").length}/${wDailies.length}`:"진행중"}
+                          </em>
+                        </div>
+                        {wDailies.length>0&&(
+                          <div className="kpi-tree-daily-list">
+                            {wDailies.map((d:any)=>(
+                              <div key={d.id} className={`kpi-tree-daily-row ${d.status==="done"?"done":""}`}>
+                                <i className={`ti ${d.status==="done"?"ti-circle-check":"ti-circle"}`} style={{fontSize:13,color:d.status==="done"?"#059669":"#cbd5e1",flexShrink:0}}></i>
+                                <span>{d.title}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+              }
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingKpi&&(
         <div className="modal-backdrop" onClick={()=>setEditingKpi(null)}>
           <div className="modal-box kpi-modal" onClick={e=>e.stopPropagation()}>
@@ -4169,8 +4214,9 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   const linkedW=weeklyGoals.filter((w:any)=>w.parent_id===goal.id);
                   const pct=linkedW.length>0?Math.round(linkedW.reduce((s:number,w:any)=>{
                     const dl=dailyEntries.filter((d:any)=>d.parent_id===w.id);
-                    return s+(dl.length>0?kpiCompletionRate(dl)??0:0);
-                  },0)/linkedW.length):0;
+                    const wRate=dl.length>0?(kpiCompletionRate(dl)??0):(w.status==="done"?100:0);
+                    return s+wRate;
+                  },0)/linkedW.length):(goal.status==="done"?100:0);
                   return (
                     <div
                       key={goal.id} data-kpi-id={goal.id}
@@ -4180,7 +4226,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                       onDragLeave={draggingKpi?.scope==="weekly"?()=>setDropTargetId(null):undefined}
                       onDrop={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();linkKpi(draggingKpi.id,goal.id);}:undefined}
                     >
-                      <p className="kpi-h-title">{goal.title}</p>
+                      <p className="kpi-h-title" style={{cursor:"pointer"}} onClick={()=>setKpiTreeGoal(goal)}>{goal.title} <i className="ti ti-chevron-right" style={{fontSize:11,opacity:0.5}}></i></p>
                       <div className="kpi-h-meta">
                         <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:kpiEmployeeColor(goal.employee_id)}}></div></div>
                         <span className="kpi-h-pct" style={{color:kpiEmployeeColor(goal.employee_id)}}>{pct}%</span>

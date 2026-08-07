@@ -953,6 +953,20 @@ body { overflow-x: hidden; }
 .kpi-scope-dropzone { border: 1.5px dashed #cbd5e1; border-radius: 6px; padding: 8px; text-align: center; font-size: 11px; color: #94a3b8; margin-top: 4px; transition: all .15s; }
 .kpi-scope-dropzone.active { border-color: var(--col-accent,#2563eb); color: var(--col-accent,#2563eb); background: color-mix(in srgb,var(--col-accent,#2563eb) 5%,#fff); }
 /* 완료 항목 스택 */
+/* KPI 트리 팝업 */
+.kpi-tree-modal { max-width: 520px; max-height: 80vh; display: flex; flex-direction: column; }
+.kpi-tree-body { overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+.kpi-tree-weekly { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+.kpi-tree-weekly-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: #f8fafc; }
+.kpi-tree-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #e2e8f0; flex-shrink: 0; }
+.kpi-tree-status-dot.done { background: #059669; }
+.kpi-tree-weekly-title { flex: 1; font-size: 13px; font-weight: 600; color: #374151; }
+.kpi-tree-badge { font-style: normal; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: #f1f5f9; color: #64748b; }
+.kpi-tree-badge.done { background: #d1fae5; color: #059669; }
+.kpi-tree-daily-list { padding: 8px 12px 10px 28px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid #f1f5f9; }
+.kpi-tree-daily-row { display: flex; align-items: flex-start; gap: 7px; font-size: 13px; color: #374151; }
+.kpi-tree-daily-row.done span { color: #94a3b8; }
+/* 완료 항목 스택 */
 .kpi-done-stack { margin-top: 6px; border-top: 1px dashed #e2e8f0; padding-top: 6px; }
 .kpi-done-toggle { width: 100%; display: flex; align-items: center; gap: 5px; justify-content: center; background: none; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 10px; font-size: 11px; color: #94a3b8; cursor: pointer; transition: all .15s; }
 .kpi-done-toggle:hover { background: #f8fafc; color: #64748b; }
