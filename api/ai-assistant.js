@@ -1,6 +1,6 @@
 import { parseJsonText, readJsonBody, requireActiveEmployee, send } from "./_shared.js";
 
-const OPENAI_MODEL = process.env.AI_ASSISTANT_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-5.5";
+const OPENAI_MODEL = "gpt-5.5";
 const ALLOWED_ACTIONS = new Set([
   "create_daily_task",
   "create_schedule_event",
