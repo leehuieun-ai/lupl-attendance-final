@@ -1724,6 +1724,7 @@ export default function App() {
           {tab==="admin-settings" && adminCan(employee,"admin-settings","all") && <AdminPermissionSettings currentEmployee={employee} onChanged={load} />}
         </main>
       </div>
+      <AIAssistantQuickCapture employee={employee} currentTab={tab} currentPageTitle={currentPageTitle} menuOptions={improvementMenuOptions} onChanged={load} />
       <ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={currentPageTitle} menuOptions={improvementMenuOptions} />
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
       {validPrivacyConsent && !validWorkTimeConsent && validPrivacyConsent.consent_version !== PRIVACY_CONSENT_VERSION && <WorkTimeConsentModal employee={employee} onDone={load} />}
@@ -1759,6 +1760,417 @@ function LoginPage() {
       <div className="form-row"><label className="label">비밀번호</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>e.key==="Enter"&&login()} /></div>
       <button className="button full" onClick={login}>로그인</button>
     </section></div>
+  );
+}
+
+function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuOptions, onChanged }:
+  { employee:any; currentTab:Tab; currentPageTitle:string; menuOptions:{id:Tab;label:string}[]; onChanged?:()=>void }) {
+  const [open,setOpen]=useState(false);
+  const [input,setInput]=useState("");
+  const [messages,setMessages]=useState<any[]>([
+    {id:"assistant-welcome",role:"assistant",text:"무엇을 시스템에 반영할까요? 일정, 할일, KPI, 업무 R&R, 개선 요청까지 말로 정리해주면 실행 가능한 항목으로 나눠드릴게요."},
+  ]);
+  const [busy,setBusy]=useState(false);
+  const [executingId,setExecutingId]=useState("");
+  const [actionStates,setActionStates]=useState<Record<string,string>>({});
+  const [assistantContext,setAssistantContext]=useState<any|null>(null);
+  const isAdmin=employee.role==="admin";
+  const canUseAdminActions=isAdmin;
+  const currentMenu=menuOptions.find(menu=>menu.id===currentTab);
+
+  useEffect(()=>{
+    function onKeyDown(event:KeyboardEvent) {
+      if(event.ctrlKey&&event.shiftKey&&event.key.toLowerCase()==="a"){
+        event.preventDefault();
+        setOpen(true);
+      }
+    }
+    window.addEventListener("keydown",onKeyDown);
+    return ()=>window.removeEventListener("keydown",onKeyDown);
+  },[]);
+
+  function appendAssistant(text:string, actions:any[] = [], questions:string[] = []) {
+    setMessages(current=>[...current,{id:`assistant-${Date.now()}-${Math.random()}`,role:"assistant",text,actions,questions}]);
+  }
+  function safeIsoDate(value:any) {
+    const text=String(value??"").slice(0,10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+  }
+  function defaultWorkDate(scope:string,payload:any={}) {
+    const direct=safeIsoDate(payload.work_date||payload.task_date||payload.start_date);
+    if(direct) return direct;
+    if(scope==="monthly") return monthStartIso(todayIso().slice(0,7));
+    if(scope==="weekly") return weekStartIso(todayIso());
+    return todayIso();
+  }
+  function employeeNameById(id?:string|null,context=assistantContext) {
+    if(!id) return "";
+    return context?.employees?.find((item:any)=>item.id===id)?.name || (id===employee.id?employee.name:"");
+  }
+  function actionTypeLabel(type:string) {
+    const labels:Record<string,string>={
+      create_daily_task:"오늘의 할일",
+      create_schedule_event:"팀 일정",
+      create_kpi_entry:"KPI",
+      link_existing_kpi:"KPI 연결",
+      create_rnr_entry:"업무 R&R",
+      create_improvement:"개선함",
+      ask_clarification:"확인 질문",
+      answer_only:"안내",
+    };
+    return labels[type]??type;
+  }
+  function actionSummary(action:any) {
+    const payload=action?.payload??{};
+    if(action.type==="create_schedule_event") return [employeeNameById(payload.employee_id),payload.start_date,payload.title].filter(Boolean).join(" · ");
+    if(action.type==="create_daily_task") return [employeeNameById(payload.target_employee_id)||"전체",payload.task_date,payload.title].filter(Boolean).join(" · ");
+    if(action.type==="create_kpi_entry") return [payload.scope,payload.work_date,employeeNameById(payload.employee_id),payload.title].filter(Boolean).join(" · ");
+    if(action.type==="link_existing_kpi") return `하위 ${payload.child_id||payload.kpi_id||"-"} → 상위 ${payload.parent_id||"없음"}`;
+    if(action.type==="create_rnr_entry") return [payload.department,payload.position,payload.title].filter(Boolean).join(" · ");
+    if(action.type==="create_improvement") return String(payload.note||action.summary||"개선 요청").slice(0,120);
+    return action.summary||"";
+  }
+  function actionAllowed(action:any) {
+    return !(action.permission==="admin"&&!canUseAdminActions);
+  }
+
+  async function loadAssistantContext() {
+    const since=addIsoDays(todayIso(),-14);
+    const kpiSince=monthStartIso(todayIso().slice(0,7));
+    const schedulePromise=isAdmin
+      ? supabase.from("employee_schedule_events").select("*").gte("end_date",since).order("start_date",{ascending:true}).limit(120)
+      : Promise.resolve({data:[],error:null});
+    const [employeesResult,kpiResult,tasksResult,scheduleResult,rnrResult]=await Promise.all([
+      supabase.from("employees").select("id,name,employee_no,department,position,role,is_active,employment_status").eq("is_active",true).eq("employment_status","active").order("employee_no",{ascending:true}).limit(120),
+      supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",kpiSince).order("work_date",{ascending:false}).limit(200),
+      supabase.from("daily_tasks").select("*").eq("is_active",true).gte("task_date",since).order("task_date",{ascending:false}).limit(120),
+      schedulePromise,
+      supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(140),
+    ]);
+    const context={
+      current_page:{
+        tab:currentTab,
+        title:currentPageTitle,
+        menu_label:currentMenu?.label??currentPageTitle,
+        path:`${window.location.pathname}${window.location.hash}`,
+      },
+      current_employee:{
+        id:employee.id,
+        name:employee.name,
+        employee_no:employee.employee_no,
+        department:employee.department,
+        position:employee.position,
+        role:employee.role,
+      },
+      employees:employeesResult.data??[],
+      kpis:kpiResult.data??[],
+      daily_tasks:tasksResult.data??[],
+      schedule_events:(scheduleResult as any).data??[],
+      rnr_entries:rnrResult.data??[],
+    };
+    setAssistantContext(context);
+    return context;
+  }
+
+  async function askAssistant() {
+    const text=input.trim();
+    if(!text) return;
+    setInput("");
+    setBusy(true);
+    setMessages(current=>[...current,{id:`user-${Date.now()}`,role:"user",text}]);
+    try {
+      const context=await loadAssistantContext();
+      const {data:sessionData}=await supabase.auth.getSession();
+      const token=sessionData.session?.access_token;
+      if(!token) throw new Error("로그인이 필요합니다.");
+      const response=await fetch("/api/ai-assistant",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+        body:JSON.stringify({message:text,today:todayIso(),context}),
+      });
+      const data=await response.json();
+      if(!response.ok) throw new Error(data?.error||"AI 비서 응답을 받지 못했습니다.");
+      const assistant=data.assistant??{};
+      appendAssistant(
+        assistant.reply||"요청을 정리했습니다. 아래 항목을 확인해주세요.",
+        Array.isArray(assistant.actions)?assistant.actions:[],
+        Array.isArray(assistant.questions)?assistant.questions:[],
+      );
+    } catch(e:any) {
+      appendAssistant("지금은 바로 해석하지 못했습니다. 그래도 개선함에는 남길 수 있어요.", [{
+        id:`improvement-${Date.now()}`,
+        type:"create_improvement",
+        title:"AI 비서 오류/요청 개선함 기록",
+        summary:e.message,
+        permission:"employee",
+        payload:{note:text},
+      }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveActionToImprovement(action:any, reason="AI 비서가 직접 실행할 수 없는 요청") {
+    const note=String(action?.payload?.note||action?.summary||action?.title||"AI 비서 요청").trim();
+    const payload={
+      created_by:employee.id,
+      request_type:"ai_assistant",
+      request_type_label:"AI 비서",
+      menu_id:currentTab,
+      menu_label:currentMenu?.label??currentPageTitle,
+      submenu_label:actionTypeLabel(action?.type),
+      page_title:currentPageTitle,
+      page_path:`${window.location.pathname}${window.location.hash}`,
+      note:`${note}\n\n처리 메모: ${reason}`,
+      status:"open",
+      ai_summary:action?.title||"AI 비서 요청",
+      ai_payload:action,
+      user_agent:navigator.userAgent,
+      viewport_width:window.innerWidth,
+      viewport_height:window.innerHeight,
+      visibility:employee.role==="admin"?"admin_only":"employee_owner",
+    };
+    let result=await supabase.from("improvement_requests").insert(payload);
+    if(result.error&&/ai_summary|ai_payload|visibility|schema cache/i.test(result.error.message)){
+      const {ai_summary,ai_payload,visibility,...fallbackPayload}=payload as any;
+      result=await supabase.from("improvement_requests").insert(fallbackPayload);
+    }
+    if(result.error) throw result.error;
+  }
+
+  async function executeAction(action:any, quiet=false) {
+    if(!action?.type) return;
+    setExecutingId(action.id);
+    setActionStates(current=>({...current,[action.id]:"running"}));
+    try {
+      const context=assistantContext??await loadAssistantContext();
+      const payload=action.payload??{};
+      if(!actionAllowed(action)) {
+        await saveActionToImprovement(action,"권한상 직원 화면에서 직접 반영하지 않고 개선함에 기록");
+        setActionStates(current=>({...current,[action.id]:"saved-improvement"}));
+        if(!quiet) appendAssistant("권한상 직접 바꾸지는 않고 개선함에 넣어놨어요. 관리자가 확인해서 반영할 수 있습니다.");
+        return;
+      }
+
+      if(action.type==="create_daily_task") {
+        if(!isAdmin) {
+          await saveActionToImprovement(action,"오늘의 할일 등록은 관리자 실행 항목");
+        } else {
+          const taskDate=safeIsoDate(payload.task_date)||todayIso();
+          const row={
+            task_date:taskDate,
+            due_date:safeIsoDate(payload.due_date)||taskDate,
+            title:String(payload.title||action.title||"AI 비서 할일").trim(),
+            content:String(payload.content||payload.note||action.summary||payload.title||"").trim()||String(payload.title||action.title||""),
+            is_active:true,
+            created_by:employee.id,
+            target_employee_id:payload.target_employee_id||null,
+          };
+          let result=await supabase.from("daily_tasks").insert(row);
+          if(result.error&&/due_date|schema cache/i.test(result.error.message)){
+            const {due_date,...fallbackRow}=row;
+            result=await supabase.from("daily_tasks").insert(fallbackRow);
+          }
+          if(result.error) throw result.error;
+        }
+      } else if(action.type==="create_schedule_event") {
+        if(!isAdmin) {
+          await saveActionToImprovement(action,"팀 일정 변경은 관리자 실행 항목");
+        } else {
+          const allowedTypes=["work","am_only","pm_only","unavailable","info","hidden"];
+          const start=safeIsoDate(payload.start_date)||todayIso();
+          const eventType=allowedTypes.includes(payload.event_type) ? payload.event_type : "info";
+          const row={
+            employee_id:payload.employee_id||employee.id,
+            title:String(payload.title||action.title||"AI 비서 일정").trim(),
+            event_type:eventType,
+            start_date:start,
+            end_date:safeIsoDate(payload.end_date)||start,
+            start_time:payload.start_time||null,
+            end_time:payload.end_time||null,
+            note:String(payload.note||action.summary||"").trim()||null,
+            created_by:employee.id,
+            updated_at:new Date().toISOString(),
+          };
+          const {error}=await supabase.from("employee_schedule_events").insert(row);
+          if(error) throw error;
+        }
+      } else if(action.type==="create_kpi_entry") {
+        const scope=["daily","weekly","monthly"].includes(payload.scope) ? payload.scope : "daily";
+        const targetEmployeeId=isAdmin ? (payload.employee_id||employee.id) : employee.id;
+        if(!isAdmin&&payload.employee_id&&payload.employee_id!==employee.id) {
+          await saveActionToImprovement(action,"타인 KPI 변경 요청은 관리자 확인 필요");
+        } else {
+          const target=context.employees?.find((item:any)=>item.id===targetEmployeeId);
+          const row={
+            employee_id:targetEmployeeId,
+            employee_name:target?.name||employee.name,
+            parent_id:payload.parent_id||null,
+            mentor_employee_id:payload.mentor_employee_id||null,
+            scope,
+            work_date:defaultWorkDate(scope,payload),
+            title:String(payload.title||action.title||"AI 비서 KPI").trim(),
+            description:String(payload.description||action.summary||"").trim()||null,
+            status:"pending",
+            sort_order:0,
+            is_public:true,
+            is_active:true,
+            created_by:employee.id,
+            updated_by:employee.id,
+          };
+          let result=await supabase.from("kpi_entries").insert(row);
+          if(result.error&&/description|mentor_employee_id|updated_by|schema cache/i.test(result.error.message)){
+            const {description,mentor_employee_id,updated_by,...fallbackRow}=row;
+            result=await supabase.from("kpi_entries").insert(fallbackRow);
+          }
+          if(result.error) throw result.error;
+        }
+      } else if(action.type==="link_existing_kpi") {
+        const childId=payload.child_id||payload.kpi_id;
+        if(!childId) throw new Error("연결할 KPI가 없습니다.");
+        const child=context.kpis?.find((item:any)=>item.id===childId);
+        if(!isAdmin&&child?.employee_id!==employee.id) {
+          await saveActionToImprovement(action,"본인 KPI가 아닌 연결 변경은 관리자 확인 필요");
+        } else {
+          let result=await supabase.from("kpi_entries").update({
+            parent_id:payload.parent_id||null,
+            updated_by:employee.id,
+            updated_at:new Date().toISOString(),
+          }).eq("id",childId);
+          if(result.error&&/updated_by|schema cache/i.test(result.error.message)){
+            result=await supabase.from("kpi_entries").update({parent_id:payload.parent_id||null,updated_at:new Date().toISOString()}).eq("id",childId);
+          }
+          if(result.error) throw result.error;
+        }
+      } else if(action.type==="create_rnr_entry") {
+        if(!isAdmin) {
+          await saveActionToImprovement(action,"업무 R&R 등록은 관리자 실행 항목");
+        } else {
+          const title=String(payload.title||action.title||"AI 비서 업무").trim();
+          const row={
+            raw_input:String(payload.raw_input||payload.note||title).trim(),
+            title,
+            summary:String(payload.summary||action.summary||title).trim(),
+            display_title:String(payload.display_title||title).trim(),
+            work_group:String(payload.work_group||payload.category||"운영 업무").trim(),
+            flow_notes:Array.isArray(payload.flow_notes)?payload.flow_notes:[],
+            target_scope:payload.target_scope||"employee",
+            is_public:payload.is_public!==false,
+            public_note:String(payload.public_note||"").trim()||null,
+            department:String(payload.department||"").trim()||null,
+            position:String(payload.position||"").trim()||null,
+            category:String(payload.category||"운영").trim(),
+            priority:payload.priority||"normal",
+            checklist:Array.isArray(payload.checklist)?payload.checklist:[],
+            attachments:Array.isArray(payload.attachments)?payload.attachments:[],
+            is_sensitive:payload.is_sensitive===true,
+            assigned_employee_id:payload.assigned_employee_id||null,
+            assigned_person_name:String(payload.assigned_person_name||employeeNameById(payload.assigned_employee_id)||"").trim()||null,
+            source:"ai_assistant",
+            is_active:true,
+            created_by:employee.id,
+          };
+          let result=await supabase.from("rnr_entries").insert(row);
+          if(result.error&&/display_title|work_group|flow_notes|target_scope|is_public|public_note|attachments|is_sensitive|schema cache/i.test(result.error.message)){
+            const {display_title,work_group,flow_notes,target_scope,is_public,public_note,attachments,is_sensitive,...fallbackRow}=row as any;
+            result=await supabase.from("rnr_entries").insert(fallbackRow);
+          }
+          if(result.error) throw result.error;
+        }
+      } else if(action.type==="create_improvement") {
+        await saveActionToImprovement(action,"AI 비서가 개선함으로 보낸 요청");
+      } else if(action.type==="ask_clarification"||action.type==="answer_only") {
+        setActionStates(current=>({...current,[action.id]:"done"}));
+        if(!quiet) appendAssistant(action.summary||action.title||"확인했습니다.");
+        return;
+      } else {
+        await saveActionToImprovement(action,"지원하지 않는 AI 비서 실행 항목");
+      }
+
+      setActionStates(current=>({...current,[action.id]:"done"}));
+      if(!quiet) appendAssistant(`진행했습니다. ${action.title}`);
+      onChanged?.();
+    } catch(e:any) {
+      setActionStates(current=>({...current,[action.id]:"error"}));
+      appendAssistant(`처리 중 오류가 났어요: ${e.message}`);
+    } finally {
+      setExecutingId("");
+    }
+  }
+
+  async function executeAll(actions:any[]) {
+    for(const action of actions) {
+      if(actionStates[action.id]==="done"||actionStates[action.id]==="saved-improvement") continue;
+      await executeAction(action,true);
+    }
+    appendAssistant("선택 가능한 항목을 모두 처리했습니다. 직접 반영이 어려운 항목은 개선함에 넣어놨어요.");
+  }
+
+  function handleInputKeyDown(event:any) {
+    if(event.key==="Enter"&&!event.shiftKey) {
+      event.preventDefault();
+      askAssistant();
+    }
+  }
+
+  return (
+    <>
+      <button className="assistant-fab" title="AI 비서 열기 (Ctrl+Shift+A)" onClick={()=>setOpen(true)}>
+        <i className="ti ti-sparkles" aria-hidden="true"></i>
+      </button>
+      {open&&<div className="modal-backdrop assistant-backdrop" onClick={()=>setOpen(false)}>
+        <div className="modal-box assistant-modal" onClick={e=>e.stopPropagation()}>
+          <div className="modal-header">
+            <div>
+              <h2 className="card-title" style={{margin:0}}><i className="ti ti-sparkles" aria-hidden="true"></i>AI 비서</h2>
+              <p className="subtle" style={{margin:"5px 0 0"}}>{isAdmin?"관리자 실행 범위":"직원 실행 범위"} · 현재 화면 {currentPageTitle}</p>
+            </div>
+            <button className="modal-close" title="닫기" onClick={()=>setOpen(false)}><i className="ti ti-x" aria-hidden="true"></i></button>
+          </div>
+          <div className="assistant-scope-row">
+            <span><i className="ti ti-check" aria-hidden="true"></i> 일정·할일·KPI 제안</span>
+            <span><i className="ti ti-shield-check" aria-hidden="true"></i> 권한 확인 후 반영</span>
+            <span><i className="ti ti-notes" aria-hidden="true"></i> 불가 시 개선함 기록</span>
+          </div>
+          <div className="assistant-chat-log">
+            {messages.map((message:any)=>(
+              <div key={message.id} className={`assistant-message ${message.role}`}>
+                <p>{message.text}</p>
+                {Array.isArray(message.questions)&&message.questions.length>0&&<div className="assistant-question-list">
+                  {message.questions.map((question:string,index:number)=><span key={`${message.id}-q-${index}`}>{question}</span>)}
+                </div>}
+                {Array.isArray(message.actions)&&message.actions.length>0&&<div className="assistant-actions">
+                  {message.actions.length>1&&<button className="button secondary compact assistant-run-all" disabled={!!executingId||busy} onClick={()=>executeAll(message.actions)}>제안 모두 처리</button>}
+                  {message.actions.map((action:any)=>(
+                    <div className={`assistant-action-card ${actionAllowed(action)?"":"locked"}`} key={action.id}>
+                      <div className="assistant-action-main">
+                        <span className="assistant-action-type">{actionTypeLabel(action.type)} · {action.permission==="admin"?"관리자":"직원"}</span>
+                        <b>{action.title}</b>
+                        <p>{action.summary||"실행 전 내용을 확인해주세요."}</p>
+                        <small>{actionSummary(action)}</small>
+                      </div>
+                      <button
+                        className={`button compact ${actionAllowed(action)?"":"ghost"}`}
+                        disabled={busy||!!executingId||["done","saved-improvement"].includes(actionStates[action.id])}
+                        onClick={()=>executeAction(action)}
+                      >
+                        {executingId===action.id?"처리 중":actionStates[action.id]==="done"?"완료":actionStates[action.id]==="saved-improvement"?"개선함 저장":actionAllowed(action)?"반영":"개선함으로"}
+                      </button>
+                    </div>
+                  ))}
+                </div>}
+              </div>
+            ))}
+            {busy&&<div className="assistant-message assistant"><p>맥락을 확인하고 실행 항목으로 나누는 중입니다.</p></div>}
+          </div>
+          <div className="assistant-input-row">
+            <textarea className="textarea compact-textarea" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleInputKeyDown} placeholder="예: 8월 20일 윤예진님 멘토링 있어. 용산 여성인력개발센터 KPI랑 연결해줘." />
+            <button className="button assistant-send" disabled={busy||!input.trim()} onClick={askAssistant}><i className="ti ti-send" aria-hidden="true"></i>보내기</button>
+          </div>
+          <p className="subtle" style={{marginTop:10}}>AI 비서는 바로 저장하지 않고 먼저 제안합니다. 반영 버튼을 누른 항목만 현재 계정 권한으로 저장됩니다.</p>
+        </div>
+      </div>}
+    </>
   );
 }
 
