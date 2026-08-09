@@ -4191,7 +4191,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status,department,position").order("employee_no",{ascending:true});
     const [entryResult,employeeResult,rnrResult]=await Promise.all([
       supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",yearStart).lte("work_date",yearEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true}),
-      isAdminView ? employeeQuery : employeeQuery.eq("id",currentEmployee.id),
+      employeeQuery,
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
     ]);
     if(entryResult.error) setMessage("KPI 테이블이 아직 반영되지 않았습니다. Supabase SQL 패치를 먼저 실행해주세요.");
@@ -4307,7 +4307,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     }
   });
   const scorePeople=Array.from(employeeMap.values())
-    .filter((employee:any)=>employee.id&&((employee.is_active&&employee.employment_status==="active")||entries.some((entry:any)=>entry.employee_id===employee.id)))
+    .filter((employee:any)=>employee.id&&employee.is_active!==false&&employee.employment_status!=="inactive"&&!isTestEmployee(employee))
     .sort((a:any,b:any)=>String(a.employee_no??a.name).localeCompare(String(b.employee_no??b.name)));
   function employeeSortValue(id:string) {
     const employee=employeeMap.get(id);
