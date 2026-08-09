@@ -797,7 +797,7 @@ function addLocalDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.g
 function isoDate(d: Date) { const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,"0"); const dd=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${dd}`; }
 function dayKeyFromDate(d: Date) { return ["sun","mon","tue","wed","thu","fri","sat"][d.getDay()]; }
 function weekStartIso(dateIso: string) { const d=dateFromIso(dateIso); const offset=(d.getDay()+6)%7; return isoDate(addLocalDays(d,-offset)); }
-function weekOfMonthLabel(dateIso: string) { const d=dateFromIso(dateIso); const first=new Date(d.getFullYear(), d.getMonth(), 1); const offset=(first.getDay()+6)%7; const nth=Math.ceil((d.getDate()+offset)/7); return `${d.getFullYear()}년 ${d.getMonth()+1}월 ${nth}째주`; }
+function weekOfMonthLabel(dateIso: string) { const d=dateFromIso(dateIso); const first=new Date(d.getFullYear(), d.getMonth(), 1); const offset=(first.getDay()+6)%7; const nth=Math.ceil((d.getDate()+offset)/7); return `${d.getFullYear()}년 ${d.getMonth()+1}월 ${nth}주차`; }
 function dateInRange(dateIso:string, start?:string|null, end?:string|null) { if(!start) return true; if(dateIso<start) return false; if(end&&dateIso>end) return false; return true; }
 function dateRangesOverlap(startA:string, endA:string, startB?:string|null, endB?:string|null) {
   if(!startB) return false;
@@ -3613,6 +3613,9 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [quickEmployeeId,setQuickEmployeeId]=useState(currentEmployee.id);
   const [quickMonthlyParentId,setQuickMonthlyParentId]=useState("");
   const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
+  const [quickDailyDate,setQuickDailyDate]=useState(todayIso());
+  const [focusEmployeeId,setFocusEmployeeId]=useState(currentEmployee.role==="admin"?"all":currentEmployee.id);
+  const [focusProjectId,setFocusProjectId]=useState("all");
   const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
   const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:""});
@@ -3632,6 +3635,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const weekEnd=weekEndIso(today);
   const monthStart=monthStartIso(month);
   const monthEnd=monthEndIso(month);
+  const selectedDailyDate=quickDailyDate>=monthStart&&quickDailyDate<=monthEnd ? quickDailyDate : monthStart;
 
   async function load() {
     setMessage("");
@@ -3647,6 +3651,14 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     setRnrEntries(rnrResult.data??[]);
   }
   useEffect(()=>{ load(); },[month,currentEmployee.id]);
+  useEffect(()=>{
+    if(currentEmployee.role!=="admin") setFocusEmployeeId(currentEmployee.id);
+  },[currentEmployee.id,currentEmployee.role]);
+  useEffect(()=>{
+    if(quickDailyDate<monthStart||quickDailyDate>monthEnd) {
+      setQuickDailyDate(today>=monthStart&&today<=monthEnd ? today : monthStart);
+    }
+  },[month,monthStart,monthEnd,today,quickDailyDate]);
 
   async function linkKpi(childId:string,parentId:string) {
     if(saving) return;
@@ -3667,7 +3679,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   async function changeScope(entryId:string,newScope:"daily"|"weekly"|"monthly") {
     if(saving) return;
     setSaving(true);
-    const workDate=newScope==="daily"?today:newScope==="weekly"?weekStart:monthStart;
+    const workDate=newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart;
     await supabase.from("kpi_entries").update({scope:newScope,parent_id:null,work_date:workDate}).eq("id",entryId);
     setDraggingKpi(null);
     setDropTargetId(null);
@@ -3717,9 +3729,9 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       ctx!.stroke();
       ctx!.setLineDash([]);
     }
-    weeklyGoals.forEach((w:any)=>{ if(w.parent_id) drawBezier(w.parent_id,w.id,"#8b5cf6",true); });
-    todayEntries.forEach((d:any)=>{ if(d.parent_id) drawBezier(d.parent_id,d.id,"#059669",d.status==="done"); });
-  },[entries]);
+    visibleWeeklyGoals.forEach((w:any)=>{ if(w.parent_id) drawBezier(w.parent_id,w.id,kpiEmployeeColor(kpiRootEmployeeId(w)),true); });
+    visibleDailyEntries.forEach((d:any)=>{ if(d.parent_id) drawBezier(d.parent_id,d.id,kpiEmployeeColor(kpiRootEmployeeId(d)),d.status==="done"); });
+  },[entries,showDoneKpi,focusEmployeeId,focusProjectId,selectedDailyDate]);
 
   const employeeMap=new Map<string,any>();
   employees.forEach((employee:any)=>employeeMap.set(employee.id,employee));
@@ -3744,14 +3756,60 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     return {"--employee-color":kpiEmployeeColor(employeeId),"--kpi-rate":`${safeRate}%`} as React.CSSProperties;
   }
   const dailyEntries=entries.filter((entry:any)=>entry.scope==="daily");
-  const todayEntries=dailyEntries.filter((entry:any)=>entry.work_date===today);
+  const selectedDayEntries=dailyEntries.filter((entry:any)=>entry.work_date===selectedDailyDate);
   const weekDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly");
+  const selectedProject=focusProjectId==="all"?null:monthlyGoals.find((goal:any)=>goal.id===focusProjectId)??null;
   function personName(id?:string|null) {
     if(!id) return "전체";
     return employeeMap.get(id)?.name ?? entries.find((entry:any)=>entry.employee_id===id)?.employee_name ?? "직원";
   }
+  function kpiRootId(entry:any):string|null {
+    if(!entry) return null;
+    if(entry.scope==="monthly") return entry.id;
+    if(entry.scope==="weekly") return entry.parent_id??entry.id;
+    const weekly=weeklyGoals.find((goal:any)=>goal.id===entry.parent_id);
+    return weekly?.parent_id??weekly?.id??entry.id;
+  }
+  function kpiRootEmployeeId(entry:any):string|null {
+    const rootId=kpiRootId(entry);
+    const root=rootId?monthlyGoals.find((goal:any)=>goal.id===rootId):null;
+    return root?.employee_id??entry?.employee_id??null;
+  }
+  function weeklyProgress(goal:any) {
+    const dl=weekDailyEntries.filter((entry:any)=>entry.parent_id===goal.id);
+    if(dl.length>0) return kpiCompletionRate(dl)??0;
+    return goal.status==="done"?100:0;
+  }
+  function monthlyProgress(goal:any) {
+    const linkedW=weeklyGoals.filter((entry:any)=>entry.parent_id===goal.id);
+    if(linkedW.length>0) return Math.round(linkedW.reduce((sum:number,weekly:any)=>sum+weeklyProgress(weekly),0)/linkedW.length);
+    return goal.status==="done"?100:0;
+  }
+  function entryProgress(entry:any) {
+    if(entry.scope==="monthly") return monthlyProgress(entry);
+    if(entry.scope==="weekly") return weeklyProgress(entry);
+    return entry.status==="done"?100:0;
+  }
+  function entryMatchesFocus(entry:any) {
+    const employeeOk=focusEmployeeId==="all" || entry.employee_id===focusEmployeeId || (!entry.employee_id&&entry.employee_name==="전체");
+    const projectOk=focusProjectId==="all" || kpiRootId(entry)===focusProjectId || entry.id===focusProjectId || entry.parent_id===focusProjectId;
+    const doneOk=showDoneKpi || entryProgress(entry)<100;
+    return employeeOk&&projectOk&&doneOk;
+  }
+  function kpiLinkedStyle(entry:any) {
+    const color=kpiEmployeeColor(kpiRootEmployeeId(entry));
+    return {"--employee-color":color,"--monthly-color":color,"--weekly-color":color,"--daily-color":color} as React.CSSProperties;
+  }
+  const visibleMonthlyGoals=monthlyGoals.filter(entryMatchesFocus);
+  const visibleWeeklyGoals=weeklyGoals.filter(entryMatchesFocus);
+  const visibleDailyEntries=selectedDayEntries.filter(entryMatchesFocus);
+  const selectedProjectParticipants=Array.from(new Set(entries
+    .filter((entry:any)=>selectedProject&&kpiRootId(entry)===selectedProject.id&&entry.employee_id)
+    .map((entry:any)=>entry.employee_id)))
+    .map((id:any)=>personName(id))
+    .slice(0,4);
   function entriesByEmployee(list:any[]) {
     const groups=new Map<string,any[]>();
     list.forEach((entry:any)=>{
@@ -3821,7 +3879,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     const target=quickTargetEmployee();
     const employeeId=target?.id ?? (isAdmin ? null : currentEmployee.id);
     const employeeName=target?.name ?? (employeeId ? currentEmployee.name : "전체");
-    const workDate=scope==="monthly" ? monthStart : scope==="weekly" ? weekStart : today;
+    const workDate=scope==="monthly" ? monthStart : scope==="weekly" ? weekStart : selectedDailyDate;
     const parentId=scope==="weekly" ? (quickMonthlyParentId||null) : scope==="daily" ? (quickWeeklyParentId||null) : null;
     const payloads=titles.map((title,index)=>({
       employee_id:employeeId,
@@ -3947,7 +4005,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     try {
       const newScope=editKpiDraft.scope;
       const newParentId=editKpiDraft.parentId||null;
-      const newWorkDate=newScope==="daily"?today:newScope==="weekly"?weekStart:monthStart;
+      const newWorkDate=newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart;
       let result=await supabase.from("kpi_entries").update({
         title,
         scope:newScope,
@@ -4040,9 +4098,15 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
             <h2 className="card-title"><i className="ti ti-target-arrow" aria-hidden="true"></i>KPI 대시보드</h2>
             <p className="body-text">월별 목표를 주간으로 쪼개고, 직원 출퇴근 흐름에서 데일리 KPI 완료 상태를 쌓아 봅니다.</p>
           </div>
-          <select className="select kpi-month-select" value={month} onChange={e=>setMonth(e.target.value)}>
-            {monthSelectOptions(today,8,2).map(option=><option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
+          <div className="kpi-head-actions">
+            <div className="kpi-period-badge">
+              <span>KPI 흐름</span>
+              <b>{weekOfMonthLabel(selectedDailyDate)}</b>
+            </div>
+            <select className="select kpi-month-select" value={month} onChange={e=>setMonth(e.target.value)}>
+              {monthSelectOptions(today,8,2).map(option=><option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </div>
         </div>
         <button type="button" className={`kpi-guide-toggle ${guideOpen?"open":""}`} onClick={()=>setGuideOpen(!guideOpen)}>
           <span><i className="ti ti-info-circle" aria-hidden="true"></i>KPI 사용 방법</span>
@@ -4062,13 +4126,19 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
             const score=scoreForEmployee(employee.id);
             return (
-              <div className="kpi-score-card" key={employee.id} style={kpiCardStyle(employee.id,score.rate)}>
+              <button
+                type="button"
+                className={`kpi-score-card${focusEmployeeId===employee.id?" active":focusEmployeeId!=="all"?" dimmed":""}`}
+                key={employee.id}
+                style={kpiCardStyle(employee.id,score.rate)}
+                onClick={()=>isAdmin&&setFocusEmployeeId(focusEmployeeId===employee.id?"all":employee.id)}
+              >
                 <i aria-hidden="true"></i>
                 <b>{employee.name}</b>
                 <strong>{score.rate}<small>%</small></strong>
                 <span>완료 {score.done} / 전체 {score.total}</span>
                 <div className="kpi-progress-track"><em></em></div>
-              </div>
+              </button>
             );
           }) : <p className="body-text">이번 달 KPI 기록이 아직 없습니다.</p>}
         </div>
@@ -4180,7 +4250,44 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       )}
 
       <section className="card kpi-section-card">
-        <div className="section-head"><h2 className="card-title">KPI 흐름</h2><span className="subtle">월 목표 → 주간 → 데일리 순으로 쌓입니다</span></div>
+        <div className="section-head">
+          <h2 className="card-title">KPI 흐름</h2>
+          <span className="subtle">{weekOfMonthLabel(selectedDailyDate)} · 월 목표 → 주간 → 데일리</span>
+        </div>
+        <div className="kpi-focus-toolbar">
+          <label>
+            <span>프로젝트</span>
+            <select className="select" value={focusProjectId} onChange={e=>setFocusProjectId(e.target.value)}>
+              <option value="all">전체 프로젝트</option>
+              {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+            </select>
+          </label>
+          {isAdmin&&(
+            <label>
+              <span>직원</span>
+              <select className="select" value={focusEmployeeId} onChange={e=>setFocusEmployeeId(e.target.value)}>
+                <option value="all">전체 직원</option>
+                {scorePeople.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+              </select>
+            </label>
+          )}
+          <button type="button" className={`kpi-filter-pill ${showDoneKpi?"active":""}`} onClick={()=>setShowDoneKpi(v=>!v)}>
+            <i className={`ti ${showDoneKpi?"ti-eye":"ti-eye-off"}`} aria-hidden="true"></i>
+            {showDoneKpi?"완료 포함":"완료 자동 숨김"}
+          </button>
+        </div>
+        <div className="kpi-mentor-strip">
+          <div>
+            <span>현재 보기</span>
+            <b>{selectedProject?.title??"전체 프로젝트"}</b>
+            <small>{focusEmployeeId==="all"?"전체 직원":personName(focusEmployeeId)}</small>
+          </div>
+          <div>
+            <span>사수/연결 직원</span>
+            <b>{selectedProject?personName(selectedProject.employee_id):"프로젝트를 선택하면 담당자가 보입니다"}</b>
+            <small>{selectedProjectParticipants.length>0?selectedProjectParticipants.join(" · "):"연결된 주간·데일리 담당자가 아직 없습니다"}</small>
+          </div>
+        </div>
         <div className="kpi-hierarchy-wrap" ref={kpiWrapRef}>
           <canvas className="kpi-canvas" ref={canvasRef} />
           <div className="kpi-hierarchy-inner">
@@ -4196,7 +4303,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
               <div className="kpi-h-col monthly-col" style={{"--col-accent":"#2563eb"} as React.CSSProperties}>
                 <div className="kpi-h-col-header">
                   <em className="kpi-h-col-label">월 목표</em>
-                  <span className="kpi-h-col-count">{monthlyGoals.length}</span>
+                  <span className="kpi-h-col-count">{visibleMonthlyGoals.length}</span>
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
@@ -4210,26 +4317,22 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   </div>
                   <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("monthly")}>단계 추천</button>
                 </div>
-                {monthlyGoals.length>0 ? monthlyGoals.map((goal:any)=>{
-                  const linkedW=weeklyGoals.filter((w:any)=>w.parent_id===goal.id);
-                  const pct=linkedW.length>0?Math.round(linkedW.reduce((s:number,w:any)=>{
-                    const dl=dailyEntries.filter((d:any)=>d.parent_id===w.id);
-                    const wRate=dl.length>0?(kpiCompletionRate(dl)??0):(w.status==="done"?100:0);
-                    return s+wRate;
-                  },0)/linkedW.length):(goal.status==="done"?100:0);
+                {visibleMonthlyGoals.length>0 ? visibleMonthlyGoals.map((goal:any)=>{
+                  const pct=monthlyProgress(goal);
+                  const color=kpiEmployeeColor(kpiRootEmployeeId(goal));
                   return (
                     <div
                       key={goal.id} data-kpi-id={goal.id}
-                      className={`kpi-h-node monthly${dropTargetId===goal.id?" drop-target":""}`}
-                      style={{"--monthly-color":kpiEmployeeColor(goal.employee_id)} as React.CSSProperties}
+                      className={`kpi-h-node monthly linked${dropTargetId===goal.id?" drop-target":""}`}
+                      style={kpiLinkedStyle(goal)}
                       onDragOver={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();setDropTargetId(goal.id);}:undefined}
                       onDragLeave={draggingKpi?.scope==="weekly"?()=>setDropTargetId(null):undefined}
                       onDrop={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();linkKpi(draggingKpi.id,goal.id);}:undefined}
                     >
                       <p className="kpi-h-title" style={{cursor:"pointer"}} onClick={()=>setKpiTreeGoal(goal)}>{goal.title} <i className="ti ti-chevron-right" style={{fontSize:11,opacity:0.5}}></i></p>
                       <div className="kpi-h-meta">
-                        <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:kpiEmployeeColor(goal.employee_id)}}></div></div>
-                        <span className="kpi-h-pct" style={{color:kpiEmployeeColor(goal.employee_id)}}>{pct}%</span>
+                        <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:color}}></div></div>
+                        <span className="kpi-h-pct" style={{color}}>{pct}%</span>
                         <div className="kpi-h-actions">
                           <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
                           <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
@@ -4240,7 +4343,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                       </button>
                     </div>
                   );
-                }) : <p className="kpi-h-empty">월별 KPI를 추가하세요</p>}
+                }) : <p className="kpi-h-empty">{showDoneKpi?"월별 KPI를 추가하세요":"표시할 진행중 월별 KPI가 없습니다"}</p>}
                 {/* 스코프 변경 드롭존 - 주간 드래그 중일 때 */}
                 {draggingKpi?.scope==="weekly"&&<div
                   className={`kpi-scope-dropzone${dropColTarget==="monthly"?" active":""}`}
@@ -4255,7 +4358,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
               <div className="kpi-h-col weekly-col" style={{"--col-accent":"#8b5cf6"} as React.CSSProperties}>
                 <div className="kpi-h-col-header">
                   <em className="kpi-h-col-label">주간 목표</em>
-                  <span className="kpi-h-col-count">{weeklyGoals.length}</span>
+                  <span className="kpi-h-col-count">{visibleWeeklyGoals.length}</span>
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
@@ -4273,17 +4376,19 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   </div>
                   <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("weekly")}>단계 추천</button>
                 </div>
-                {weeklyGoals.length>0 ? (()=>{
-                  const pendingW=weeklyGoals.filter((g:any)=>g.status!=="done");
-                  const doneW=weeklyGoals.filter((g:any)=>g.status==="done");
+                {visibleWeeklyGoals.length>0 ? (()=>{
+                  const pendingW=visibleWeeklyGoals.filter((g:any)=>g.status!=="done");
+                  const doneW=visibleWeeklyGoals.filter((g:any)=>g.status==="done");
                   const renderWeekly=(goal:any)=>{
                     const dl=weekDailyEntries.filter((d:any)=>d.parent_id===goal.id);
                     const noDailyLinks=dl.length===0;
-                    const pct=noDailyLinks?(goal.status==="done"?100:0):kpiCompletionRate(dl)??0;
+                    const pct=weeklyProgress(goal);
+                    const color=kpiEmployeeColor(kpiRootEmployeeId(goal));
                     return (
                       <div
                         key={goal.id} data-kpi-id={goal.id}
-                        className={`kpi-h-node weekly${goal.status==="done"?" done-item":""}${dropTargetId===goal.id?" drop-target":""}${draggingKpi?.id===goal.id?" dragging":""}`}
+                        className={`kpi-h-node weekly linked${goal.status==="done"?" done-item":""}${dropTargetId===goal.id?" drop-target":""}${draggingKpi?.id===goal.id?" dragging":""}`}
+                        style={kpiLinkedStyle(goal)}
                         draggable
                         onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:goal.id,scope:"weekly",sortOrder:goal.sort_order??0});}}
                         onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
@@ -4305,7 +4410,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                         {noDailyLinks?(
                           <div className="kpi-h-daily-row">
                             <label className={goal.status==="done"?"done-label":""}>
-                              <input type="checkbox" checked={goal.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(goal,ev.target.checked?"done":"pending")} style={{accentColor:"#8b5cf6",flexShrink:0}} />
+                              <input type="checkbox" checked={goal.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(goal,ev.target.checked?"done":"pending")} style={{accentColor:color,flexShrink:0}} />
                               {goal.title}
                             </label>
                             <div className="kpi-h-actions">
@@ -4317,9 +4422,9 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                           <>
                             <p className="kpi-h-title">{goal.title}</p>
                             <div className="kpi-h-meta">
-                              <span style={{fontSize:11,color:"#8b5cf6",flexShrink:0}}>{personName(goal.employee_id)}</span>
-                              <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:"#8b5cf6"}}></div></div>
-                              <span className="kpi-h-pct" style={{color:"#8b5cf6"}}>{pct}%</span>
+                              <span style={{fontSize:11,color,flexShrink:0}}>{personName(goal.employee_id)}</span>
+                              <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:color}}></div></div>
+                              <span className="kpi-h-pct" style={{color}}>{pct}%</span>
                               <div className="kpi-h-actions">
                                 <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
                                 <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
@@ -4341,7 +4446,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                       </div>
                     )}
                   </>);
-                })() : <p className="kpi-h-empty">주간 KPI를 추가하세요</p>}
+                })() : <p className="kpi-h-empty">{showDoneKpi?"주간 KPI를 추가하세요":"표시할 진행중 주간 KPI가 없습니다"}</p>}
               </div>
               </div>
 
@@ -4349,7 +4454,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
               <div className="kpi-h-col daily-col" style={{"--col-accent":"#059669"} as React.CSSProperties}>
                 <div className="kpi-h-col-header">
                   <em className="kpi-h-col-label">데일리</em>
-                  <span className="kpi-h-col-count">{todayEntries.length}</span>
+                  <span className="kpi-h-col-count">{visibleDailyEntries.length}</span>
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
@@ -4361,15 +4466,16 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                     <option value="">연결 주간 KPI 선택</option>
                     {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
                   </select>
+                  <input className="kpi-date-input" type="date" min={monthStart} max={monthEnd} value={quickDailyDate} onChange={e=>setQuickDailyDate(e.target.value)} title="데일리 KPI 날짜" />
                   <div className="kpi-h-input-row">
-                    <input className="kpi-h-input-field" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"daily")} placeholder="오늘 할 일 입력 후 Enter" />
+                    <input className="kpi-h-input-field" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"daily")} placeholder="해당 날짜 할 일 입력 후 Enter" />
                     <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("daily")}>추가</button>
                   </div>
                   <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("daily")}>단계 추천</button>
                 </div>
-                {todayEntries.length>0 ? (()=>{
-                  const pendingD=todayEntries.filter((e:any)=>e.status!=="done");
-                  const doneD=todayEntries.filter((e:any)=>e.status==="done");
+                {visibleDailyEntries.length>0 ? (()=>{
+                  const pendingD=visibleDailyEntries.filter((e:any)=>e.status!=="done");
+                  const doneD=visibleDailyEntries.filter((e:any)=>e.status==="done");
                   function suggestWeekly(title:string){
                     const tokens=title.toLowerCase().replace(/[^\w가-힣]/g," ").split(/\s+/).filter((t:string)=>t.length>1);
                     return weeklyGoals.filter((w:any)=>tokens.some((t:string)=>w.title.toLowerCase().includes(t))).slice(0,2);
@@ -4377,7 +4483,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                   const renderDaily=(entry:any)=>(
                     <div
                       key={entry.id} data-kpi-id={entry.id}
-                      className={`kpi-h-node daily${entry.status==="done"?" done-item":""}${draggingKpi?.id===entry.id?" dragging":""}`}
+                      className={`kpi-h-node daily linked${entry.status==="done"?" done-item":""}${draggingKpi?.id===entry.id?" dragging":""}`}
+                      style={kpiLinkedStyle(entry)}
                       draggable
                       onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}}
                       onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
@@ -4405,7 +4512,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                       )}
                       <div className="kpi-h-daily-row">
                         <label className={entry.status==="done"?"done-label":""}>
-                          <input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(entry,ev.target.checked?"done":"pending")} style={{accentColor:"#059669",flexShrink:0}} />
+                          <input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(entry,ev.target.checked?"done":"pending")} style={{accentColor:kpiEmployeeColor(kpiRootEmployeeId(entry)),flexShrink:0}} />
                           {entry.title}
                         </label>
                         <div className="kpi-h-actions">
@@ -4426,7 +4533,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                       </div>
                     )}
                   </>);
-                })() : <p className="kpi-h-empty">오늘 데일리 KPI를 추가하세요</p>}
+                })() : <p className="kpi-h-empty">{showDoneKpi?`${selectedDailyDate} 데일리 KPI를 추가하세요`:`${selectedDailyDate}에 표시할 진행중 데일리 KPI가 없습니다`}</p>}
                 {/* 스코프 변경 드롭존 - 주간 드래그 중일 때 */}
                 {draggingKpi?.scope==="weekly"&&<div
                   className={`kpi-scope-dropzone${dropColTarget==="daily"?" active":""}`}
