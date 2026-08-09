@@ -1287,6 +1287,9 @@ create table if not exists public.kpi_entries (
 alter table public.kpi_entries
   add column if not exists employee_name text;
 
+alter table public.kpi_entries
+  add column if not exists mentor_employee_id uuid references public.employees(id) on delete set null;
+
 create index if not exists kpi_entries_employee_date_idx
 on public.kpi_entries(employee_id, work_date desc, scope, is_active);
 
@@ -1295,6 +1298,10 @@ on public.kpi_entries(scope, work_date desc, is_active);
 
 create index if not exists kpi_entries_parent_idx
 on public.kpi_entries(parent_id);
+
+create index if not exists kpi_entries_mentor_employee_idx
+on public.kpi_entries(mentor_employee_id, work_date desc)
+where mentor_employee_id is not null;
 
 create table if not exists public.kpi_works_notifications (
   id uuid primary key default gen_random_uuid(),
@@ -1375,5 +1382,33 @@ for insert to authenticated with check (
   public.is_admin()
   or employee_id = public.current_employee_id()
 );
+
+-- 2026-08-09 company-wide settings for official document assets
+create table if not exists public.company_settings (
+  key text primary key,
+  value jsonb not null default '{}'::jsonb,
+  updated_by uuid references public.employees(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.company_settings enable row level security;
+
+grant select, insert, update, delete on public.company_settings to authenticated;
+
+drop policy if exists company_settings_select_admin on public.company_settings;
+create policy company_settings_select_admin on public.company_settings
+for select to authenticated using (public.is_admin());
+
+drop policy if exists company_settings_insert_admin on public.company_settings;
+create policy company_settings_insert_admin on public.company_settings
+for insert to authenticated with check (public.is_admin());
+
+drop policy if exists company_settings_update_admin on public.company_settings;
+create policy company_settings_update_admin on public.company_settings
+for update to authenticated using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists company_settings_delete_admin on public.company_settings;
+create policy company_settings_delete_admin on public.company_settings
+for delete to authenticated using (public.is_admin());
 
 notify pgrst, 'reload schema';

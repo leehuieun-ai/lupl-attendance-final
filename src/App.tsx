@@ -10,6 +10,8 @@ import {
 import { exportRowsToExcel, exportWorkbookToXlsx } from "./lib/exportExcel";
 
 type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "work-map" | "kpi" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
+type KpiNavMode = "personal" | "admin";
+type NavMenuItem = {id:Tab;label:string;icon:string;badge?:number;kpiMode?:KpiNavMode};
 type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection" | "attendancePolicy";
 
 const ADMIN_PERMISSION_LEVEL_RANK: Record<string, number> = { none: 0, read: 1, edit: 2, all: 3 };
@@ -35,6 +37,7 @@ const ADMIN_PERMISSION_MENUS: { id: Tab; label: string; description: string }[] 
 ];
 const PAYROLL_FIXED_FIELDS = ["monthly","hourly","annual","weeklyDays","dailyHours","monthlyHours"];
 const COMPANY_SEAL_STORAGE_KEY = "lupl_company_seal_image";
+const COMPANY_SEAL_SETTING_KEY = "company_seal_image";
 const ATTENDANCE_RULE_CONSENT_VERSION = "2026-08-attendance-rules";
 const COMPANY_SUMMER_HOLIDAY = {
   title: "회사 여름휴가",
@@ -279,6 +282,26 @@ function companySealHtml() {
   try { src=localStorage.getItem(COMPANY_SEAL_STORAGE_KEY)??""; } catch { src=""; }
   if(src.startsWith("data:image/")) return `<img class="company-seal-img" src="${escapeHtml(src)}" alt="법인 도장">`;
   return `<div class="company-seal-placeholder">법인<br>도장</div>`;
+}
+
+function companySealDataUrlFromSetting(value:any) {
+  const dataUrl=String(value?.data_url??value?.dataUrl??"");
+  return dataUrl.startsWith("data:image/") ? dataUrl : "";
+}
+
+async function syncCompanySealFromDatabase(onLoaded?:(dataUrl:string)=>void) {
+  try {
+    const {data,error}=await supabase.from("company_settings").select("value").eq("key",COMPANY_SEAL_SETTING_KEY).maybeSingle();
+    if(error) return "";
+    const dataUrl=companySealDataUrlFromSetting(data?.value);
+    if(dataUrl) {
+      localStorage.setItem(COMPANY_SEAL_STORAGE_KEY,dataUrl);
+      onLoaded?.(dataUrl);
+    }
+    return dataUrl;
+  } catch {
+    return "";
+  }
 }
 
 function officialPrintHtml({title,docNo,employee,bodyHtml,metaRows=[],signatureData="",footerText="",confirmManager="대표 이희은",confirmDate=""}:{
@@ -756,8 +779,7 @@ function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequ
   if(!log?.check_in_time||log?.check_out_time) return null;
   const dateIso=localDateStr(log.check_in_time);
   const sched=getScheduleForDate(employee,dateIso,overrides,workTimeChanges);
-  const checkIn=new Date(log.check_in_time);
-  let target=expectedWorkEndForDate(dateIso,sched,leaveRequests,checkIn).expectedEnd;
+  let target=expectedWorkEndForDate(dateIso,sched,leaveRequests,null).expectedEnd;
   const compEnd=latestCompEndForDate(compRequests,dateIso);
   return compEnd&&compEnd.getTime()>target.getTime()?compEnd:target;
 }
@@ -805,6 +827,16 @@ function dateRangesOverlap(startA:string, endA:string, startB?:string|null, endB
 }
 function countDaysInclusive(start:string, end:string) { const s=dateFromIso(start), e=dateFromIso(end); return Math.max(0, Math.round((e.getTime()-s.getTime())/86400000)+1); }
 function addIsoDays(iso:string,days:number){return isoDate(addLocalDays(dateFromIso(iso),days));}
+function eachIsoDate(start:string,end:string) {
+  const dates:string[]=[];
+  let d=dateFromIso(start);
+  const last=dateFromIso(end);
+  while(d<=last) {
+    dates.push(isoDate(d));
+    d=addLocalDays(d,1);
+  }
+  return dates;
+}
 function minutesToTime(minutes:number){
   const safe=Math.max(0,Math.min(23*60+59,minutes));
   return `${String(Math.floor(safe/60)).padStart(2,"0")}:${String(safe%60).padStart(2,"0")}`;
@@ -870,6 +902,11 @@ function employeeContractEnd(employee:any) { return employee?.contract_end ?? nu
 function employeeSeniorityValue(employee:any) { return String(employee?.work_start_date ?? employee?.joined_at ?? employee?.created_at ?? "9999-12-31").slice(0,10); }
 function sortEmployeesBySeniority(a:any,b:any) {
   return employeeSeniorityValue(a).localeCompare(employeeSeniorityValue(b)) || String(a?.name??"").localeCompare(String(b?.name??""));
+}
+function sortEmployeesByEmployeeNo(a:any,b:any) {
+  const aNo=String(a?.employee_no??"");
+  const bNo=String(b?.employee_no??"");
+  return aNo.localeCompare(bNo,"ko-KR",{numeric:true}) || String(a?.name??"").localeCompare(String(b?.name??""),"ko-KR");
 }
 function isOnOrAfterIsoDate(value?: string | null, baseline?: string | null) {
   if(!value || !baseline) return true;
@@ -1060,12 +1097,14 @@ function getScheduleForDate(emp:any, dateIso:string, overrides:any[]=[], workTim
     work_end: ov?.work_end ?? emp.work_end ?? "18:00",
   };
 }
-function attendanceDisplay(emp:any,log:any,overrides:any[],workTimeChanges:any[]=[]){
+function attendanceDisplay(emp:any,log:any,overrides:any[],workTimeChanges:any[]=[],leaveRequests:any[]=[]){
   if(!log) return {primary:"미출근",primaryClass:"",workType:null,lateMinutes:0,scheduleStart:null};
   const reviewStatuses=["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음","확인 완료","관리자 강제퇴근"];
   const dateIso=localDateStr(log.check_in_time);
   const schedule=getScheduleForDate(emp,dateIso,overrides,workTimeChanges);
-  const scheduledStart=timeToMinutes(schedule.work_start);
+  const employeeLeaveRequests=leaveRequests.filter((request:any)=>request.employee_id===emp?.id&&request.status==="approved"&&dateIso>=request.start_date&&dateIso<=request.end_date);
+  const requiredRanges=requiredWorkRangesForDate(dateIso,schedule,employeeLeaveRequests);
+  const scheduledStart=requiredRanges[0]?.[0]??timeToMinutes(schedule.work_start);
   const lateThreshold=Math.max(10*60,scheduledStart??10*60);
   const checkedIn=kstDate(log.check_in_time);
   const actualMinutes=checkedIn.getUTCHours()*60+checkedIn.getUTCMinutes();
@@ -1452,6 +1491,7 @@ export default function App() {
   const [workTimeConsent, setWorkTimeConsent] = useState<any | null>(null);
   const [adminPledgeConsent, setAdminPledgeConsent] = useState<any | null>(null);
   const [tab, setTab] = useState<Tab>("attendance");
+  const [kpiNavMode,setKpiNavMode]=useState<KpiNavMode>("personal");
   const [loading, setLoading] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [showPwModal, setShowPwModal] = useState(false);
@@ -1467,6 +1507,7 @@ export default function App() {
       setSession(r.session);
       setEmployee(r.employee);
       if (r.employee) {
+        syncCompanySealFromDatabase();
         const [privacyResult, workTimeConsentResult, adminPledgeResult] = await Promise.all([
           supabase.from("privacy_consents").select("*").eq("employee_id", r.employee.id).eq("is_active", true).order("created_at",{ascending:false}).limit(1),
           supabase.from("work_time_change_consents").select("*").eq("employee_id", r.employee.id).eq("consent_version", WORK_TIME_CHANGE_CONSENT_VERSION).maybeSingle(),
@@ -1558,41 +1599,46 @@ export default function App() {
     improvements:"개선함",
     "admin-settings":"권한 설정",
   };
-  const personalMenus:{id:Tab;label:string;icon:string}[]=[
+  const personalMenus:NavMenuItem[]=[
     {id:"attendance",label:"출퇴근",icon:"ti-clock"},
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"team-schedule",label:"팀 일정",icon:"ti-calendar-week"},
-    {id:"work-map",label:"업무 분장표",icon:"ti-hierarchy-3"},
-    {id:"kpi",label:"KPI",icon:"ti-target-arrow"},
-    {id:"improvements",label:"개선함",icon:"ti-notes"},
+    {id:"kpi",label:"내 KPI",icon:"ti-target-arrow",kpiMode:"personal"},
   ];
-  const adminMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
+  const adminMenus:NavMenuItem[]=[
     {id:"admin-dashboard",label:"오늘",icon:"ti-layout-dashboard"},
     {id:"approvals",label:"승인함",icon:"ti-inbox",badge:pendingCount},
-    {id:"kpi",label:"KPI",icon:"ti-target-arrow"},
+    {id:"kpi",label:"팀 KPI",icon:"ti-target-arrow",kpiMode:"admin"},
     {id:"schedule",label:"일정",icon:"ti-calendar-time"},
     {id:"employees",label:"직원",icon:"ti-users"},
     {id:"workplaces",label:"근무지",icon:"ti-map-pin"},
   ];
-  const reportMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
+  const reportMenus:NavMenuItem[]=[
     {id:"reports",label:"근태 리포트",icon:"ti-chart-bar"},
     {id:"payroll",label:"급여",icon:"ti-coin"},
     {id:"consents",label:"동의서",icon:"ti-file-certificate"},
   ];
-  const extraMenus:{id:Tab;label:string;icon:string;badge?:number}[]=[
+  const extraMenus:NavMenuItem[]=[
     {id:"rnr",label:"업무 R&R",icon:"ti-sitemap"},
     {id:"admin-settings",label:"권한 설정",icon:"ti-shield-lock"},
+  ];
+  const supportMenus:NavMenuItem[]=[
+    {id:"work-map",label:"업무 분장표",icon:"ti-hierarchy-3"},
+    {id:"improvements",label:"개선함",icon:"ti-notes"},
   ];
   const visibleAdminMenus=adminMenus.filter(menu=>adminCan(employee,menu.id,"read"));
   const visibleReportMenus=reportMenus.filter(menu=>adminCan(employee,menu.id,"read"));
   const visibleExtraMenus=extraMenus.filter(menu=>adminCan(employee,menu.id,menu.id==="admin-settings"?"all":"read"));
-  const improvementMenuOptions=[...personalMenus,...visibleAdminMenus,...visibleReportMenus,...visibleExtraMenus]
+  const visibleSupportMenus=supportMenus;
+  const improvementMenuOptions=[...personalMenus,...visibleAdminMenus,...visibleReportMenus,...visibleExtraMenus,...visibleSupportMenus]
     .filter((item,index,list)=>list.findIndex(other=>other.id===item.id)===index)
     .map(item=>({id:item.id,label:item.label}));
-  function go(next:Tab){setTab(next);setMobileNavOpen(false);}
-  function menuButton(item:{id:Tab;label:string;icon:string;badge?:number}){
-    return <button key={item.id} className={`side-nav-item ${tab===item.id?"active":""}`} onClick={()=>go(item.id)}><i className={`ti ${item.icon}`} aria-hidden="true"></i><span>{item.label}</span>{!!item.badge&&<b className="count-badge">{item.badge}</b>}</button>;
+  const currentPageTitle=tab==="kpi" ? (kpiNavMode==="admin"?"팀 KPI":"내 KPI") : pageTitles[tab];
+  function go(next:Tab,kpiMode?:KpiNavMode){if(next==="kpi") setKpiNavMode(kpiMode??"personal"); setTab(next);setMobileNavOpen(false);}
+  function menuButton(item:NavMenuItem){
+    const active=item.id==="kpi" ? tab==="kpi"&&(item.kpiMode??"personal")===kpiNavMode : tab===item.id;
+    return <button key={`${item.id}-${item.kpiMode??"default"}`} className={`side-nav-item ${active?"active":""}`} onClick={()=>go(item.id,item.kpiMode)}><i className={`ti ${item.icon}`} aria-hidden="true"></i><span>{item.label}</span>{!!item.badge&&<b className="count-badge">{item.badge}</b>}</button>;
   }
 
   return (
@@ -1607,9 +1653,11 @@ export default function App() {
           <p className="side-nav-label">내 근무</p>
           {personalMenus.map(menuButton)}
           {isAdmin&&<><p className="side-nav-label">관리</p>{visibleAdminMenus.map(menuButton)}<p className="side-nav-label">리포트</p>{visibleReportMenus.map(menuButton)}<p className="side-nav-label">설정</p>{visibleExtraMenus.map(menuButton)}</>}
+          <p className="side-nav-label">보조</p>
+          {visibleSupportMenus.map(menuButton)}
         </nav>
         <div className="sidebar-account">
-          <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{employee.employee_no} · {isAdmin?"관리자":"직원"}</small></div></div>
+          <div className="sidebar-user"><span><i className="ti ti-user" aria-hidden="true"></i></span><div><b>{employee.name}</b><small>{employee.employee_no} · {[employee.department,employee.position,isAdmin?"관리자":"직원"].filter(Boolean).join(" · ")}</small></div></div>
           <button title="비밀번호 변경" onClick={()=>setShowPwModal(true)}><i className="ti ti-lock" aria-hidden="true"></i></button>
           <button title="로그아웃" onClick={signOut}><i className="ti ti-logout" aria-hidden="true"></i></button>
         </div>
@@ -1619,8 +1667,8 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-inner">
             <button className="mobile-menu-button" title="메뉴 열기" onClick={()=>setMobileNavOpen(true)}><i className="ti ti-menu-2" aria-hidden="true"></i></button>
-            <div className="page-heading"><span>{reportMenus.some(m=>m.id===tab)?"리포트":extraMenus.some(m=>m.id===tab)?"설정":isAdmin&&adminMenus.some(m=>m.id===tab)?"관리":"내 근무"}</span><h1>{pageTitles[tab]}</h1></div>
-            <div className="topbar-user"><span>{employee.name}</span><b>{employee.employee_no} · {isAdmin?"관리자":"직원"}</b></div>
+            <div className="page-heading"><span>{reportMenus.some(m=>m.id===tab)?"리포트":extraMenus.some(m=>m.id===tab)?"설정":supportMenus.some(m=>m.id===tab)?"보조":isAdmin&&adminMenus.some(m=>m.id===tab)&&!(tab==="kpi"&&kpiNavMode==="personal")?"관리":"내 근무"}</span><h1>{currentPageTitle}</h1></div>
+            <div className="topbar-user"><span>{employee.name}</span><b>{employee.employee_no} · {[employee.department,employee.position,isAdmin?"관리자":"직원"].filter(Boolean).join(" · ")}</b></div>
           </div>
         </header>
         <main className="container">
@@ -1630,7 +1678,7 @@ export default function App() {
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
           {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
           {tab==="work-map" && <PublicWorkMapPage currentEmployee={employee} />}
-          {tab==="kpi" && <KpiDashboardPage currentEmployee={employee} />}
+          {tab==="kpi" && <KpiDashboardPage currentEmployee={employee} mode={isAdmin?kpiNavMode:"personal"} />}
           {tab==="admin-dashboard" && adminCan(employee,"admin-dashboard","read") && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
           {tab==="approvals" && adminCan(employee,"approvals","read") && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
           {tab==="employees" && adminCan(employee,"employees","read") && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
@@ -1644,7 +1692,7 @@ export default function App() {
           {tab==="admin-settings" && adminCan(employee,"admin-settings","all") && <AdminPermissionSettings currentEmployee={employee} onChanged={load} />}
         </main>
       </div>
-      <ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={pageTitles[tab]} menuOptions={improvementMenuOptions} />
+      <ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={currentPageTitle} menuOptions={improvementMenuOptions} />
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
       {validPrivacyConsent && !validWorkTimeConsent && validPrivacyConsent.consent_version !== PRIVACY_CONSENT_VERSION && <WorkTimeConsentModal employee={employee} onDone={load} />}
       {!validAdminPledgeConsent && <AdminConfidentialityModal employee={employee} onDone={load} />}
@@ -1696,6 +1744,10 @@ function ImprovementQuickCapture({ employee, currentTab, currentPageTitle, menuO
   const [attachments,setAttachments]=useState<any[]>([]);
   const [msg,setMsg]=useState("");
   const [busy,setBusy]=useState(false);
+  const quickMsgIsError=/오류|실패|없습니다|입력|먼저|error/i.test(msg);
+  useEffect(()=>{
+    if(open) setMsg("");
+  },[open]);
   useEffect(()=>{
     function onKeyDown(event:KeyboardEvent) {
       if(event.ctrlKey&&event.shiftKey&&event.key.toLowerCase()==="m"){
@@ -1760,7 +1812,7 @@ function ImprovementQuickCapture({ employee, currentTab, currentPageTitle, menuO
   }
   return (
     <>
-      <button className="improvement-fab" title="개선 메모 열기 (Ctrl+Shift+M)" onClick={()=>{setMenuId(currentTab);setOpen(true);}}>
+      <button className="improvement-fab" title="개선 메모 열기 (Ctrl+Shift+M)" onClick={()=>{setMenuId(currentTab);setMsg("");setOpen(true);}}>
         <i className="ti ti-message-plus" aria-hidden="true"></i>
       </button>
       {open&&<div className="modal-backdrop improvement-backdrop" onClick={()=>setOpen(false)}>
@@ -1778,7 +1830,7 @@ function ImprovementQuickCapture({ employee, currentTab, currentPageTitle, menuO
           <p className="improvement-paste-hint"><i className="ti ti-photo-plus" aria-hidden="true"></i>이미지도 이 입력칸에 Ctrl+V로 붙여넣을 수 있습니다. 여러 장까지 함께 저장됩니다.</p>
           {attachments.length>0&&<div className="improvement-attachments">{attachments.map((attachment:any)=><button type="button" key={attachment.id} onClick={()=>setAttachments(current=>current.filter(item=>item.id!==attachment.id))} title="첨부 삭제"><img src={attachment.data_url} alt={attachment.name} /></button>)}</div>}
           <p className="subtle">현재 화면: {currentPageTitle} · 단축키 Ctrl+Shift+M</p>
-          {msg&&<div className={`alert ${msg.includes("저장")?"success":"error"}`}>{msg}</div>}
+          {msg&&<div className={`alert ${quickMsgIsError?"error":"success"}`}>{msg}</div>}
           <div className="actions" style={{justifyContent:"flex-end"}}>
             <button className="button ghost" onClick={()=>setOpen(false)}>닫기</button>
             <button className="button" disabled={busy} onClick={save}><i className="ti ti-check" aria-hidden="true"></i>{busy?"저장 중":"저장"}</button>
@@ -2650,6 +2702,7 @@ function HomePage({ employee }: { employee: any }) {
   const [todayOverrides,setTodayOverrides] = useState<any[]>([]);
   const [workTimeChanges,setWorkTimeChanges] = useState<any[]>([]);
   const [todayLeaveRequests,setTodayLeaveRequests] = useState<any[]>([]);
+  const [monthLeaveRequests,setMonthLeaveRequests] = useState<any[]>([]);
   const [attendanceCorrectionRequests,setAttendanceCorrectionRequests] = useState<any[]>([]);
   const [attendanceRuleConsent,setAttendanceRuleConsent] = useState<any|null>(null);
   const [attendanceRuleChecked,setAttendanceRuleChecked] = useState(false);
@@ -2721,7 +2774,8 @@ function HomePage({ employee }: { employee: any }) {
     const today=todayIso();
     const weekStart=weekStartIso(today);
     const weekEnd=weekEndIso(today);
-    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:leaveRows},{data:taskRows},{data:taskCompletionRows,error:taskCompletionError},{data:rnrRows},{data:correctionRows,error:correctionError},{data:ruleConsent,error:ruleError},{data:kpiRows},{data:kpiWeeklyRows}]=await Promise.all([
+    const monthRange=monthRangeFor(today);
+    const [{data:places},{data:logs},{data:openLogs},{data:compRows},{data:overrides},{data:changes},{data:leaveRows},{data:monthLeaveRows},{data:taskRows},{data:taskCompletionRows,error:taskCompletionError},{data:rnrRows},{data:correctionRows,error:correctionError},{data:ruleConsent,error:ruleError},{data:kpiRows},{data:kpiWeeklyRows}]=await Promise.all([
       supabase.from("workplaces").select("*").neq("approval_status","rejected").eq("is_active",true).order("name"),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).order("check_in_time",{ascending:false}).limit(80),
       supabase.from("attendance_logs").select("*, workplaces(name,type)").eq("employee_id",employee.id).is("check_out_time",null).order("check_in_time",{ascending:false}),
@@ -2729,6 +2783,7 @@ function HomePage({ employee }: { employee: any }) {
       supabase.from("weekly_schedule_overrides").select("*").eq("employee_id",employee.id).eq("week_start",weekStartIso(today)).limit(1),
       supabase.from("work_time_change_requests").select("*").eq("employee_id",employee.id).eq("status","approved").order("created_at",{ascending:false}).limit(100),
       supabase.from("attendance_requests").select("*").eq("employee_id",employee.id).eq("status","approved").lte("start_date",today).gte("end_date",today).order("created_at",{ascending:false}),
+      supabase.from("attendance_requests").select("*").eq("employee_id",employee.id).eq("status","approved").lte("start_date",monthRange.end).gte("end_date",monthRange.start).order("start_date",{ascending:true}),
       supabase.from("daily_tasks").select("*").eq("task_date",today).eq("is_active",true).order("created_at",{ascending:false}).limit(100),
       supabase.from("daily_task_completions").select("*").eq("employee_id",employee.id).gte("completed_at",`${today}T00:00:00+09:00`).order("completed_at",{ascending:false}).limit(200),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(80),
@@ -2742,6 +2797,7 @@ function HomePage({ employee }: { employee: any }) {
     setTodayOverrides(overrides??[]);
     setWorkTimeChanges(changes??[]);
     setTodayLeaveRequests(leaveRows??[]);
+    setMonthLeaveRequests(monthLeaveRows??[]);
     setAttendanceCorrectionRequests(correctionError?[]:correctionRows??[]);
     setAttendanceRuleConsent(ruleError?{skipped:true}:ruleConsent??null);
     setAttendanceRuleChecked(true);
@@ -3207,7 +3263,7 @@ function HomePage({ employee }: { employee: any }) {
   const reminderTargetTime=reminderTarget?.getTime() ?? null;
   const activeCompRows=compTimeRows.filter((request:any)=>request.status==="approved");
   const reminderOffsets=[-5,5,15,30];
-  const monthlyLateCount=monthLogs.filter((log:any)=>attendanceDisplay(employee,log,todayOverrides,workTimeChanges).lateMinutes>0||String(log.status??"").includes("지각")).length;
+  const monthlyLateCount=monthLogs.filter((log:any)=>attendanceDisplay(employee,log,todayOverrides,workTimeChanges,monthLeaveRequests).lateMinutes>0||String(log.status??"").includes("지각")).length;
   const monthlyLateLevel=monthlyLateCount>=3?"danger":monthlyLateCount>=2?"warn":"normal";
 
   async function continueCheckoutAfterKpi() {
@@ -3602,7 +3658,9 @@ function HomePage({ employee }: { employee: any }) {
   );
 }
 
-function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
+function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmployee:any; mode?:KpiNavMode }) {
+  const isAdmin=currentEmployee.role==="admin";
+  const isAdminView=isAdmin&&mode==="admin";
   const [month,setMonth]=useState(todayIso().slice(0,7));
   const [employees,setEmployees]=useState<any[]>([]);
   const [entries,setEntries]=useState<any[]>([]);
@@ -3614,11 +3672,11 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [quickMonthlyParentId,setQuickMonthlyParentId]=useState("");
   const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
   const [quickDailyDate,setQuickDailyDate]=useState(todayIso());
-  const [focusEmployeeId,setFocusEmployeeId]=useState(currentEmployee.role==="admin"?"all":currentEmployee.id);
+  const [focusEmployeeId,setFocusEmployeeId]=useState(isAdminView?"all":currentEmployee.id);
   const [focusProjectId,setFocusProjectId]=useState("all");
   const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
-  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:""});
+  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:"",employeeId:"",mentorEmployeeId:""});
   const [showDoneKpi,setShowDoneKpi]=useState(false);
   const [kpiTreeGoal,setKpiTreeGoal]=useState<any|null>(null);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
@@ -3629,7 +3687,6 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   const [dropColTarget,setDropColTarget]=useState<"monthly"|"weekly"|"daily"|null>(null);
   const canvasRef=useRef<HTMLCanvasElement>(null);
   const kpiWrapRef=useRef<HTMLDivElement>(null);
-  const isAdmin=currentEmployee.role==="admin";
   const today=todayIso();
   const weekStart=weekStartIso(today);
   const weekEnd=weekEndIso(today);
@@ -3642,18 +3699,24 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status,department,position").order("employee_no",{ascending:true});
     const [entryResult,employeeResult,rnrResult]=await Promise.all([
       supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",monthStart).lte("work_date",monthEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true}),
-      isAdmin ? employeeQuery : employeeQuery.eq("id",currentEmployee.id),
+      isAdminView ? employeeQuery : employeeQuery.eq("id",currentEmployee.id),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
     ]);
     if(entryResult.error) setMessage("KPI 테이블이 아직 반영되지 않았습니다. Supabase SQL 패치를 먼저 실행해주세요.");
-    setEntries(entryResult.data??[]);
+    const loadedEntries=entryResult.data??[];
+    setEntries(isAdminView ? loadedEntries : loadedEntries.filter((entry:any)=>entry.employee_id===currentEmployee.id || (!entry.employee_id&&entry.employee_name==="전체") || entry.created_by===currentEmployee.id));
     setEmployees(employeeResult.data??[]);
     setRnrEntries(rnrResult.data??[]);
   }
-  useEffect(()=>{ load(); },[month,currentEmployee.id]);
+  useEffect(()=>{ load(); },[month,currentEmployee.id,isAdminView]);
   useEffect(()=>{
-    if(currentEmployee.role!=="admin") setFocusEmployeeId(currentEmployee.id);
-  },[currentEmployee.id,currentEmployee.role]);
+    if(isAdminView) {
+      setFocusEmployeeId("all");
+    } else {
+      setFocusEmployeeId(currentEmployee.id);
+      setQuickEmployeeId(currentEmployee.id);
+    }
+  },[currentEmployee.id,isAdminView]);
   useEffect(()=>{
     if(quickDailyDate<monthStart||quickDailyDate>monthEnd) {
       setQuickDailyDate(today>=monthStart&&today<=monthEnd ? today : monthStart);
@@ -3662,6 +3725,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
 
   async function linkKpi(childId:string,parentId:string) {
     if(saving) return;
+    const child=entries.find((entry:any)=>entry.id===childId);
+    if(child&&!canMoveKpi(child)) return setMessage("본인 KPI만 연결을 변경할 수 있습니다.");
     setSaving(true);
     await supabase.from("kpi_entries").update({parent_id:parentId}).eq("id",childId);
     setDraggingKpi(null);
@@ -3671,6 +3736,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   }
   async function unlinkKpi(entry:any) {
     if(saving) return;
+    if(!canMoveKpi(entry)) return setMessage("본인 KPI만 연결을 해제할 수 있습니다.");
     setSaving(true);
     await supabase.from("kpi_entries").update({parent_id:null}).eq("id",entry.id);
     await load();
@@ -3678,6 +3744,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   }
   async function changeScope(entryId:string,newScope:"daily"|"weekly"|"monthly") {
     if(saving) return;
+    const entry=entries.find((item:any)=>item.id===entryId);
+    if(entry&&!canMoveKpi(entry)) return setMessage("본인 KPI만 이동할 수 있습니다.");
     setSaving(true);
     const workDate=newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart;
     await supabase.from("kpi_entries").update({scope:newScope,parent_id:null,work_date:workDate}).eq("id",entryId);
@@ -3689,6 +3757,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   }
   async function reorderKpi(dragId:string,dragSortOrder:number,targetId:string,targetSortOrder:number) {
     if(saving||dragId===targetId) return;
+    const entry=entries.find((item:any)=>item.id===dragId);
+    if(entry&&!canMoveKpi(entry)) return setMessage("본인 KPI만 순서를 바꿀 수 있습니다.");
     setSaving(true);
     await Promise.all([
       supabase.from("kpi_entries").update({sort_order:targetSortOrder}).eq("id",dragId),
@@ -3729,8 +3799,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       ctx!.stroke();
       ctx!.setLineDash([]);
     }
-    visibleWeeklyGoals.forEach((w:any)=>{ if(w.parent_id) drawBezier(w.parent_id,w.id,kpiEmployeeColor(kpiRootEmployeeId(w)),true); });
-    visibleDailyEntries.forEach((d:any)=>{ if(d.parent_id) drawBezier(d.parent_id,d.id,kpiEmployeeColor(kpiRootEmployeeId(d)),d.status==="done"); });
+    visibleWeeklyGoals.forEach((w:any)=>{ if(w.parent_id) drawBezier(w.parent_id,w.id,kpiProjectColor(w),true); });
+    visibleDailyEntries.forEach((d:any)=>{ if(d.parent_id) drawBezier(d.parent_id,d.id,kpiProjectColor(d),d.status==="done"); });
   },[entries,showDoneKpi,focusEmployeeId,focusProjectId,selectedDailyDate]);
 
   const employeeMap=new Map<string,any>();
@@ -3765,6 +3835,13 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     if(!id) return "전체";
     return employeeMap.get(id)?.name ?? entries.find((entry:any)=>entry.employee_id===id)?.employee_name ?? "직원";
   }
+  function kpiRoleLine(entry:any) {
+    const parts=[
+      entry?.employee_id ? `담당 ${personName(entry.employee_id)}` : "",
+      entry?.mentor_employee_id ? `사수 ${personName(entry.mentor_employee_id)}` : "",
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
   function kpiRootId(entry:any):string|null {
     if(!entry) return null;
     if(entry.scope==="monthly") return entry.id;
@@ -3776,6 +3853,12 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     const rootId=kpiRootId(entry);
     const root=rootId?monthlyGoals.find((goal:any)=>goal.id===rootId):null;
     return root?.employee_id??entry?.employee_id??null;
+  }
+  function kpiProjectColor(entry:any) {
+    const rootId=kpiRootId(entry);
+    const projectIndex=rootId?monthlyGoals.findIndex((goal:any)=>goal.id===rootId):-1;
+    if(projectIndex>=0) return EMPLOYEE_COLORS[projectIndex%EMPLOYEE_COLORS.length];
+    return kpiEmployeeColor(kpiRootEmployeeId(entry));
   }
   function weeklyProgress(goal:any) {
     const dl=weekDailyEntries.filter((entry:any)=>entry.parent_id===goal.id);
@@ -3799,8 +3882,17 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     return employeeOk&&projectOk&&doneOk;
   }
   function kpiLinkedStyle(entry:any) {
-    const color=kpiEmployeeColor(kpiRootEmployeeId(entry));
+    const color=kpiProjectColor(entry);
     return {"--employee-color":color,"--monthly-color":color,"--weekly-color":color,"--daily-color":color} as React.CSSProperties;
+  }
+  function canManageKpi(entry:any) {
+    const rootId=kpiRootId(entry);
+    const root=rootId?monthlyGoals.find((goal:any)=>goal.id===rootId):null;
+    const projectOwnerId=root?.employee_id??null;
+    return isAdminView || !entry?.employee_id || entry.employee_id===currentEmployee.id || entry.mentor_employee_id===currentEmployee.id || projectOwnerId===currentEmployee.id;
+  }
+  function canMoveKpi(entry:any) {
+    return isAdminView || entry?.employee_id===currentEmployee.id;
   }
   const visibleMonthlyGoals=monthlyGoals.filter(entryMatchesFocus);
   const visibleWeeklyGoals=weeklyGoals.filter(entryMatchesFocus);
@@ -3824,7 +3916,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     return {rate:rate??0,total:list.length,done:list.filter((entry:any)=>entry.status==="done").length};
   }
   function quickTargetEmployee() {
-    const employeeId=isAdmin ? quickEmployeeId : currentEmployee.id;
+    const employeeId=isAdminView ? quickEmployeeId : currentEmployee.id;
     return employeeId ? employees.find((employee:any)=>employee.id===employeeId) : null;
   }
   function relevantRnrEntries() {
@@ -3877,7 +3969,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   async function insertKpiRows(scope:string, titles:string[], options:any={}) {
     if(titles.length===0) return;
     const target=quickTargetEmployee();
-    const employeeId=target?.id ?? (isAdmin ? null : currentEmployee.id);
+    const employeeId=target?.id ?? (isAdminView ? null : currentEmployee.id);
     const employeeName=target?.name ?? (employeeId ? currentEmployee.name : "전체");
     const workDate=scope==="monthly" ? monthStart : scope==="weekly" ? weekStart : selectedDailyDate;
     const parentId=scope==="weekly" ? (quickMonthlyParentId||null) : scope==="daily" ? (quickWeeklyParentId||null) : null;
@@ -3921,6 +4013,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   }
   async function updateKpiStatus(entry:any,status:"pending"|"done"|"missed") {
     if(!entry?.id) return;
+    if(!canManageKpi(entry)) return setMessage("본인 KPI만 상태를 변경할 수 있습니다.");
     setSaving(true); setMessage("");
     try {
       let result=await supabase.from("kpi_entries").update({
@@ -3943,6 +4036,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
   }
   async function deleteKpiEntry(entry:any) {
     if(!entry?.id) return;
+    if(!canManageKpi(entry)) return setMessage("본인 KPI만 삭제할 수 있습니다.");
     if(!window.confirm(`${entry.title} KPI를 삭제할까요?`)) return;
     setSaving(true); setMessage("");
     try {
@@ -3990,8 +4084,9 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     }
   }
   function beginEditKpi(entry:any) {
+    if(!canManageKpi(entry)) return setMessage("본인 KPI만 수정할 수 있습니다.");
     setEditingKpi(entry);
-    setEditKpiDraft({title:entry.title??"",admin_note:entry.admin_note??"",scope:entry.scope??"daily",parentId:entry.parent_id??""});
+    setEditKpiDraft({title:entry.title??"",admin_note:entry.admin_note??"",scope:entry.scope??"daily",parentId:entry.parent_id??"",employeeId:entry.employee_id??"",mentorEmployeeId:entry.mentor_employee_id??""});
   }
   async function saveEditedKpi() {
     if(!editingKpi?.id) return;
@@ -4006,23 +4101,27 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       const newScope=editKpiDraft.scope;
       const newParentId=editKpiDraft.parentId||null;
       const newWorkDate=newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart;
+      const assignedEmployee=employees.find((employee:any)=>employee.id===editKpiDraft.employeeId);
       let result=await supabase.from("kpi_entries").update({
         title,
         scope:newScope,
         parent_id:newParentId,
         work_date:newWorkDate,
-        admin_note:isAdmin?note:null,
+        employee_id:editKpiDraft.employeeId||null,
+        employee_name:assignedEmployee?.name??(editKpiDraft.employeeId?editingKpi.employee_name:null),
+        mentor_employee_id:editKpiDraft.mentorEmployeeId||null,
+        admin_note:isAdminView?note:null,
         updated_by:currentEmployee.id,
         change_log:changeLog,
         updated_at:new Date().toISOString(),
       }).eq("id",editingKpi.id);
-      if(result.error&&/admin_note|updated_by|change_log|schema cache/i.test(result.error.message)){
+      if(result.error&&/mentor_employee_id|employee_name|admin_note|updated_by|change_log|schema cache/i.test(result.error.message)){
         result=await supabase.from("kpi_entries").update({title,scope:newScope,parent_id:newParentId,work_date:newWorkDate,updated_at:new Date().toISOString()}).eq("id",editingKpi.id);
       }
       if(result.error) throw result.error;
       setEditingKpi(null);
       await load();
-      setMessage(isAdmin?"관리자 수정 내용을 저장했습니다.":"KPI를 수정했습니다.");
+      setMessage(isAdminView?"관리자 수정 내용을 저장했습니다.":"KPI를 수정했습니다.");
     } catch(e:any) {
       setMessage(e.message);
     } finally {
@@ -4030,7 +4129,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     }
   }
   async function saveGoal() {
-    if(!isAdmin) return;
+    if(!isAdminView) return;
     const title=goalDraft.title.trim();
     if(!title) return setMessage("KPI 제목을 입력해주세요.");
     setSaving(true); setMessage("");
@@ -4065,7 +4164,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
     const placeholder=scope==="daily"?"오늘 할 일을 입력하고 Enter 또는 쉼표로 여러 개 추가":scope==="weekly"?"이번 주 목표를 입력하고 Enter": "이번 달 큰 목표를 입력하고 Enter";
     return (
       <div className="kpi-inline-input">
-        {isAdmin&&(
+        {isAdminView&&(
           <select className="select" value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
             <option value="">전체</option>
             {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
@@ -4095,8 +4194,8 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
       <section className="card kpi-hero-card">
         <div className="kpi-dashboard-head">
           <div>
-            <h2 className="card-title"><i className="ti ti-target-arrow" aria-hidden="true"></i>KPI 대시보드</h2>
-            <p className="body-text">월별 목표를 주간으로 쪼개고, 직원 출퇴근 흐름에서 데일리 KPI 완료 상태를 쌓아 봅니다.</p>
+            <h2 className="card-title"><i className="ti ti-target-arrow" aria-hidden="true"></i>{isAdminView?"팀 KPI":"내 KPI"}</h2>
+            <p className="body-text">{isAdminView?"직원 이름을 눌러 담당자를 고르고, 월간 목표를 주간·데일리 KPI로 연결해 봅니다.":"내 월간 목표를 주간 목표와 오늘 할 일로 연결해 봅니다."}</p>
           </div>
           <div className="kpi-head-actions">
             <div className="kpi-period-badge">
@@ -4123,6 +4222,20 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
         )}
         {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
         <div className="kpi-score-strip">
+          {isAdminView&&(
+            <button
+              type="button"
+              className={`kpi-score-card kpi-score-all${focusEmployeeId==="all"?" active":""}`}
+              style={{"--employee-color":"#334155","--kpi-rate":`${kpiCompletionRate(weekDailyEntries)??0}%`} as React.CSSProperties}
+              onClick={()=>setFocusEmployeeId("all")}
+            >
+              <i aria-hidden="true"></i>
+              <b>전체 직원</b>
+              <strong>{kpiCompletionRate(weekDailyEntries)??0}<small>%</small></strong>
+              <span>직원 {scorePeople.length}명</span>
+              <div className="kpi-progress-track"><em></em></div>
+            </button>
+          )}
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
             const score=scoreForEmployee(employee.id);
             return (
@@ -4131,7 +4244,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                 className={`kpi-score-card${focusEmployeeId===employee.id?" active":focusEmployeeId!=="all"?" dimmed":""}`}
                 key={employee.id}
                 style={kpiCardStyle(employee.id,score.rate)}
-                onClick={()=>isAdmin&&setFocusEmployeeId(focusEmployeeId===employee.id?"all":employee.id)}
+                onClick={()=>{if(!isAdminView) return; const next=focusEmployeeId===employee.id?"all":employee.id; setFocusEmployeeId(next); if(next!=="all") setQuickEmployeeId(next);}}
               >
                 <i aria-hidden="true"></i>
                 <b>{employee.name}</b>
@@ -4218,7 +4331,25 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                 </select>
               </div>
             )}
-            {isAdmin&&<div className="form-row"><label className="label">관리자 변경 메모</label><textarea className="textarea compact-textarea" value={editKpiDraft.admin_note} onChange={e=>setEditKpiDraft({...editKpiDraft,admin_note:e.target.value})} placeholder="변경 이유나 직원에게 전달할 말을 적어주세요." /></div>}
+            {isAdminView&&(
+              <div className="grid two">
+                <div className="form-row">
+                  <label className="label">담당자</label>
+                  <select className="select" value={editKpiDraft.employeeId} onChange={e=>setEditKpiDraft({...editKpiDraft,employeeId:e.target.value})}>
+                    <option value="">전체/미지정</option>
+                    {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                  </select>
+                </div>
+                <div className="form-row">
+                  <label className="label">사수/연결 직원</label>
+                  <select className="select" value={editKpiDraft.mentorEmployeeId} onChange={e=>setEditKpiDraft({...editKpiDraft,mentorEmployeeId:e.target.value})}>
+                    <option value="">미지정</option>
+                    {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+            {isAdminView&&<div className="form-row"><label className="label">관리자 변경 메모</label><textarea className="textarea compact-textarea" value={editKpiDraft.admin_note} onChange={e=>setEditKpiDraft({...editKpiDraft,admin_note:e.target.value})} placeholder="변경 이유나 직원에게 전달할 말을 적어주세요." /></div>}
             <div className="actions" style={{justifyContent:"flex-end"}}>
               <button className="button ghost" disabled={saving} onClick={()=>setEditingKpi(null)}>취소</button>
               <button className="button" disabled={saving} onClick={saveEditedKpi}>수정 저장</button>
@@ -4262,14 +4393,11 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
               {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
             </select>
           </label>
-          {isAdmin&&(
-            <label>
-              <span>직원</span>
-              <select className="select" value={focusEmployeeId} onChange={e=>setFocusEmployeeId(e.target.value)}>
-                <option value="all">전체 직원</option>
-                {scorePeople.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
-              </select>
-            </label>
+          {isAdminView&&(
+            <div className="kpi-selected-person">
+              <span>선택 직원</span>
+              <b>{focusEmployeeId==="all"?"전체 직원":personName(focusEmployeeId)}</b>
+            </div>
           )}
           <button type="button" className={`kpi-filter-pill ${showDoneKpi?"active":""}`} onClick={()=>setShowDoneKpi(v=>!v)}>
             <i className={`ti ${showDoneKpi?"ti-eye":"ti-eye-off"}`} aria-hidden="true"></i>
@@ -4284,7 +4412,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
           </div>
           <div>
             <span>사수/연결 직원</span>
-            <b>{selectedProject?personName(selectedProject.employee_id):"프로젝트를 선택하면 담당자가 보입니다"}</b>
+            <b>{selectedProject?(kpiRoleLine(selectedProject)||"담당자/사수 미지정"):"프로젝트를 선택하면 담당자와 사수가 보입니다"}</b>
             <small>{selectedProjectParticipants.length>0?selectedProjectParticipants.join(" · "):"연결된 주간·데일리 담당자가 아직 없습니다"}</small>
           </div>
         </div>
@@ -4307,10 +4435,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
-                  {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
-                    <option value="">전체</option>
-                    {employees.map((emp:any)=><option key={emp.id} value={emp.id}>{emp.name}</option>)}
-                  </select>}
+                  {isAdminView&&<div className="kpi-target-chip">담당 {quickEmployeeId?personName(quickEmployeeId):"전체"}</div>}
                   <div className="kpi-h-input-row">
                     <input className="kpi-h-input-field" value={quickDrafts.monthly} onChange={e=>setQuickDrafts({...quickDrafts,monthly:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"monthly")} placeholder="이번 달 큰 목표 입력 후 Enter" />
                     <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("monthly")}>추가</button>
@@ -4319,7 +4444,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                 </div>
                 {visibleMonthlyGoals.length>0 ? visibleMonthlyGoals.map((goal:any)=>{
                   const pct=monthlyProgress(goal);
-                  const color=kpiEmployeeColor(kpiRootEmployeeId(goal));
+                  const color=kpiProjectColor(goal);
                   return (
                     <div
                       key={goal.id} data-kpi-id={goal.id}
@@ -4330,13 +4455,14 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                       onDrop={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();linkKpi(draggingKpi.id,goal.id);}:undefined}
                     >
                       <p className="kpi-h-title" style={{cursor:"pointer"}} onClick={()=>setKpiTreeGoal(goal)}>{goal.title} <i className="ti ti-chevron-right" style={{fontSize:11,opacity:0.5}}></i></p>
+                      {kpiRoleLine(goal)&&<div className="kpi-role-line">{kpiRoleLine(goal)}</div>}
                       <div className="kpi-h-meta">
                         <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:color}}></div></div>
                         <span className="kpi-h-pct" style={{color}}>{pct}%</span>
-                        <div className="kpi-h-actions">
+                        {canManageKpi(goal)&&<div className="kpi-h-actions">
                           <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
                           <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
-                        </div>
+                        </div>}
                       </div>
                       <button className="kpi-step-suggest-btn" disabled={saving} onClick={()=>{setQuickMonthlyParentId(goal.id);openKpiSuggestion("weekly",goal.title);}}>
                         <i className="ti ti-sparkles" style={{fontSize:11}}></i> 주간 단계 추천
@@ -4362,10 +4488,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
-                  {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
-                    <option value="">전체</option>
-                    {employees.map((emp:any)=><option key={emp.id} value={emp.id}>{emp.name}</option>)}
-                  </select>}
+                  {isAdminView&&<div className="kpi-target-chip">담당 {quickEmployeeId?personName(quickEmployeeId):"전체"}</div>}
                   <select className="select" style={{fontSize:12}} value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
                     <option value="">연결 월별 KPI 선택</option>
                     {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
@@ -4383,15 +4506,15 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                     const dl=weekDailyEntries.filter((d:any)=>d.parent_id===goal.id);
                     const noDailyLinks=dl.length===0;
                     const pct=weeklyProgress(goal);
-                    const color=kpiEmployeeColor(kpiRootEmployeeId(goal));
+                    const color=kpiProjectColor(goal);
                     return (
                       <div
                         key={goal.id} data-kpi-id={goal.id}
                         className={`kpi-h-node weekly linked${goal.status==="done"?" done-item":""}${dropTargetId===goal.id?" drop-target":""}${draggingKpi?.id===goal.id?" dragging":""}`}
                         style={kpiLinkedStyle(goal)}
-                        draggable
-                        onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:goal.id,scope:"weekly",sortOrder:goal.sort_order??0});}}
-                        onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
+                        draggable={canMoveKpi(goal)}
+                        onDragStart={canMoveKpi(goal)?e=>{e.stopPropagation();setDraggingKpi({id:goal.id,scope:"weekly",sortOrder:goal.sort_order??0});}:undefined}
+                        onDragEnd={canMoveKpi(goal)?()=>{setDraggingKpi(null);setDropTargetId(null);}:undefined}
                         onDragOver={draggingKpi&&draggingKpi.id!==goal.id?e=>{e.preventDefault();setDropTargetId(goal.id);}:undefined}
                         onDragLeave={()=>setDropTargetId(null)}
                         onDrop={draggingKpi&&draggingKpi.id!==goal.id?e=>{
@@ -4404,31 +4527,35 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                           <div className="kpi-link-badge">
                             <i className="ti ti-link" style={{fontSize:10}}></i>
                             <span>{monthlyGoals.find((m:any)=>m.id===goal.parent_id)?.title||"월별"}</span>
-                            <button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(goal)}>×</button>
+                            {canMoveKpi(goal)&&<button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(goal)}>×</button>}
                           </div>
                         )}
                         {noDailyLinks?(
-                          <div className="kpi-h-daily-row">
-                            <label className={goal.status==="done"?"done-label":""}>
-                              <input type="checkbox" checked={goal.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(goal,ev.target.checked?"done":"pending")} style={{accentColor:color,flexShrink:0}} />
-                              {goal.title}
-                            </label>
-                            <div className="kpi-h-actions">
-                              <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
-                              <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                          <>
+                            <div className="kpi-h-daily-row">
+                              <label className={goal.status==="done"?"done-label":""}>
+                                <input type="checkbox" checked={goal.status==="done"} disabled={saving||!canManageKpi(goal)} onChange={ev=>updateKpiStatus(goal,ev.target.checked?"done":"pending")} style={{accentColor:color,flexShrink:0}} />
+                                {goal.title}
+                              </label>
+                              {canManageKpi(goal)&&<div className="kpi-h-actions">
+                                <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                                <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                              </div>}
                             </div>
-                          </div>
+                            {kpiRoleLine(goal)&&<div className="kpi-role-line">{kpiRoleLine(goal)}</div>}
+                          </>
                         ):(
                           <>
                             <p className="kpi-h-title">{goal.title}</p>
+                            {kpiRoleLine(goal)&&<div className="kpi-role-line">{kpiRoleLine(goal)}</div>}
                             <div className="kpi-h-meta">
                               <span style={{fontSize:11,color,flexShrink:0}}>{personName(goal.employee_id)}</span>
                               <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:color}}></div></div>
                               <span className="kpi-h-pct" style={{color}}>{pct}%</span>
-                              <div className="kpi-h-actions">
+                              {canManageKpi(goal)&&<div className="kpi-h-actions">
                                 <button className="icon-button" title="수정" onClick={()=>beginEditKpi(goal)}><i className="ti ti-edit" aria-hidden="true"></i></button>
                                 <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(goal)}><i className="ti ti-trash" aria-hidden="true"></i></button>
-                              </div>
+                              </div>}
                             </div>
                           </>
                         )}
@@ -4458,10 +4585,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
-                  {isAdmin&&<select className="select" style={{fontSize:12}} value={quickEmployeeId} onChange={e=>setQuickEmployeeId(e.target.value)}>
-                    <option value="">전체</option>
-                    {employees.map((emp:any)=><option key={emp.id} value={emp.id}>{emp.name}</option>)}
-                  </select>}
+                  {isAdminView&&<div className="kpi-target-chip">담당 {quickEmployeeId?personName(quickEmployeeId):"전체"}</div>}
                   <select className="select" style={{fontSize:12}} value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
                     <option value="">연결 주간 KPI 선택</option>
                     {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
@@ -4485,9 +4609,9 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                       key={entry.id} data-kpi-id={entry.id}
                       className={`kpi-h-node daily linked${entry.status==="done"?" done-item":""}${draggingKpi?.id===entry.id?" dragging":""}`}
                       style={kpiLinkedStyle(entry)}
-                      draggable
-                      onDragStart={e=>{e.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}}
-                      onDragEnd={()=>{setDraggingKpi(null);setDropTargetId(null);}}
+                      draggable={canMoveKpi(entry)}
+                      onDragStart={canMoveKpi(entry)?e=>{e.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}:undefined}
+                      onDragEnd={canMoveKpi(entry)?()=>{setDraggingKpi(null);setDropTargetId(null);}:undefined}
                       onDragOver={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?e=>{e.preventDefault();setDropTargetId(entry.id);}:undefined}
                       onDragLeave={draggingKpi?.scope==="daily"?()=>setDropTargetId(null):undefined}
                       onDrop={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?e=>{e.preventDefault();reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);}:undefined}
@@ -4496,7 +4620,7 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                         <div className="kpi-link-badge">
                           <i className="ti ti-link" style={{fontSize:10}}></i>
                           <span>{weeklyGoals.find((w:any)=>w.id===entry.parent_id)?.title||"주간"}</span>
-                          <button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(entry)}>×</button>
+                          {canMoveKpi(entry)&&<button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(entry)}>×</button>}
                         </div>
                       ):(
                         suggestWeekly(entry.title).length>0&&(
@@ -4512,14 +4636,15 @@ function KpiDashboardPage({ currentEmployee }: { currentEmployee:any }) {
                       )}
                       <div className="kpi-h-daily-row">
                         <label className={entry.status==="done"?"done-label":""}>
-                          <input type="checkbox" checked={entry.status==="done"} disabled={saving} onChange={ev=>updateKpiStatus(entry,ev.target.checked?"done":"pending")} style={{accentColor:kpiEmployeeColor(kpiRootEmployeeId(entry)),flexShrink:0}} />
+                          <input type="checkbox" checked={entry.status==="done"} disabled={saving||!canManageKpi(entry)} onChange={ev=>updateKpiStatus(entry,ev.target.checked?"done":"pending")} style={{accentColor:kpiProjectColor(entry),flexShrink:0}} />
                           {entry.title}
                         </label>
-                        <div className="kpi-h-actions">
+                        {canManageKpi(entry)&&<div className="kpi-h-actions">
                           <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
                           <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
-                        </div>
+                        </div>}
                       </div>
+                      {kpiRoleLine(entry)&&<div className="kpi-role-line">{kpiRoleLine(entry)}</div>}
                     </div>
                   );
                   return (<>
@@ -5506,7 +5631,7 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
       const schedule=getScheduleForDate(employee,date,overrideResult.data?[overrideResult.data]:[],changeResult.data??[]);
       const checkIn=logResult.data?.check_in_time?new Date(logResult.data.check_in_time):null;
       const checkOut=logResult.data?.check_out_time?new Date(logResult.data.check_out_time):null;
-      const {expectedEnd,shiftMinutes,leaveMinutes}=expectedWorkEndForDate(date,schedule,leaveResult.data??[],checkIn);
+      const {expectedEnd,shiftMinutes,leaveMinutes}=expectedWorkEndForDate(date,schedule,leaveResult.data??[],null);
       if(cancelled) return;
       const expectedEndHHMM=kstHHMM(expectedEnd);
       const actualCheckoutHHMM=checkOut?kstHHMM(checkOut):null;
@@ -5591,6 +5716,25 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
     } else if (m?.usesLeave) {
       if (requestedDays > expectedRemaining + 1e-9) return setMessage(`잔여 휴가(${expectedRemaining.toFixed(1)}일)가 부족하여 신청할 수 없습니다.`);
     }
+    try {
+      const overlapResult=await supabase.from("attendance_requests")
+        .select("employee_id,start_date,end_date,status,request_type")
+        .neq("employee_id",employee.id)
+        .in("status",["pending","approved"])
+        .lte("start_date",form.end_date)
+        .gte("end_date",form.start_date);
+      const counts:Record<string,Set<string>>={};
+      (overlapResult.data??[]).forEach((request:any)=>{
+        eachIsoDate(request.start_date,request.end_date).forEach(date=>{
+          if(date<form.start_date||date>form.end_date) return;
+          counts[date]=counts[date]??new Set<string>();
+          counts[date].add(request.employee_id);
+        });
+      });
+      if(Object.values(counts).some(set=>set.size>=3)) {
+        window.alert("해당일은 일정 확인이 필요한 날입니다.\n휴가 신청 후 관리자 확인을 기다려 주세요.");
+      }
+    } catch {}
     const single = SINGLE_DAY_TYPES.includes(effectiveRequestType);
     const amountHours = isHourly && form.amount_hours ? requestedHours : null;
     const useTimes = ["half_am","half_pm","hourly","comp_leave_use"].includes(effectiveRequestType);
@@ -7077,9 +7221,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   function expectedCompCheckout(request:any, log=compAttendance(request)){
     const schedule=compSchedule(request);
     const leaveRows=requests.filter((row:any)=>row.employee_id===request.employee_id);
-    const baseline=log?.check_in_time
-      ? expectedWorkEndForDate(request.work_date,schedule,leaveRows,new Date(log.check_in_time)).expectedEnd
-      : expectedWorkEndForDate(request.work_date,schedule,leaveRows,null).expectedEnd;
+    const baseline=expectedWorkEndForDate(request.work_date,schedule,leaveRows,null).expectedEnd;
     if(compRequestExcludesDinner(request)){
       const requestEnd=dateTimeForWorkDateTime(request.work_date,request.end_time,baseline);
       const actualEnd=log?.check_out_time ? new Date(log.check_out_time) : null;
@@ -7285,16 +7427,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   async function copySelectedEmployeeInfo() {
     if(selectedCopyEmployees.length===0) return setMessage("복사할 직원을 선택해주세요.");
-    const text=[
-      "이름\t부서\t직책\t사번\t휴대전화",
-      ...selectedCopyEmployees.map((employee:any)=>[
-        employee.name??"",
-        employee.department??"",
-        employee.position??"",
-        employee.employee_no??"",
-        employee.phone??"",
-      ].join("\t")),
-    ].join("\n");
+    const text=selectedCopyEmployees.map((employee:any)=>[
+      [employee.name, employee.department].filter(Boolean).join(" "),
+      employee.position ? `직함 ${employee.position}` : "",
+      employee.employee_no ? `사번 ${employee.employee_no}` : "",
+      employee.phone ? `전화번호 ${employee.phone}` : "",
+    ].filter(Boolean).join("\n")).join("\n\n");
     try {
       await navigator.clipboard.writeText(text);
       setMessage(`${selectedCopyEmployees.length}명 직원 정보를 복사했습니다.`);
@@ -7646,7 +7784,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const log=allLogs.find((row:any)=>row.employee_id===employee.id&&localDateStr(row.check_in_time)===workDate);
     const schedule=getScheduleForDate(employee,workDate,overrides,approvedWorkTimeChanges);
     const leaveRows=requests.filter((row:any)=>row.employee_id===employee.id);
-    const baseline=expectedWorkEndForDate(workDate,schedule,leaveRows,log?.check_in_time?new Date(log.check_in_time):null).expectedEnd;
+    const baseline=expectedWorkEndForDate(workDate,schedule,leaveRows,null).expectedEnd;
     const baselineHHMM=kstHHMM(baseline);
     const durationText=`${formatHourValue(durationMinutes/60)}시간`;
     const defaultDinnerAsWork=/외부|미팅|거래처|식사|저녁\s*근무|저녁.*인정/.test(raw);
@@ -8480,7 +8618,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             <textarea className="textarea compact-textarea" value={bulkEmployeeText} onChange={e=>changeBulkEmployeeText(e.target.value)} placeholder={"배병윤 개발부서 매니저 25110301 01025153673\n\n또는\n홍길동 디자인부서\n직함 담당자\n사번 22061201\n전화번호 01012345678"} />
             {bulkEmployeeRows.length>0&&<div className="bulk-employee-preview">
               {bulkEmployeeRows.slice(0,8).map(row=><div className={`bulk-employee-row ${row.valid?"":"invalid"}`} key={`${row.index}-${row.employee_no||row.name}`}>
-                <b>{row.name||"이름 없음"}</b><span>{row.department||"부서 없음"} · {row.position||"직책 없음"}{row.is_unpaid?" · 무급":""}</span><small>{row.employee_no||"사번 없음"} · {row.phone||"휴대전화 없음"}</small>
+                <b>{[row.name,row.department].filter(Boolean).join(" ")||"이름/부서 없음"}</b><span>직함 {row.position||"없음"}{row.is_unpaid?" · 무급":""}</span><small>사번 {row.employee_no||"없음"}</small><small>전화번호 {row.phone||"없음"}</small>
               </div>)}
               {bulkEmployeeRows.length>8&&<p className="subtle">외 {bulkEmployeeRows.length-8}명</p>}
             </div>}
@@ -8496,7 +8634,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           <button className={`tab ${employeeFilter==="all"?"active":""}`} onClick={()=>setEmployeeFilter("all")}>전체</button>
         </div>
         <div className="employee-copy-toolbar">
-          <div><b>여러 직원 붙여넣기용 복사</b><span>이름, 부서, 사번, 휴대전화를 탭 구분 형식으로 복사합니다.</span></div>
+          <div><b>여러 직원 붙여넣기용 복사</b><span>이름/부서, 직함, 사번, 전화번호를 한 줄에 하나씩 복사합니다.</span></div>
           <div className="actions">
             <button className="button ghost compact" onClick={()=>setSelectedEmployeeCopyIds(filtered.map((employee:any)=>employee.id))}>현재 목록 전체 선택</button>
             <button className="button secondary compact" onClick={copySelectedEmployeeInfo} disabled={selectedCopyEmployees.length===0}><i className="ti ti-copy" aria-hidden="true"></i>{selectedCopyEmployees.length}명 복사</button>
@@ -8571,7 +8709,7 @@ function AdminPermissionSettings({ currentEmployee, onChanged }: { currentEmploy
     setPermissions(base);
     setMsg("");
   }
-  useEffect(()=>{loadEmployees();},[]);
+  useEffect(()=>{loadEmployees();syncCompanySealFromDatabase(setSealPreview);},[]);
   useEffect(()=>{
     if(selectedId) loadPermissions(selectedId);
     else setPermissions({});
@@ -8607,14 +8745,18 @@ function AdminPermissionSettings({ currentEmployee, onChanged }: { currentEmploy
     if(!String(file.type??"").startsWith("image/")) return setMsg("이미지 파일만 등록할 수 있습니다.");
     const attachment=await imageFileToAttachment(file,"company-seal");
     try {
+      const now=new Date().toISOString();
+      const payload={key:COMPANY_SEAL_SETTING_KEY,value:{data_url:attachment.data_url,name:attachment.name,type:attachment.type,updated_at:now},updated_by:currentEmployee?.id??null,updated_at:now};
+      const {error}=await supabase.from("company_settings").upsert(payload,{onConflict:"key"});
       localStorage.setItem(COMPANY_SEAL_STORAGE_KEY,attachment.data_url);
       setSealPreview(attachment.data_url);
-      setMsg("법인 도장 이미지를 이 브라우저에 저장했습니다. 이후 공식 문서 PDF에 자동으로 표시됩니다.");
+      setMsg(error?"법인 도장 이미지는 이 브라우저에 저장했습니다. DB 저장은 Supabase 패치 적용 후 가능합니다.":"법인 도장 이미지를 회사 설정에 저장했습니다. 이후 공식 문서 PDF에 자동으로 표시됩니다.");
     } catch {
       setMsg("도장 이미지를 저장하지 못했습니다. 파일 크기를 줄여 다시 시도해주세요.");
     }
   }
-  function clearCompanySeal() {
+  async function clearCompanySeal() {
+    try { await supabase.from("company_settings").delete().eq("key",COMPANY_SEAL_SETTING_KEY); } catch {}
     localStorage.removeItem(COMPANY_SEAL_STORAGE_KEY);
     setSealPreview("");
     setMsg("법인 도장 이미지를 제거했습니다.");
@@ -8889,7 +9031,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
     return event?.title||"일정 확인";
   }
   function scheduleEventNoteForViewer(event:any) {
-    if(!showAdminScheduleDetails&&isPrivateEmployeeScheduleEvent(event)) return "휴가/일정 확인";
+    if(!showAdminScheduleDetails&&isPrivateEmployeeScheduleEvent(event)) return "개인 사유";
     return event?.note??"";
   }
   function displayScheduleEventForDate(employee:any,event:any,date:string){
@@ -9387,7 +9529,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
           kind:"휴가",
           employeeColor,
           title:`${employee.name} · ${showAdminScheduleDetails?leaveTypeDisplayLabel(info.leave):"개인 사유"}`,
-          detail:showAdminScheduleDetails?`${timeLabel(info.start)}~${timeLabel(info.end)} ${info.leave.reason??""}`:"휴가/일정 확인",
+          detail:showAdminScheduleDetails?`${timeLabel(info.start)}~${timeLabel(info.end)} ${info.leave.reason??""}`:"개인 사유",
         });
       }
       events
@@ -9397,20 +9539,20 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
         .forEach((event:any)=>chips.push({
           key:`unavailable-${event.id}-${date}`,
           type:"gap",
-          kind:"공백",
+          kind:showAdminScheduleDetails?"운영 확인":"개인 사유",
           employeeColor,
           title:`${employee.name} · ${scheduleEventTitleForViewer(event)}`,
-          detail:showAdminScheduleDetails?(event.note||`${event.start_date}~${event.end_date}`):"일정 확인이 필요한 날입니다.",
+          detail:showAdminScheduleDetails?(event.note||`${event.start_date}~${event.end_date}`):"개인 사유",
         }));
       absences
         .filter((absence:any)=>absence.employee_id===employee.id&&date>=absence.start_date&&date<=absence.end_date)
         .forEach((absence:any)=>chips.push({
           key:`absence-${absence.id}-${date}`,
           type:"gap",
-          kind:"공백",
+          kind:showAdminScheduleDetails?"운영 확인":"개인 사유",
           employeeColor,
-          title:`${employee.name} · 미출근`,
-          detail:showAdminScheduleDetails?`${absence.unpaid?"급여 공제":"급여 공제 없음"} · ${absence.reason??"-"}`:"일정 확인이 필요한 날입니다.",
+          title:`${employee.name} · ${showAdminScheduleDetails?"미출근":"개인 사유"}`,
+          detail:showAdminScheduleDetails?`${absence.unpaid?"급여 공제":"급여 공제 없음"} · ${absence.reason??"-"}`:"개인 사유",
         }));
       overtimeEventsFor(employee,date).forEach((event:any)=>chips.push({
         key:event.id,
@@ -9426,7 +9568,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
         kind:"일정",
         employeeColor,
         title:showAdminScheduleDetails ? event.title||"일정 확인" : `${employee.name} · 개인 사유`,
-        detail:showAdminScheduleDetails?event.note??"": "해당일은 일정 확인이 필요한 날입니다.",
+        detail:showAdminScheduleDetails?event.note??"": "개인 사유",
       }));
     });
     return chips;
@@ -9517,7 +9659,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
         <div className="team-month-issue-calendar">
           <div className="team-month-title">
             <b>{dateFromIso(monthRange.start).getFullYear()}년 {dateFromIso(monthRange.start).getMonth()+1}월</b>
-            <span>{showAdminScheduleDetails?"휴가·추가근무·운영 공백만 표시합니다.":"휴가·추가근무·일정 확인이 필요한 날만 표시합니다."}</span>
+            <span>{showAdminScheduleDetails?"휴가·추가근무·운영 확인일만 표시합니다.":"휴가·추가근무·개인 일정만 표시합니다."}</span>
           </div>
           <div className="team-month-grid">
             {teamMonthDayKeys.map(day=><div className={`team-month-head ${day==="sun"||day==="sat"?"weekend":""}`} key={day}>{DAY_LABELS[day]}</div>)}
@@ -9858,7 +10000,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
-  const payrollSummaryRows=payrollBaseEmployees.map((employee:any)=>{
+  const payrollSummaryRows=payrollBaseEmployees.slice().sort(sortEmployeesByEmployeeNo).map((employee:any)=>{
     const monthStats=payrollScheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges,scheduleEvents);
     const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
     const baseWeeklyDays=Number(employee.weekly_work_days||employee.work_days?.length||0);
@@ -9876,7 +10018,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const payrollSummaryEmployeeIds=new Set(payrollSummaryRows.map((row:any)=>row.employee.id));
   const payrollSelectableEmployees=payrollBaseEmployees
     .filter((employee:any)=>isEmployeeActive(employee)||payrollSummaryEmployeeIds.has(employee.id))
-    .sort(sortEmployeesBySeniority);
+    .sort(sortEmployeesByEmployeeNo);
   const payrollScheduledGrossPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledGrossPay||0),0);
   const payrollScheduledNetPayTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.scheduledNetPay||0),0);
   const payrollScheduledHoursTotal=payrollSummaryRows.reduce((sum:number,row:any)=>sum+Number(row.month?.hours||0),0);
@@ -10541,9 +10683,13 @@ function ReportsPage() {
   function lateMinutesForLog(log:any) {
     if(!log?.check_in_time) return 0;
     const employee=employeeForLog(log);
-    const info=reportScheduleInfoForDate(employee,localDateStr(log.check_in_time));
+    const date=localDateStr(log.check_in_time);
+    const info=reportScheduleInfoForDate(employee,date);
     if(!info?.workday) return 0;
-    const scheduledStart=timeToMinutes(info.start);
+    const employeeLeaveRequests=leaveRequests.filter((request:any)=>request.employee_id===employee?.id&&request.status==="approved"&&date>=request.start_date&&date<=request.end_date);
+    const scheduleForDate={...(info.schedule??{}),work_start:info.start,work_end:info.end};
+    const requiredRanges=requiredWorkRangesForDate(date,scheduleForDate,employeeLeaveRequests);
+    const scheduledStart=requiredRanges[0]?.[0]??timeToMinutes(info.start);
     if(scheduledStart==null) return 0;
     const lateThreshold=Math.max(10*60,scheduledStart);
     const checkedIn=kstDate(log.check_in_time);
