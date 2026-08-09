@@ -4133,11 +4133,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [quickMonthlyParentId,setQuickMonthlyParentId]=useState("");
   const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
   const [quickDailyDate,setQuickDailyDate]=useState(todayIso());
+  const [quickProjectPeriod,setQuickProjectPeriod]=useState(()=>{
+    const currentMonth=todayIso().slice(0,7);
+    return {start:monthStartIso(currentMonth),end:monthEndIso(currentMonth)};
+  });
   const [focusEmployeeId,setFocusEmployeeId]=useState(isAdminView?"all":currentEmployee.id);
   const [focusProjectId,setFocusProjectId]=useState("all");
   const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
-  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:"",employeeId:"",mentorEmployeeId:""});
+  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:"",employeeId:"",mentorEmployeeId:"",projectStart:"",projectEnd:""});
   const [showDoneKpi,setShowDoneKpi]=useState(false);
   const [lastKpiStatusChange,setLastKpiStatusChange]=useState<any|null>(null);
   const [kpiTreeGoal,setKpiTreeGoal]=useState<any|null>(null);
@@ -4189,6 +4193,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setQuickDailyDate(today>=monthStart&&today<=monthEnd ? today : monthStart);
     }
   },[month,monthStart,monthEnd,today,quickDailyDate]);
+  useEffect(()=>{ setQuickProjectPeriod({start:monthStart,end:monthEnd}); },[monthStart,monthEnd]);
 
   async function linkKpi(childId:string,parentId:string) {
     if(saving) return;
@@ -4292,11 +4297,31 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const safeRate=Math.max(0,Math.min(100,Number(rate)||0));
     return {"--employee-color":kpiEmployeeColor(employeeId),"--kpi-rate":`${safeRate}%`} as React.CSSProperties;
   }
+  function parseKpiProjectPeriod(note?:string|null) {
+    const match=String(note??"").match(/\[프로젝트기간:(\d{4}-\d{2}-\d{2})~(\d{4}-\d{2}-\d{2})\]/);
+    return match ? {start:match[1],end:match[2]} : null;
+  }
+  function stripKpiProjectPeriod(note?:string|null) {
+    return String(note??"").replace(/\[프로젝트기간:\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}\]\s*/,"").trim();
+  }
+  function withKpiProjectPeriod(note:string,start?:string,end?:string) {
+    const body=stripKpiProjectPeriod(note);
+    if(!start||!end) return body;
+    return [`[프로젝트기간:${start}~${end}]`,body].filter(Boolean).join("\n");
+  }
+  function kpiProjectPeriod(entry:any) {
+    return parseKpiProjectPeriod(entry?.admin_note);
+  }
+  function kpiProjectOverlapsMonth(entry:any,monthKey:string) {
+    const period=kpiProjectPeriod(entry);
+    if(!period) return String(entry.work_date??"").slice(0,7)===monthKey;
+    return dateRangesOverlap(monthStartIso(monthKey),monthEndIso(monthKey),period.start,period.end);
+  }
   const dailyEntries=entries.filter((entry:any)=>entry.scope==="daily");
   const selectedDayEntries=dailyEntries.filter((entry:any)=>entry.work_date===selectedDailyDate);
   const weekDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
-  const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&entry.work_date>=monthStart&&entry.work_date<=monthEnd);
+  const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&kpiProjectOverlapsMonth(entry,month));
   const selectedProject=focusProjectId==="all"?null:monthlyGoals.find((goal:any)=>goal.id===focusProjectId)??null;
   function personName(id?:string|null) {
     if(!id) return "전체";
@@ -4370,10 +4395,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const quarterMonths=Array.from({length:3},(_,index)=>(currentQuarter-1)*3+index+1);
   const monthKeyFromNumber=(monthNumber:number)=>`${currentYear}-${String(monthNumber).padStart(2,"0")}`;
   const yearMonthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&String(entry.work_date??"").startsWith(`${currentYear}-`));
-  const quarterMonthlyGoals=yearMonthlyGoals.filter((entry:any)=>quarterMonths.includes(Number(String(entry.work_date??"").slice(5,7))));
+  const quarterMonthlyGoals=yearMonthlyGoals.filter((entry:any)=>quarterMonths.some(monthNumber=>kpiProjectOverlapsMonth(entry,monthKeyFromNumber(monthNumber))));
   const roadmapMonths=quarterMonths.map(monthNumber=>{
     const key=monthKeyFromNumber(monthNumber);
-    const goals=yearMonthlyGoals.filter((entry:any)=>String(entry.work_date??"").slice(0,7)===key);
+    const goals=yearMonthlyGoals.filter((entry:any)=>kpiProjectOverlapsMonth(entry,key));
     return {key,monthNumber,goals,done:goals.filter((entry:any)=>entry.status==="done").length};
   });
   const selectedProjectParticipants=Array.from(new Set(entries
@@ -4478,6 +4503,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       title,
       description:options.description??null,
       source_rnr_entry_id:options.source_rnr_entry_id??null,
+      admin_note:options.admin_note??(scope==="monthly"&&isAdminView?withKpiProjectPeriod("",quickProjectPeriod.start,quickProjectPeriod.end):null),
       status:"pending",
       sort_order:entries.filter((entry:any)=>entry.scope===scope).length+(titleIndex*targetRows.length)+rowIndex+1,
       is_public:true,
@@ -4486,8 +4512,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       updated_by:currentEmployee.id,
     })));
     let result=await supabase.from("kpi_entries").insert(payloads);
-    if(result.error&&/description|source_rnr_entry_id|updated_by|schema cache/i.test(result.error.message)){
-      const fallbackPayloads=payloads.map(({description,source_rnr_entry_id,updated_by,...fallbackPayload}:any)=>fallbackPayload);
+    if(result.error&&/description|source_rnr_entry_id|admin_note|updated_by|schema cache/i.test(result.error.message)){
+      const fallbackPayloads=payloads.map(({description,source_rnr_entry_id,admin_note,updated_by,...fallbackPayload}:any)=>fallbackPayload);
       result=await supabase.from("kpi_entries").insert(fallbackPayloads);
     }
     if(result.error) throw result.error;
@@ -4495,6 +4521,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   async function saveQuickKpi(scope:string) {
     const titles=kpiLinesFromText(quickDrafts[scope as keyof typeof quickDrafts]);
     if(titles.length===0) return setMessage("KPI 내용을 입력해주세요.");
+    if(scope==="monthly"&&isAdminView&&quickProjectPeriod.start&&quickProjectPeriod.end&&quickProjectPeriod.end<quickProjectPeriod.start) return setMessage("프로젝트 종료일은 시작일 이후로 입력해주세요.");
     setSaving(true); setMessage("");
     try {
       await insertKpiRows(scope,titles);
@@ -4617,20 +4644,22 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   function beginEditKpi(entry:any) {
     if(!canManageKpi(entry)) return setMessage("본인 KPI만 수정할 수 있습니다.");
+    const projectPeriod=kpiProjectPeriod(entry);
     setEditingKpi(entry);
-    setEditKpiDraft({title:entry.title??"",admin_note:entry.admin_note??"",scope:entry.scope??"daily",parentId:entry.parent_id??"",employeeId:entry.employee_id??"",mentorEmployeeId:entry.mentor_employee_id??""});
+    setEditKpiDraft({title:entry.title??"",admin_note:stripKpiProjectPeriod(entry.admin_note??""),scope:entry.scope??"daily",parentId:entry.parent_id??"",employeeId:entry.employee_id??"",mentorEmployeeId:entry.mentor_employee_id??"",projectStart:projectPeriod?.start??"",projectEnd:projectPeriod?.end??""});
   }
   async function saveEditedKpi() {
     if(!editingKpi?.id) return;
     const title=editKpiDraft.title.trim();
     if(!title) return setMessage("KPI 내용을 입력해주세요.");
+    if(editKpiDraft.scope==="monthly"&&editKpiDraft.projectStart&&editKpiDraft.projectEnd&&editKpiDraft.projectEnd<editKpiDraft.projectStart) return setMessage("프로젝트 종료일은 시작일 이후로 입력해주세요.");
     const previousTitle=editingKpi.title;
-    const note=editKpiDraft.admin_note.trim();
+    const newScope=editKpiDraft.scope;
+    const note=isAdminView?(newScope==="monthly"?withKpiProjectPeriod(editKpiDraft.admin_note.trim(),editKpiDraft.projectStart,editKpiDraft.projectEnd):editKpiDraft.admin_note.trim()):"";
     const historyEntry={at:new Date().toISOString(),by:currentEmployee.id,from:previousTitle,to:title,note};
     const changeLog=Array.isArray(editingKpi.change_log)?[...editingKpi.change_log,historyEntry]:[historyEntry];
     setSaving(true); setMessage("");
     try {
-      const newScope=editKpiDraft.scope;
       const newParentId=editKpiDraft.parentId||null;
       const newWorkDate=newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart;
       const assignedEmployee=employees.find((employee:any)=>employee.id===editKpiDraft.employeeId);
@@ -4891,6 +4920,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 <option value="daily">데일리</option>
               </select>
             </div>
+            {isAdminView&&editKpiDraft.scope==="monthly"&&(
+              <div className="kpi-period-inputs">
+                <label><span>프로젝트 시작</span><input className="input" type="date" value={editKpiDraft.projectStart} onChange={e=>setEditKpiDraft({...editKpiDraft,projectStart:e.target.value})} /></label>
+                <label><span>프로젝트 종료</span><input className="input" type="date" value={editKpiDraft.projectEnd} onChange={e=>setEditKpiDraft({...editKpiDraft,projectEnd:e.target.value})} /></label>
+              </div>
+            )}
             {editKpiDraft.scope==="weekly"&&(
               <div className="form-row">
                 <label className="label">연결 월간 KPI</label>
@@ -5012,6 +5047,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
                   {isAdminView&&<div className="kpi-target-chip">담당 {quickTargetLabel()}</div>}
+                  {isAdminView&&(
+                    <div className="kpi-period-inputs compact">
+                      <label><span>시작</span><input type="date" value={quickProjectPeriod.start} onChange={e=>setQuickProjectPeriod({...quickProjectPeriod,start:e.target.value})} /></label>
+                      <label><span>종료</span><input type="date" value={quickProjectPeriod.end} onChange={e=>setQuickProjectPeriod({...quickProjectPeriod,end:e.target.value})} /></label>
+                    </div>
+                  )}
                   <div className="kpi-h-input-row">
                     <input className="kpi-h-input-field" value={quickDrafts.monthly} onChange={e=>setQuickDrafts({...quickDrafts,monthly:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"monthly")} placeholder="이번 달 큰 목표 입력 후 Enter" />
                     <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("monthly")}>추가</button>
@@ -5021,6 +5062,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 {visibleMonthlyGoals.length>0 ? visibleMonthlyGoals.map((goal:any)=>{
                   const pct=monthlyProgress(goal);
                   const color=kpiProjectColor(goal);
+                  const period=kpiProjectPeriod(goal);
                   return (
                     <div
                       key={goal.id} data-kpi-id={goal.id}
@@ -5034,6 +5076,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       onDrop={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();linkKpi(draggingKpi.id,goal.id);}:undefined}
                     >
                       <p className="kpi-h-title" style={{cursor:"pointer"}} onClick={()=>setKpiTreeGoal(goal)}>{goal.title} <i className="ti ti-chevron-right" style={{fontSize:11,opacity:0.5}}></i></p>
+                      {period&&<div className="kpi-role-line">기간 {period.start} ~ {period.end}</div>}
                       {kpiRoleLine(goal)&&<div className="kpi-role-line">{kpiRoleLine(goal)}</div>}
                       <div className="kpi-h-meta">
                         <div className="kpi-h-bar"><div className="kpi-h-bar-fill" style={{width:`${pct}%`,background:color}}></div></div>

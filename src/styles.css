@@ -900,6 +900,12 @@ body { overflow-x: hidden; }
 .kpi-assignee-picker b { display: block; margin-top: 2px; color: #172033; font-size: 13px; font-weight: 850; overflow-wrap: anywhere; }
 .kpi-assignee-picker button { min-height: 32px; border: 1px solid #dbe5f3; border-radius: 999px; background: #fff; color: #475569; padding: 0 11px; font-size: 12px; font-weight: 850; cursor: pointer; }
 .kpi-assignee-picker button.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; box-shadow: inset 0 0 0 1px rgba(37,99,235,.12); }
+.kpi-period-inputs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.kpi-period-inputs label { display: grid; gap: 4px; min-width: 0; }
+.kpi-period-inputs span { color: #64748b; font-size: 11px; font-weight: 850; }
+.kpi-period-inputs input { min-width: 0; }
+.kpi-period-inputs.compact { gap: 6px; }
+.kpi-period-inputs.compact input { min-height: 32px; font-size: 12px; }
 .kpi-view-tabs { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; border: 1px solid var(--kpi-line); border-radius: 8px; background: #fff; padding: 4px; }
 .kpi-view-tabs button { min-height: 34px; border: 0; border-radius: 6px; background: transparent; color: #475569; padding: 0 12px; font-size: 13px; font-weight: 800; cursor: pointer; }
 .kpi-view-tabs button.active { background: #172033; color: #fff; }
@@ -945,6 +951,7 @@ body { overflow-x: hidden; }
 @media (max-width: 700px) {
   .kpi-roadmap-band { grid-template-columns: 1fr; }
   .kpi-assignee-picker > div { width: 100%; }
+  .kpi-period-inputs { grid-template-columns: 1fr; }
 }
 .kpi-grid { display: grid; gap: 12px; }
 .kpi-grid.four { grid-template-columns: repeat(4,minmax(0,1fr)); }
