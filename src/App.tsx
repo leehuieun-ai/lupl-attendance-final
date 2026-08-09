@@ -1684,7 +1684,8 @@ export default function App() {
   function go(next:Tab,kpiMode?:KpiNavMode){if(next==="kpi") setKpiNavMode(kpiMode??"personal"); setTab(next);setMobileNavOpen(false);}
   function menuButton(item:NavMenuItem){
     const active=item.id==="kpi" ? tab==="kpi"&&(item.kpiMode??"personal")===kpiNavMode : tab===item.id;
-    return <button key={`${item.id}-${item.kpiMode??"default"}`} className={`side-nav-item ${active?"active":""}`} onClick={()=>go(item.id,item.kpiMode)}><i className={`ti ${item.icon}`} aria-hidden="true"></i><span>{item.label}</span>{!!item.badge&&<b className="count-badge">{item.badge}</b>}</button>;
+    const isPersonalKpi=item.id==="kpi"&&(item.kpiMode??"personal")==="personal";
+    return <button key={`${item.id}-${item.kpiMode??"default"}`} className={`side-nav-item ${active?"active":""}`} onClick={()=>go(item.id,item.kpiMode)}><i className={`ti ${item.icon}`} aria-hidden="true"></i><span>{item.label}</span>{isPersonalKpi&&<em className="nav-soft-badge">개선 중</em>}{!!item.badge&&<b className="count-badge">{item.badge}</b>}</button>;
   }
 
   return (

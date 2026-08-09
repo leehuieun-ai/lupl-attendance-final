@@ -52,6 +52,24 @@ button { cursor: pointer; }
 .side-nav-item i { width: 19px; font-size: 18px; text-align: center; }
 .side-nav-item span { flex: 1; }
 .side-nav-item .count-badge { margin-left: auto; }
+.nav-soft-badge {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #e8f7f2;
+  color: #0f766e;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px #c7eadf;
+}
+.side-nav-item.active .nav-soft-badge { background: #dff7ef; color: #0f766e; }
 .sidebar-account { display: grid; grid-template-columns: 1fr 34px 34px; align-items: center; gap: 5px; padding: 12px; border-top: 1px solid var(--line); }
 .sidebar-user { min-width: 0; display: flex; align-items: center; gap: 9px; }
 .sidebar-user > span { width: 32px; height: 32px; border-radius: 8px; background: #eef3fe; color: var(--blue-dark); display: grid; place-items: center; flex-shrink: 0; }
