@@ -1784,7 +1784,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
   const [open,setOpen]=useState(false);
   const [input,setInput]=useState("");
   const [messages,setMessages]=useState<any[]>([
-    {id:"assistant-welcome",role:"assistant",text:"무엇을 시스템에 반영할까요? 일정, 할일, KPI, 업무 R&R, 개선 요청까지 말로 정리해주면 실행 가능한 항목으로 나눠드릴게요."},
+    {id:"assistant-welcome",role:"assistant",text:"근태관리 시스템에서 궁금한 점을 물어보거나, 일정·할일·KPI 변경을 말로 요청할 수 있어요. 직원에게 공개 가능한 범위에서 답하고, 실행이 필요한 항목은 버튼으로 확인받습니다."},
   ]);
   const [busy,setBusy]=useState(false);
   const [executingId,setExecutingId]=useState("");
@@ -2318,9 +2318,10 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
             <button className="modal-close" title="닫기" onClick={()=>setOpen(false)}><i className="ti ti-x" aria-hidden="true"></i></button>
           </div>
           <div className="assistant-scope-row">
-            <span><i className="ti ti-check" aria-hidden="true"></i> 일정·할일·KPI 제안</span>
+            <span><i className="ti ti-help-circle" aria-hidden="true"></i> 사용법 질문 답변</span>
+            <span><i className="ti ti-check" aria-hidden="true"></i> 일정·할일·KPI 정리</span>
             <span><i className="ti ti-shield-check" aria-hidden="true"></i> 권한 확인 후 반영</span>
-            <span><i className="ti ti-notes" aria-hidden="true"></i> 불가 시 개선함 기록</span>
+            <span><i className="ti ti-history" aria-hidden="true"></i> 문의 내역 기록</span>
           </div>
           <div className="assistant-chat-log">
             {messages.map((message:any)=>(
@@ -2351,13 +2352,16 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
                 </div>}
               </div>
             ))}
-            {busy&&<div className="assistant-message assistant"><p>맥락을 확인하고 실행 항목으로 나누는 중입니다.</p></div>}
+            {busy&&<div className="assistant-message assistant assistant-waiting">
+              <span className="assistant-spinner" aria-hidden="true"></span>
+              <p>답변을 준비하고 있습니다.</p>
+            </div>}
           </div>
           <div className="assistant-input-row">
-            <textarea className="textarea compact-textarea" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleInputKeyDown} placeholder="예: 8월 20일 윤예진님 멘토링 있어. 용산 여성인력개발센터 KPI랑 연결해줘." />
+            <textarea className="textarea compact-textarea" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleInputKeyDown} placeholder={"예: 휴가는 어떻게 쓰나요?\n예: 오늘 내가 할 일 3일 뒤로 옮겨줘."} />
             <button className="button assistant-send" disabled={busy||!input.trim()} onClick={askAssistant}><i className="ti ti-send" aria-hidden="true"></i>보내기</button>
           </div>
-          <p className="subtle" style={{marginTop:10}}>AI 비서는 바로 저장하지 않고 먼저 제안합니다. 반영 버튼을 누른 항목만 현재 계정 권한으로 저장됩니다.</p>
+          <p className="subtle" style={{marginTop:10}}>질문과 답변은 관리자 확인용 문의 내역에 기록됩니다. 반영 버튼을 누른 항목만 현재 계정 권한으로 저장됩니다.</p>
       </aside>}
     </>
   );
