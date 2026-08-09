@@ -1518,36 +1518,65 @@ export default function App() {
         setWorkTimeConsent(workTimeConsentResult.data??null);
         setAdminPledgeConsent(adminPledgeResult.data??null);
         if (r.employee.role === "admin") {
-          const [w, rq, c, d, lg, wt, rr] = await Promise.all([
-            supabase.from("workplaces").select("id, approval_status"),
-            supabase.from("attendance_requests").select("id, status"),
+          const [emps, rq, c, lg, wt, ov, ac] = await Promise.all([
+            supabase.from("employees").select("id,name,employee_no,is_active,employment_status,work_days,work_start,work_end,work_start_date").order("employee_no",{ascending:true}),
+            supabase.from("attendance_requests").select("*"),
             supabase.from("comp_time_requests").select("*"),
-            supabase.from("registered_devices").select("id, status"),
-            supabase.from("attendance_logs").select("id, status, check_in_time, check_out_time"),
-            supabase.from("work_time_change_requests").select("id, status"),
-            supabase.from("rnr_review_requests").select("id, status"),
+            supabase.from("attendance_logs").select("id, employee_id, check_in_time, check_out_time, status").order("check_in_time",{ascending:false}).limit(300),
+            supabase.from("work_time_change_requests").select("*"),
+            supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(50),
+            supabase.from("attendance_correction_requests").select("*").order("created_at",{ascending:false}).limit(300),
           ]);
           if(seq!==loadSeqRef.current) return;
           let settledCompIdsForBadge=new Set<string>();
           try { settledCompIdsForBadge=new Set(JSON.parse(localStorage.getItem("lupl_settled_comp_ids")??"[]")); } catch {}
+          const badgeLogs=lg.data??[];
+          const compAttendanceForBadge=(request:any)=>badgeLogs.find((log:any)=>log.id===request.attendance_log_id)||badgeLogs.find((log:any)=>log.employee_id===request.employee_id&&localDateStr(log.check_in_time)===request.work_date);
+          const actualCompSettledForBadge=(request:any)=>
+            settledCompIdsForBadge.has(request.id)
+            || !!request.attendance_log_id
+            || (request.status==="approved"&&!!request.reviewed_at)
+            || request.actual_overtime_hours!==null&&request.actual_overtime_hours!==undefined
+            || String(request.review_note??"").includes("실제 퇴근시간 기준");
           const actionableCompCount=(c.data??[]).filter((x:any)=>{
-            if(settledCompIdsForBadge.has(x.id)) return false;
-            if(x.attendance_log_id||x.actual_overtime_hours!==null&&x.actual_overtime_hours!==undefined) return false;
-            if(String(x.review_note??"").includes("실제 퇴근시간 기준")) return false;
-            return x.status==="pending";
+            if(actualCompSettledForBadge(x)) return false;
+            if(x.status==="pending") return true;
+            return x.status==="approved"&&x.work_date>="2026-06-24"&&!!compAttendanceForBadge(x)?.check_out_time;
           }).length;
+          const correctionRows=ac.error?[]:ac.data??[];
+          const correctionRequestCount=correctionRows.filter((x:any)=>["pending","objected"].includes(x.status)).length;
+          const pendingCorrectionLogIds=new Set(correctionRows.filter((x:any)=>x.status==="pending"&&x.attendance_log_id).map((x:any)=>x.attendance_log_id));
+          const todayLogByEmployee:Record<string,any>={};
+          badgeLogs
+            .filter((log:any)=>isToday(log.check_in_time))
+            .sort(byCheckInDesc)
+            .forEach((log:any)=>{ if(!todayLogByEmployee[log.employee_id]) todayLogByEmployee[log.employee_id]=log; });
+          const activeEmployeesForBadge=(emps.data??[]).filter((employee:any)=>isEmployeeActive(employee)&&!isTestEmployee(employee));
+          const approvedWorkTimeChanges=(wt.data??[]).filter((x:any)=>x.status==="approved");
+          const hasPendingCorrectionForBadge=(employeeId:string)=>correctionRows.some((x:any)=>x.employee_id===employeeId&&x.status==="pending");
+          const attendanceCorrectionCandidateCount=[
+            ...badgeLogs
+              .filter((log:any)=>log?.check_in_time&&!log.check_out_time&&!pendingCorrectionLogIds.has(log.id))
+              .filter((log:any)=>{
+                const employee=activeEmployeesForBadge.find((item:any)=>item.id===log.employee_id);
+                if(!employee) return false;
+                const target=checkoutReminderTarget(log,employee,ov.data??[],c.data??[],approvedWorkTimeChanges,rq.data??[]);
+                return localDateStr(log.check_in_time)<todayIso() || (!!target&&Date.now()>target.getTime()+30*60000);
+              }),
+            ...activeEmployeesForBadge.filter((employee:any)=>{
+              if(todayLogByEmployee[employee.id]||hasPendingCorrectionForBadge(employee.id)) return false;
+              const workDate=todayIso();
+              const schedule=getScheduleForDate(employee,workDate,ov.data??[],approvedWorkTimeChanges);
+              const workday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(workDate)));
+              const startAt=kstDateTime(workDate,schedule.work_start??employee.work_start??"09:00");
+              return workday&&Date.now()>=startAt.getTime()+30*60000;
+            }),
+          ].length;
           setPendingCount(
-            (w.data??[]).filter((x:any)=>x.approval_status==="pending").length +
             (rq.data??[]).filter((x:any)=>x.status==="pending").length +
             actionableCompCount +
-            (d.data??[]).filter((x:any)=>x.status==="pending").length +
-            (wt.data??[]).filter((x:any)=>x.status==="pending").length +
-            (rr.error?0:(rr.data??[]).filter((x:any)=>x.status==="pending").length) +
-            (lg.data??[]).filter((x:any)=>{
-              const openToday=!x.check_out_time&&isToday(x.check_in_time);
-              if(x.status==="확인 완료"||openToday) return false;
-              return !x.check_out_time||["위치 확인 필요","기기 확인 필요","관리자 확인 필요","위치 정확도 낮음"].includes(x.status);
-            }).length
+            correctionRequestCount +
+            attendanceCorrectionCandidateCount
           );
         } else setPendingCount(0);
       } else {
@@ -3682,7 +3711,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
   const [kpiView,setKpiView]=useState<"daily"|"weekly"|"monthly">("daily");
-  const [draggingKpi,setDraggingKpi]=useState<{id:string,scope:"daily"|"weekly",sortOrder:number}|null>(null);
+  const [draggingKpi,setDraggingKpi]=useState<{id:string,scope:"daily"|"weekly"|"monthly",sortOrder:number}|null>(null);
   const [dropTargetId,setDropTargetId]=useState<string|null>(null);
   const [dropColTarget,setDropColTarget]=useState<"monthly"|"weekly"|"daily"|null>(null);
   const canvasRef=useRef<HTMLCanvasElement>(null);
@@ -4420,9 +4449,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           <canvas className="kpi-canvas" ref={canvasRef} />
           <div className="kpi-hierarchy-inner">
             {draggingKpi&&<div className="kpi-drag-hint">
-              {draggingKpi.scope==="daily"
-                ?"주간 카드에 드롭 → 연결 &nbsp;·&nbsp; 월간 열 하단 존에 드롭 → 스코프 변경"
-                :"월간 카드에 드롭 → 연결 &nbsp;·&nbsp; 데일리 열 하단 존에 드롭 → 스코프 변경"}
+              카드는 연결·정렬, 열 하단 존은 월간/주간/데일리 칸 이동
               &nbsp;·&nbsp; <kbd>Esc</kbd>로 취소
             </div>}
             <div className="kpi-hierarchy-grid">
@@ -4448,8 +4475,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   return (
                     <div
                       key={goal.id} data-kpi-id={goal.id}
-                      className={`kpi-h-node monthly linked${dropTargetId===goal.id?" drop-target":""}`}
+                      className={`kpi-h-node monthly linked${dropTargetId===goal.id?" drop-target":""}${draggingKpi?.id===goal.id?" dragging":""}`}
                       style={kpiLinkedStyle(goal)}
+                      draggable={canMoveKpi(goal)}
+                      onDragStart={canMoveKpi(goal)?e=>{e.stopPropagation();setDraggingKpi({id:goal.id,scope:"monthly",sortOrder:goal.sort_order??0});}:undefined}
+                      onDragEnd={canMoveKpi(goal)?()=>{setDraggingKpi(null);setDropTargetId(null);setDropColTarget(null);}:undefined}
                       onDragOver={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();setDropTargetId(goal.id);}:undefined}
                       onDragLeave={draggingKpi?.scope==="weekly"?()=>setDropTargetId(null):undefined}
                       onDrop={draggingKpi?.scope==="weekly"?e=>{e.preventDefault();linkKpi(draggingKpi.id,goal.id);}:undefined}
@@ -4470,13 +4500,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     </div>
                   );
                 }) : <p className="kpi-h-empty">{showDoneKpi?"월별 KPI를 추가하세요":"표시할 진행중 월별 KPI가 없습니다"}</p>}
-                {/* 스코프 변경 드롭존 - 주간 드래그 중일 때 */}
-                {draggingKpi?.scope==="weekly"&&<div
+                {draggingKpi&&draggingKpi.scope!=="monthly"&&<div
                   className={`kpi-scope-dropzone${dropColTarget==="monthly"?" active":""}`}
                   onDragOver={e=>{e.preventDefault();setDropColTarget("monthly");}}
                   onDragLeave={()=>setDropColTarget(null)}
                   onDrop={e=>{e.preventDefault();if(draggingKpi)changeScope(draggingKpi.id,"monthly");}}
-                >↑ 여기 드롭 → 월간으로 변경</div>}
+                >여기 드롭 → 월간으로 이동</div>}
               </div>
               </div>
 
@@ -4574,6 +4603,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     )}
                   </>);
                 })() : <p className="kpi-h-empty">{showDoneKpi?"주간 KPI를 추가하세요":"표시할 진행중 주간 KPI가 없습니다"}</p>}
+                {draggingKpi&&draggingKpi.scope!=="weekly"&&<div
+                  className={`kpi-scope-dropzone${dropColTarget==="weekly"?" active":""}`}
+                  onDragOver={e=>{e.preventDefault();setDropColTarget("weekly");}}
+                  onDragLeave={()=>setDropColTarget(null)}
+                  onDrop={e=>{e.preventDefault();if(draggingKpi)changeScope(draggingKpi.id,"weekly");}}
+                >여기 드롭 → 주간으로 이동</div>}
               </div>
               </div>
 
@@ -4659,13 +4694,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     )}
                   </>);
                 })() : <p className="kpi-h-empty">{showDoneKpi?`${selectedDailyDate} 데일리 KPI를 추가하세요`:`${selectedDailyDate}에 표시할 진행중 데일리 KPI가 없습니다`}</p>}
-                {/* 스코프 변경 드롭존 - 주간 드래그 중일 때 */}
-                {draggingKpi?.scope==="weekly"&&<div
+                {draggingKpi&&draggingKpi.scope!=="daily"&&<div
                   className={`kpi-scope-dropzone${dropColTarget==="daily"?" active":""}`}
                   onDragOver={e=>{e.preventDefault();setDropColTarget("daily");}}
                   onDragLeave={()=>setDropColTarget(null)}
                   onDrop={e=>{e.preventDefault();if(draggingKpi)changeScope(draggingKpi.id,"daily");}}
-                >↓ 여기 드롭 → 데일리로 변경</div>}
+                >여기 드롭 → 데일리로 이동</div>}
               </div>
               </div>
 
