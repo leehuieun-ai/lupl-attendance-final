@@ -9,10 +9,10 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel, exportWorkbookToXlsx } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "work-map" | "kpi" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "work-map" | "kpi" | "my-documents" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
 type KpiNavMode = "personal" | "admin";
 type NavMenuItem = {id:Tab;label:string;icon:string;badge?:number;kpiMode?:KpiNavMode};
-type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection" | "attendancePolicy";
+type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection" | "attendancePolicy" | "leaveRequest" | "compTimeRequest";
 
 const ADMIN_PERMISSION_LEVEL_RANK: Record<string, number> = { none: 0, read: 1, edit: 2, all: 3 };
 const ADMIN_PERMISSION_LEVELS = [
@@ -1616,6 +1616,7 @@ export default function App() {
     "team-schedule":"팀 일정",
     "work-map":"업무 분장표",
     kpi:"KPI",
+    "my-documents":"내 문서함",
     "admin-dashboard":"오늘 관리",
     approvals:"승인함",
     employees:"직원",
@@ -1634,6 +1635,7 @@ export default function App() {
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"team-schedule",label:"팀 일정",icon:"ti-calendar-week"},
     {id:"kpi",label:"내 KPI",icon:"ti-target-arrow",kpiMode:"personal"},
+    {id:"my-documents",label:"내 문서함",icon:"ti-file-certificate"},
   ];
   const adminMenus:NavMenuItem[]=[
     {id:"admin-dashboard",label:"오늘",icon:"ti-layout-dashboard"},
@@ -1708,6 +1710,7 @@ export default function App() {
           {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
           {tab==="work-map" && <PublicWorkMapPage currentEmployee={employee} />}
           {tab==="kpi" && <KpiDashboardPage currentEmployee={employee} mode={isAdmin?kpiNavMode:"personal"} />}
+          {tab==="my-documents" && <MyDocumentsPage employee={employee} />}
           {tab==="admin-dashboard" && adminCan(employee,"admin-dashboard","read") && <AdminPage currentEmployee={employee} onChanged={load} view="dashboard" onNavigate={go} />}
           {tab==="approvals" && adminCan(employee,"approvals","read") && <AdminPage currentEmployee={employee} onChanged={load} view="approvals" onNavigate={go} />}
           {tab==="employees" && adminCan(employee,"employees","read") && <AdminPage currentEmployee={employee} onChanged={load} view="employees" onNavigate={go} />}
@@ -10381,6 +10384,254 @@ const CONSENT_TERMS = [
   WORK_TIME_CONSENT_CHECK_TEXT,
 ];
 
+type SignedDocumentSelection = { employee:any; record:any; kind:SignedRecordKind };
+
+function signedRecordTitle(kind:SignedRecordKind){
+  if(kind==="privacy") return "개인정보 수집·이용 및 위치정보 동의서";
+  if(kind==="workTimeConsent") return "근무시간 변경 안내 확인서";
+  if(kind==="adminConfidentiality") return ADMIN_CONFIDENTIALITY_NOTICE_TEXT;
+  if(kind==="attendanceCorrection") return "출퇴근 기록 정정 확인서";
+  if(kind==="attendancePolicy") return "근태 기준 확인서";
+  if(kind==="leaveRequest") return "휴가 신청 및 처리 내역서";
+  if(kind==="compTimeRequest") return "추가근무 신청 및 처리 내역서";
+  return "근로시간 변경 요청 및 합의서";
+}
+function signedRecordBody(kind:SignedRecordKind,record:any){
+  if(kind==="privacy") {
+    const body=[
+      "주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.",
+      "위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.",
+      "수집 정보는 근태 확인, 임금·휴가 정산, 분쟁 대응 등 필요한 범위에서 보관되고, 보유기간 경과 또는 목적 달성 후 관련 법령과 회사 보존 기준에 따라 파기됩니다.",
+      ...CONSENT_TERMS,
+    ];
+    if(record.consent_version===PRIVACY_CONSENT_VERSION) body.push(OVERTIME_COMP_DETAIL_TEXT, WORK_TIME_CONSENT_TEXT, WORK_TIME_DETAIL_TEXT);
+    return body;
+  }
+  if(kind==="workTimeConsent") return [record.notice_text??WORK_TIME_CONSENT_TEXT, record.detail_text??WORK_TIME_DETAIL_TEXT];
+  if(kind==="adminConfidentiality") return [record.notice_text??ADMIN_CONFIDENTIALITY_NOTICE_TEXT, record.detail_text??ADMIN_CONFIDENTIALITY_DETAIL_TEXT];
+  if(kind==="attendancePolicy") {
+    const detailLines=Array.isArray(record.detail_text)
+      ? record.detail_text
+      : String(record.detail_text??ATTENDANCE_RULE_DETAIL_TEXT).split("\n");
+    return [record.notice_text??"근태 기준 안내", ...detailLines];
+  }
+  if(kind==="attendanceCorrection") return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
+  if(kind==="leaveRequest") {
+    return [
+      `신청 유형: ${leaveTypeDisplayLabel(record)}`,
+      `신청 기간: ${leaveRequestTimeLabel(record)}`,
+      `환산 기준: ${record.amount_days!=null&&!isCompLeaveUsageRequest(record)?`${formatHourValue(record.amount_days)}일`:record.amount_hours!=null?`${formatHourValue(record.amount_hours)}시간`:"-"}`,
+      `처리 상태: ${statusLabel(record.status)}`,
+      `신청 사유: ${record.reason||"-"}`,
+      record.review_note?`관리자 확인: ${record.review_note}`:"",
+      `휴가 차감 기준: ${leaveDeductionLabel(record)}`,
+    ].filter(Boolean);
+  }
+  if(kind==="compTimeRequest") {
+    return [
+      `근무일: ${record.work_date??"-"}`,
+      `추가근무 시간: ${String(record.start_time??"").slice(0,5)||"-"} ~ ${String(record.end_time??"").slice(0,5)||"-"}`,
+      `신청 시간: ${formatHourValue(record.hours||0)}시간`,
+      `보상휴가 적립 기준: ${formatHourValue(Number(record.converted_days||0)*8)}시간`,
+      `처리 상태: ${statusLabel(record.status)}`,
+      `신청 사유: ${record.reason||"-"}`,
+      record.review_note?`관리자 확인: ${record.review_note}`:"",
+    ].filter(Boolean);
+  }
+  const lines=String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
+  const isNoWork=(Array.isArray(record.new_work_days)&&record.new_work_days.length===0)||Number(record.weekly_work_hours||0)===0;
+  if(!isNoWork) return lines;
+  let inAfter=false;
+  return lines.flatMap(line=>{
+    if(line.startsWith("2. ")) inAfter=true;
+    if(line.startsWith("3. ")) inAfter=false;
+    if(!inAfter) return [line];
+    if(line.startsWith("- 근무요일:")) return ["- 근무요일: 출근하지 않음"];
+    if(line.startsWith("- 근무시간:")) return ["- 근무시간: 해당 기간 출근하지 않음"];
+    if(line.startsWith("- 휴게시간:")) return [];
+    return [line];
+  });
+}
+function signedRecordStatus(kind:SignedRecordKind,record:any){
+  if(["privacy","workTimeConsent","adminConfidentiality","attendancePolicy"].includes(kind)) return "서명 완료";
+  if(kind==="attendanceCorrection") return attendanceCorrectionStatusLabel(record.status);
+  if(kind==="leaveRequest"||kind==="compTimeRequest") return statusLabel(record.status);
+  return record.status==="pending"?"승인 대기":record.status==="approved"?"승인":record.status==="rejected"?"반려":"-";
+}
+function signedRecordDate(record:any){
+  return record.signed_at??record.reviewed_at??record.updated_at??record.created_at;
+}
+function signedRecordVersion(record:any){
+  return record.consent_version??record.legal_notice_version??"-";
+}
+function signedRecordDocNo(kind:SignedRecordKind,record:any){
+  const id=String(record.id??record.created_at??Date.now()).replace(/[^a-zA-Z0-9]/g,"").slice(0,8)||String(Date.now()).slice(-8);
+  return `LUPL-${String(kind).replace(/[A-Z]/g,m=>`-${m}`).toUpperCase()}-${id}`;
+}
+function signedRecordMetaRows(record:any,kind:SignedRecordKind){
+  const rows=[
+    {label:"문서버전",value:signedRecordVersion(record)},
+    {label:"상태",value:signedRecordStatus(kind,record)},
+  ];
+  if(record.work_date) rows.push({label:"근무일",value:record.work_date});
+  if(record.start_date) rows.push({label:"기간",value:leaveRequestTimeLabel(record)});
+  if(record.device_info?.platform) rows.push({label:"기기",value:record.device_info.platform});
+  return rows;
+}
+function signedRecordSummary(kind:SignedRecordKind,record:any){
+  if(kind==="attendanceCorrection") return `${record.work_date??"-"} · ${attendanceCorrectionTypeLabel(record.correction_type)} · ${attendanceCorrectionTimeLine(record)}`;
+  if(kind==="workTimeRequest") return `${workChangePeriodLabel(record)} · ${workChangeKind(record)}`;
+  if(kind==="leaveRequest") return `${leaveTypeDisplayLabel(record)} · ${leaveRequestTimeLabel(record)}`;
+  if(kind==="compTimeRequest") return `${record.work_date??"-"} · ${formatHourValue(record.hours||0)}시간`;
+  return `${signedRecordVersion(record)} · ${formatDateTime(signedRecordDate(record))}`;
+}
+function printSignedDocument(employee:any,record:any,kind:SignedRecordKind,setMessage?:(message:string)=>void){
+  const signature=String(record.signature_data??"").startsWith("data:image/")?record.signature_data:"";
+  const title=signedRecordTitle(kind);
+  const body=signedRecordBody(kind,record);
+  const bodyHtml=[
+    `<p>${body.map(line=>escapeHtml(line)).join("<br>")}</p>`,
+    `<table class="consent-table"><tbody>`,
+    `<tr><th>제목</th><td>${escapeHtml(title)}</td></tr>`,
+    `<tr><th>상태</th><td>${escapeHtml(signedRecordStatus(kind,record))}</td></tr>`,
+    `<tr><th>작성·서명 일시</th><td>${escapeHtml(formatDateTime(signedRecordDate(record)))}</td></tr>`,
+    `</tbody></table>`,
+  ].join("");
+  const ok=openOfficialPrintWindow({
+    title,
+    docNo:signedRecordDocNo(kind,record),
+    employee,
+    bodyHtml,
+    signatureData:signature,
+    metaRows:signedRecordMetaRows(record,kind),
+    footerText:signature?`${employee.name} 전자서명 완료`:`${employee.name} 신청·처리 기록`,
+    confirmDate:formatDateTime(signedRecordDate(record)),
+  });
+  if(!ok) setMessage?.("인쇄 창이 차단되었습니다. 브라우저의 팝업 차단을 해제해주세요.");
+}
+function OfficialDocumentPreview({employee,record,kind}:{employee:any;record:any;kind:SignedRecordKind}) {
+  const title=signedRecordTitle(kind);
+  const signature=String(record.signature_data??"").startsWith("data:image/")?record.signature_data:"";
+  const rows=[
+    {label:"문서번호",value:signedRecordDocNo(kind,record)},
+    {label:"작성·서명 일시",value:formatDateTime(signedRecordDate(record))},
+    {label:"대상자",value:`${employee.name??"-"} (${employee.employee_no??"-"})`},
+    {label:"소속/직책",value:[employee.department,employee.position].filter(Boolean).join(" / ")||"-"},
+    ...signedRecordMetaRows(record,kind),
+  ];
+  return <article className="official-document-preview">
+    <div className="official-document-mark">주식회사 러플 공식 문서</div>
+    <h3>{title}</h3>
+    <dl className="official-document-meta">
+      {rows.map((row,index)=><div key={`${row.label}-${index}`}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}
+    </dl>
+    <div className="official-document-section-title">본문</div>
+    <div className="official-document-body">{signedRecordBody(kind,record).map((line,index)=><p key={index}>{line}</p>)}</div>
+    <div className="official-document-section-title">동의 및 확인</div>
+    <table className="official-document-table"><tbody><tr><th>전자서명</th><td>{signature?"대상자가 위 내용을 확인하고 전자서명했습니다.":"전자서명이 없는 신청·처리 기록입니다."}</td></tr><tr><th>회사 확인</th><td>시스템 저장 기록과 관리자 확인란을 함께 보관합니다.</td></tr></tbody></table>
+    <div className="official-document-sign-grid">
+      <div><b>대상자 서명</b><div className="official-document-signature">{signature?<img src={signature} alt={`${employee.name} 전자서명`} />:<span>전자서명 이미지 없음</span>}</div></div>
+      <div><b>회사 확인</b><div className="official-document-seal" dangerouslySetInnerHTML={{__html:companySealHtml()}} /></div>
+    </div>
+  </article>;
+}
+
+function MyDocumentsPage({ employee }: { employee:any }) {
+  const [privacyConsents,setPrivacyConsents]=useState<any[]>([]);
+  const [workTimeConsents,setWorkTimeConsents]=useState<any[]>([]);
+  const [workTimeRequests,setWorkTimeRequests]=useState<any[]>([]);
+  const [attendanceCorrections,setAttendanceCorrections]=useState<any[]>([]);
+  const [leaveRequests,setLeaveRequests]=useState<any[]>([]);
+  const [compRequests,setCompRequests]=useState<any[]>([]);
+  const [selected,setSelected]=useState<SignedDocumentSelection|null>(null);
+  const [filter,setFilter]=useState("all");
+  const [message,setMessage]=useState("");
+
+  async function load(){
+    const [privacyResult,workConsentResult,workRequestResult,correctionResult,leaveResult,compResult]=await Promise.all([
+      supabase.from("privacy_consents").select("*").eq("employee_id",employee.id).order("created_at",{ascending:false}),
+      supabase.from("work_time_change_consents").select("*").eq("employee_id",employee.id).order("created_at",{ascending:false}),
+      supabase.from("work_time_change_requests").select("*").eq("employee_id",employee.id).order("created_at",{ascending:false}).limit(100),
+      supabase.from("attendance_correction_requests").select("*").eq("employee_id",employee.id).order("created_at",{ascending:false}).limit(100),
+      supabase.from("attendance_requests").select("*").eq("employee_id",employee.id).order("created_at",{ascending:false}).limit(100),
+      supabase.from("comp_time_requests").select("*").eq("employee_id",employee.id).order("created_at",{ascending:false}).limit(100),
+    ]);
+    const errors=[privacyResult.error,workConsentResult.error,workRequestResult.error,correctionResult.error,leaveResult.error,compResult.error].filter(Boolean);
+    setMessage(errors.length?`문서함 일부를 불러오지 못했습니다. ${errors.map((error:any)=>friendlySignatureDbError(error)).join(" / ")}`:"");
+    setPrivacyConsents(privacyResult.data??[]);
+    setWorkTimeConsents(workConsentResult.data??[]);
+    setWorkTimeRequests(workRequestResult.data??[]);
+    setAttendanceCorrections(correctionResult.error?[]:correctionResult.data??[]);
+    setLeaveRequests(leaveResult.data??[]);
+    setCompRequests(compResult.data??[]);
+  }
+  useEffect(()=>{load();},[employee.id]);
+
+  const documents=[
+    ...privacyConsents.map(record=>({kind:"privacy" as SignedRecordKind,record,category:"동의서"})),
+    ...workTimeConsents.map(record=>({
+      kind:record.consent_version===ADMIN_CONFIDENTIALITY_CONSENT_VERSION?"adminConfidentiality" as SignedRecordKind:record.consent_version===ATTENDANCE_RULE_CONSENT_VERSION?"attendancePolicy" as SignedRecordKind:"workTimeConsent" as SignedRecordKind,
+      record,
+      category:"동의서",
+    })),
+    ...workTimeRequests.map(record=>({kind:"workTimeRequest" as SignedRecordKind,record,category:"근무 변경"})),
+    ...attendanceCorrections.map(record=>({kind:"attendanceCorrection" as SignedRecordKind,record,category:"출퇴근 정정"})),
+    ...leaveRequests.map(record=>({kind:"leaveRequest" as SignedRecordKind,record,category:"휴가"})),
+    ...compRequests.map(record=>({kind:"compTimeRequest" as SignedRecordKind,record,category:"추가근무"})),
+  ].sort((a,b)=>String(signedRecordDate(b.record)??"").localeCompare(String(signedRecordDate(a.record)??"")));
+  const filters=[
+    {key:"all",label:"전체",rows:documents},
+    {key:"signed",label:"서명 문서",rows:documents.filter(item=>!!item.record.signature_data||["privacy","workTimeConsent","adminConfidentiality","attendancePolicy"].includes(item.kind))},
+    {key:"correction",label:"출퇴근 정정",rows:documents.filter(item=>item.kind==="attendanceCorrection")},
+    {key:"leave",label:"휴가",rows:documents.filter(item=>item.kind==="leaveRequest")},
+    {key:"requests",label:"신청 내역",rows:documents.filter(item=>["leaveRequest","compTimeRequest","workTimeRequest"].includes(item.kind))},
+  ];
+  const visibleDocuments=filter==="all"?documents:filters.find(item=>item.key===filter)?.rows??documents;
+  return <div className="grid">
+    {message&&<div className="alert error">{message}</div>}
+    <section className="card my-documents-hero">
+      <div>
+        <h2 className="card-title"><i className="ti ti-file-certificate" aria-hidden="true"></i>내 문서함</h2>
+        <p className="subtle">내가 서명했거나 신청한 근태 문서를 한 곳에서 확인하고 공식 문서 양식으로 저장·인쇄할 수 있습니다.</p>
+      </div>
+      <button className="button ghost compact" onClick={load}><i className="ti ti-refresh" aria-hidden="true"></i>새로고침</button>
+    </section>
+    <section className="card">
+      <div className="consent-status-grid">
+        {filters.map(group=><button className={`consent-status-card ${filter===group.key?"active":""}`} key={group.key} onClick={()=>setFilter(group.key)}>
+          <b>{group.label}</b>
+          <strong>{group.rows.length}건</strong>
+        </button>)}
+      </div>
+      <div className="document-list">
+        {visibleDocuments.map(item=>{
+          const key=`${item.kind}-${item.record.id??item.record.created_at}`;
+          return <article className="document-list-row" key={key}>
+            <div>
+              <span>{item.category}</span>
+              <b>{signedRecordTitle(item.kind)}</b>
+              <small>{signedRecordSummary(item.kind,item.record)}</small>
+              <em>{signedRecordStatus(item.kind,item.record)} · {formatDateTime(signedRecordDate(item.record))}</em>
+            </div>
+            <div className="actions">
+              <button className="button secondary compact" onClick={()=>setSelected({employee,record:item.record,kind:item.kind})}><i className="ti ti-eye" aria-hidden="true"></i>보기</button>
+              <button className="button ghost compact" onClick={()=>printSignedDocument(employee,item.record,item.kind,setMessage)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF</button>
+            </div>
+          </article>;
+        })}
+        {visibleDocuments.length===0&&<p className="subtle">표시할 문서가 없습니다.</p>}
+      </div>
+    </section>
+    {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}>
+      <div className="modal-box consent-modal" onClick={event=>event.stopPropagation()}>
+        <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-file-certificate" aria-hidden="true"></i>{signedRecordTitle(selected.kind)}</h2><button className="modal-close" title="닫기" onClick={()=>setSelected(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
+        <OfficialDocumentPreview employee={selected.employee} record={selected.record} kind={selected.kind} />
+        <div className="actions" style={{justifyContent:"flex-end",marginTop:16}}><button className="button ghost" onClick={()=>setSelected(null)}>닫기</button><button className="button" onClick={()=>printSignedDocument(selected.employee,selected.record,selected.kind,setMessage)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF 저장·인쇄</button></div>
+      </div>
+    </div>}
+  </div>;
+}
+
 function ConsentReportPage() {
   const [employees,setEmployees]=useState<any[]>([]);
   const [consents,setConsents]=useState<any[]>([]);
@@ -10453,77 +10704,10 @@ function ConsentReportPage() {
   ];
   const filteredAttendanceCorrections=correctionFilter==="all"?visibleAttendanceCorrections:visibleAttendanceCorrections.filter((request:any)=>request.status===correctionFilter);
 
-  function signedTitle(kind:SignedRecordKind){
-    if(kind==="privacy") return "개인정보 수집·이용 및 위치정보 동의서";
-    if(kind==="workTimeConsent") return "근무시간 변경 안내 확인서";
-    if(kind==="adminConfidentiality") return ADMIN_CONFIDENTIALITY_NOTICE_TEXT;
-    if(kind==="attendanceCorrection") return "출퇴근 기록 정정 확인서";
-    if(kind==="attendancePolicy") return "근태 기준 확인서";
-    return "근로시간 변경 요청 및 합의서";
-  }
-  function signedBody(kind:SignedRecordKind,record:any){
-    if(kind==="privacy") {
-      const body=[
-        "주식회사 러플(LUPL)은 근태 관리를 위해 개인정보 및 위치정보를 수집·이용합니다.",
-        "위치정보는 출근 또는 퇴근 버튼을 누르는 순간에만 1회 수집되며, 실시간 위치 추적은 하지 않습니다.",
-        "수집 정보는 근태 확인, 임금·휴가 정산, 분쟁 대응 등 필요한 범위에서 보관되고, 보유기간 경과 또는 목적 달성 후 관련 법령과 회사 보존 기준에 따라 파기됩니다.",
-        ...CONSENT_TERMS,
-      ];
-      if(record.consent_version===PRIVACY_CONSENT_VERSION) body.push(OVERTIME_COMP_DETAIL_TEXT, WORK_TIME_CONSENT_TEXT, WORK_TIME_DETAIL_TEXT);
-      return body;
-    }
-    if(kind==="workTimeConsent") return [record.notice_text??WORK_TIME_CONSENT_TEXT, record.detail_text??WORK_TIME_DETAIL_TEXT];
-    if(kind==="adminConfidentiality") return [record.notice_text??ADMIN_CONFIDENTIALITY_NOTICE_TEXT, record.detail_text??ADMIN_CONFIDENTIALITY_DETAIL_TEXT];
-    if(kind==="attendancePolicy") {
-      const detailLines=Array.isArray(record.detail_text)
-        ? record.detail_text
-        : String(record.detail_text??ATTENDANCE_RULE_DETAIL_TEXT).split("\n");
-      return [record.notice_text??"근태 기준 안내", ...detailLines];
-    }
-    if(kind==="attendanceCorrection") return String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
-    const lines=String(record.document_text??"저장된 문서 내용이 없습니다.").split("\n");
-    const isNoWork=(Array.isArray(record.new_work_days)&&record.new_work_days.length===0)||Number(record.weekly_work_hours||0)===0;
-    if(!isNoWork) return lines;
-    let inAfter=false;
-    return lines.flatMap(line=>{
-      if(line.startsWith("2. ")) inAfter=true;
-      if(line.startsWith("3. ")) inAfter=false;
-      if(!inAfter) return [line];
-      if(line.startsWith("- 근무요일:")) return ["- 근무요일: 출근하지 않음"];
-      if(line.startsWith("- 근무시간:")) return ["- 근무시간: 해당 기간 출근하지 않음"];
-      if(line.startsWith("- 휴게시간:")) return [];
-      return [line];
-    });
-  }
+  const signedTitle=signedRecordTitle;
+  const signedBody=signedRecordBody;
   function printSignedRecord(employee:any,record:any,kind:SignedRecordKind){
-    const signature=String(record.signature_data??"").startsWith("data:image/")?record.signature_data:"";
-    const title=signedTitle(kind);
-    const body=signedBody(kind,record);
-    const version=record.consent_version??record.legal_notice_version??"-";
-    const status=kind==="attendanceCorrection" ? attendanceCorrectionStatusLabel(record.status) : record.status==="pending"?"승인 대기":record.status==="approved"?"승인":record.status==="rejected"?"반려":"-";
-    const bodyHtml=[
-      `<p>${body.map(line=>escapeHtml(line)).join("<br>")}</p>`,
-      `<table class="consent-table"><tbody>`,
-      `<tr><th>제목</th><td>${escapeHtml(title)}</td></tr>`,
-      `<tr><th>상태</th><td>${escapeHtml(status)}</td></tr>`,
-      `<tr><th>서명 일시</th><td>${escapeHtml(formatDateTime(record.signed_at??record.created_at))}</td></tr>`,
-      `</tbody></table>`,
-    ].join("");
-    const ok=openOfficialPrintWindow({
-      title,
-      docNo:`LUPL-${String(kind).toUpperCase()}-${String(record.id??record.created_at??Date.now()).slice(0,8)}`,
-      employee,
-      bodyHtml,
-      signatureData:signature,
-      metaRows:[
-        {label:"문서버전",value:version},
-        {label:"상태",value:status},
-        {label:"기기",value:record.device_info?.platform??"-"},
-      ],
-      footerText:`${employee.name} 전자서명 완료`,
-      confirmDate:formatDateTime(record.signed_at??record.created_at),
-    });
-    if(!ok) setMessage("인쇄 창이 차단되었습니다. 브라우저의 팝업 차단을 해제해주세요.");
+    printSignedDocument(employee,record,kind,setMessage);
   }
   async function deleteRejectedWorkTimeRequest(request:any) {
     if(request.status!=="rejected") return setMessage("반려된 근무시간 변경 요청만 삭제할 수 있습니다.");
@@ -10641,11 +10825,7 @@ function ConsentReportPage() {
     {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}>
       <div className="modal-box consent-modal" onClick={e=>e.stopPropagation()}>
         <div className="modal-header"><h2 className="card-title" style={{margin:0}}><i className="ti ti-file-certificate" aria-hidden="true"></i>{selected.employee.name} {signedTitle(selected.kind)}</h2><button className="modal-close" title="닫기" onClick={()=>setSelected(null)}><i className="ti ti-x" aria-hidden="true"></i></button></div>
-        <div className="consent-preview">
-          <dl><div><dt>사번</dt><dd>{selected.employee.employee_no}</dd></div><div><dt>서명 일시</dt><dd><SignedAt value={selected.record.created_at} /></dd></div><div><dt>버전</dt><dd>{selected.record.consent_version??selected.record.legal_notice_version??"-"}</dd></div></dl>
-          <div className="type-desc">{signedBody(selected.kind,selected.record).map((line,index)=><p key={index} style={{margin:index===0?0:"8px 0 0",whiteSpace:"pre-wrap"}}>{line}</p>)}</div>
-          <div className="consent-signature"><span>전자 서명</span>{selected.record.signature_data?<img src={selected.record.signature_data} alt={`${selected.employee.name} 전자 서명`} />:<p>서명 이미지가 없습니다.</p>}</div>
-        </div>
+        <OfficialDocumentPreview employee={selected.employee} record={selected.record} kind={selected.kind} />
         <div className="actions" style={{justifyContent:"flex-end",marginTop:16}}><button className="button ghost" onClick={()=>setSelected(null)}>닫기</button><button className="button" onClick={()=>printSignedRecord(selected.employee,selected.record,selected.kind)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>PDF 저장·인쇄</button></div>
       </div>
     </div>}
