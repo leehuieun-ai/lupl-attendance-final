@@ -1815,6 +1815,104 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
     if(!start||!end) return note||null;
     return [`[프로젝트기간:${start}~${end}]`,note].filter(Boolean).join("\n");
   }
+  function stripAssistantProjectPeriod(note?:string|null) {
+    return String(note??"").replace(/\[프로젝트기간:\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}\]\s*/,"").trim();
+  }
+  function mergeAssistantProjectPeriodNote(existingNote:any,payload:any) {
+    const start=safeIsoDate(payload.project_start);
+    const end=safeIsoDate(payload.project_end);
+    const incoming=stripAssistantProjectPeriod(payload.admin_note);
+    const existing=stripAssistantProjectPeriod(existingNote);
+    const body=[incoming,existing].filter(Boolean).join("\n");
+    if(!start||!end) return body||null;
+    return [`[프로젝트기간:${start}~${end}]`,body].filter(Boolean).join("\n");
+  }
+  function normalizeAssistantKpiText(value:any) {
+    return String(value??"")
+      .replace(/[‘’“”"']/g,"")
+      .replace(/기존\s*KPI/gi,"")
+      .replace(/프로젝트\s*기간/gi,"")
+      .replace(/기간\s*반영/gi,"")
+      .replace(/기간|반영|연결/g,"")
+      .replace(/[\s·~\-_/()[\]{}:.,]/g,"")
+      .toLowerCase();
+  }
+  function assistantKpiSearchTitle(action:any,payload:any) {
+    const raw=[payload.target_title,payload.existing_title,payload.kpi_title,payload.title,action.title]
+      .find(value=>String(value??"").trim());
+    return String(raw??"")
+      .replace(/[‘’“”"']/g,"")
+      .replace(/^기존\s*KPI\s*/i,"")
+      .replace(/\s*프로젝트\s*기간\s*/g," ")
+      .replace(/\s*기간\s*반영\s*$/g,"")
+      .replace(/\s+/g," ")
+      .trim();
+  }
+  function assistantKpiCandidates(action:any,payload:any,context:any) {
+    const searchTitle=assistantKpiSearchTitle(action,payload);
+    const searchKey=normalizeAssistantKpiText(searchTitle);
+    if(!searchKey) return [];
+    const searchWords=searchTitle.split(/\s+/).map(normalizeAssistantKpiText).filter(word=>word.length>=2);
+    const employeeIds=new Set((Array.isArray(payload.employee_ids)?payload.employee_ids:[payload.employee_id]).filter(Boolean));
+    return (context?.kpis??[])
+      .map((entry:any)=>{
+        const titleKey=normalizeAssistantKpiText(entry.title);
+        const noteKey=normalizeAssistantKpiText(entry.admin_note);
+        let score=0;
+        if(titleKey===searchKey) score+=100;
+        if(titleKey.includes(searchKey)||searchKey.includes(titleKey)) score+=80;
+        score+=searchWords.filter(word=>titleKey.includes(word)).length*16;
+        if(noteKey.includes(searchKey)) score+=18;
+        if(entry.scope==="monthly") score+=8;
+        if(employeeIds.size>0&&employeeIds.has(entry.employee_id)) score+=6;
+        return {entry,score};
+      })
+      .filter((item:any)=>item.score>=32)
+      .sort((a:any,b:any)=>b.score-a.score)
+      .slice(0,4);
+  }
+  function suggestAssistantKpiResolution(action:any,payload:any,context:any) {
+    const start=safeIsoDate(payload.project_start);
+    const end=safeIsoDate(payload.project_end);
+    const searchTitle=assistantKpiSearchTitle(action,payload)||String(action.title||"KPI").replace(/\s*기간\s*반영\s*$/,"").trim();
+    const candidates=assistantKpiCandidates(action,payload,context);
+    const choiceActions=candidates.map(({entry}:any)=>({
+      ...action,
+      id:`${action.id||"kpi"}-candidate-${entry.id}`,
+      title:`${entry.title}에 기간 반영`,
+      summary:start&&end ? `기존 KPI에 프로젝트 기간 ${start} ~ ${end}을 반영합니다.` : "기존 KPI를 선택해 반영합니다.",
+      permission:"admin",
+      payload:{...payload,child_id:entry.id,kpi_id:entry.id,title:entry.title,update_type:"project_period"},
+    }));
+    choiceActions.push({
+      id:`${action.id||"kpi"}-create-new`,
+      type:"create_kpi_entry",
+      title:"새 KPI로 만들기",
+      summary:start&&end ? `${searchTitle}을 ${start} ~ ${end} 기간의 월간 KPI로 새로 만듭니다.` : `${searchTitle}을 새 KPI로 만듭니다.`,
+      permission:action.permission==="employee"?"employee":"admin",
+      confidence:0.6,
+      needs_confirmation:true,
+      payload:{
+        scope:"monthly",
+        work_date:start ? monthStartIso(start.slice(0,7)) : undefined,
+        title:searchTitle,
+        employee_id:payload.employee_id,
+        employee_ids:payload.employee_ids,
+        parent_id:payload.parent_id||null,
+        mentor_employee_id:payload.mentor_employee_id||null,
+        project_start:start,
+        project_end:end,
+        description:payload.description||action.summary||"",
+        admin_note:payload.admin_note||"",
+      },
+    });
+    appendAssistant(
+      candidates.length>0
+        ? "연결할 KPI를 하나로 특정하지 못했어요. 아래 후보 중 맞는 항목만 눌러주세요."
+        : "연결할 기존 KPI 후보를 찾지 못했어요. 새 KPI로 만들지, 아니면 문구를 더 구체적으로 다시 알려줄지 선택해주세요.",
+      choiceActions,
+    );
+  }
   function defaultWorkDate(scope:string,payload:any={}) {
     const projectStart=safeIsoDate(payload.project_start);
     if(scope==="monthly"&&projectStart) return monthStartIso(projectStart.slice(0,7));
@@ -1850,7 +1948,12 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
     if(action.type==="create_schedule_event") return [employeeNameById(payload.employee_id),payload.start_date,payload.title].filter(Boolean).join(" · ");
     if(action.type==="create_daily_task") return [employeeNameById(payload.target_employee_id)||"전체",payload.task_date,payload.title].filter(Boolean).join(" · ");
     if(action.type==="create_kpi_entry") return [payload.scope,payload.work_date||payload.project_start,employeeNamesByIds(payload.employee_ids)||employeeNameById(payload.employee_id),payload.project_start&&payload.project_end?`${payload.project_start}~${payload.project_end}`:"",payload.title].filter(Boolean).join(" · ");
-    if(action.type==="link_existing_kpi") return `하위 ${payload.child_id||payload.kpi_id||"-"} → 상위 ${payload.parent_id||"없음"}`;
+    if(action.type==="link_existing_kpi") {
+      const start=safeIsoDate(payload.project_start);
+      const end=safeIsoDate(payload.project_end);
+      if(start&&end) return [payload.title||payload.kpi_title||payload.child_id||payload.kpi_id||"KPI",`${start}~${end}`].filter(Boolean).join(" · ");
+      return `하위 ${payload.child_id||payload.kpi_id||"-"} → 상위 ${payload.parent_id||"없음"}`;
+    }
     if(action.type==="create_rnr_entry") return [payload.department,payload.position,payload.title].filter(Boolean).join(" · ");
     if(action.type==="create_improvement") return String(payload.note||action.summary||"개선 요청").slice(0,120);
     return action.summary||"";
@@ -2057,11 +2160,30 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
           if(result.error) throw result.error;
         }
       } else if(action.type==="link_existing_kpi") {
-        const childId=payload.child_id||payload.kpi_id;
-        if(!childId) throw new Error("연결할 KPI가 없습니다.");
+        const childId=payload.child_id||payload.kpi_id||payload.target_kpi_id;
+        if(!childId) {
+          suggestAssistantKpiResolution(action,payload,context);
+          setActionStates(current=>({...current,[action.id]:"needs-choice"}));
+          return;
+        }
         const child=context.kpis?.find((item:any)=>item.id===childId);
         if(!isAdmin&&child?.employee_id!==employee.id) {
           await saveActionToImprovement(action,"본인 KPI가 아닌 연결 변경은 관리자 확인 필요");
+        } else if(safeIsoDate(payload.project_start)&&safeIsoDate(payload.project_end)) {
+          const projectStart=safeIsoDate(payload.project_start);
+          const projectEnd=safeIsoDate(payload.project_end);
+          const updatePayload={
+            work_date:monthStartIso(projectStart.slice(0,7)),
+            admin_note:mergeAssistantProjectPeriodNote(child?.admin_note,payload),
+            updated_by:employee.id,
+            updated_at:new Date().toISOString(),
+          };
+          let result=await supabase.from("kpi_entries").update(updatePayload).eq("id",childId);
+          if(result.error&&/admin_note|updated_by|schema cache/i.test(result.error.message)){
+            const {admin_note,updated_by,...fallbackPayload}=updatePayload;
+            result=await supabase.from("kpi_entries").update(fallbackPayload).eq("id",childId);
+          }
+          if(result.error) throw result.error;
         } else {
           let result=await supabase.from("kpi_entries").update({
             parent_id:payload.parent_id||null,
@@ -2131,7 +2253,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
 
   async function executeAll(actions:any[]) {
     for(const action of actions) {
-      if(actionStates[action.id]==="done"||actionStates[action.id]==="saved-improvement") continue;
+      if(["done","saved-improvement","needs-choice"].includes(actionStates[action.id])) continue;
       await executeAction(action,true);
     }
     appendAssistant("선택 가능한 항목을 모두 처리했습니다. 직접 반영이 어려운 항목은 개선함에 넣어놨어요.");
@@ -2149,8 +2271,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
       <button className="assistant-fab" title="AI 비서 열기 (Ctrl+Shift+A)" onClick={()=>setOpen(true)}>
         <i className="ti ti-sparkles" aria-hidden="true"></i>
       </button>
-      {open&&<div className="modal-backdrop assistant-backdrop" onClick={()=>setOpen(false)}>
-        <div className="modal-box assistant-modal" onClick={e=>e.stopPropagation()}>
+      {open&&<aside className="modal-box assistant-panel" aria-label="AI 비서 채팅">
           <div className="modal-header">
             <div>
               <h2 className="card-title" style={{margin:0}}><i className="ti ti-sparkles" aria-hidden="true"></i>AI 비서</h2>
@@ -2182,10 +2303,10 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
                       </div>
                       <button
                         className={`button compact ${actionAllowed(action)?"":"ghost"}`}
-                        disabled={busy||!!executingId||["done","saved-improvement"].includes(actionStates[action.id])}
+                        disabled={busy||!!executingId||["done","saved-improvement","needs-choice"].includes(actionStates[action.id])}
                         onClick={()=>executeAction(action)}
                       >
-                        {executingId===action.id?"처리 중":actionStates[action.id]==="done"?"완료":actionStates[action.id]==="saved-improvement"?"개선함 저장":actionAllowed(action)?"반영":"개선함으로"}
+                        {executingId===action.id?"처리 중":actionStates[action.id]==="done"?"완료":actionStates[action.id]==="saved-improvement"?"개선함 저장":actionStates[action.id]==="needs-choice"?"후보 선택":actionAllowed(action)?"반영":"개선함으로"}
                       </button>
                     </div>
                   ))}
@@ -2199,8 +2320,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
             <button className="button assistant-send" disabled={busy||!input.trim()} onClick={askAssistant}><i className="ti ti-send" aria-hidden="true"></i>보내기</button>
           </div>
           <p className="subtle" style={{marginTop:10}}>AI 비서는 바로 저장하지 않고 먼저 제안합니다. 반영 버튼을 누른 항목만 현재 계정 권한으로 저장됩니다.</p>
-        </div>
-      </div>}
+      </aside>}
     </>
   );
 }

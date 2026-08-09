@@ -110,6 +110,8 @@ function assistantPrompt({ input, context, employee, today }) {
     "- 프로젝트/사업/지원사업/캡스톤/운영 목표처럼 기간과 담당자가 있는 요청은 create_kpi_entry action을 만든다.",
     "- 담당자가 따로 나오지 않은 프로젝트/사업 요청도 create_kpi_entry action으로 만들고, 현재 로그인 직원을 employee_id로 넣는다.",
     "- 프로젝트형 KPI는 scope='monthly', work_date는 project_start가 속한 달의 1일, project_start/project_end를 payload에 넣는다.",
+    "- 기존 KPI의 기간/담당/메모를 바꾸는 요청이면 context.kpis에서 제목을 찾아 link_existing_kpi action을 만들고, payload.child_id에 해당 KPI id를 반드시 넣는다.",
+    "- 기존 KPI id를 확신할 수 없으면 child_id 없는 link_existing_kpi를 만들지 말고 ask_clarification 또는 create_kpi_entry 제안을 만든다.",
     "- 예: '예술창업도약지원사업은 프로젝트 시작일은 26년 5월부터 11월까지야. 담당자는 이희은 정유니야'라면 title='예술창업도약지원사업', scope='monthly', employee_ids=[이희은 id, 정유니 id], project_start='2026-05-01', project_end='2026-11-30'을 반환한다.",
     "- 일정/멘토링/회의/방문은 create_schedule_event, 오늘 확인해야 하는 실행 업무는 create_daily_task로 둔다.",
     "- 업무분장/R&R/담당/백업/민감 권한은 create_rnr_entry로 둔다.",

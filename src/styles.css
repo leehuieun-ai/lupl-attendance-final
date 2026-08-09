@@ -774,7 +774,15 @@ body { overflow-x: hidden; }
   .actions .button { justify-content: center; }
   .modal-box { max-width: min(400px, calc(100vw - 28px)); padding: 20px; border-radius: 20px; }
   .assistant-fab { right: 16px; bottom: 86px; width: 54px; height: 54px; }
-  .assistant-modal { max-width: calc(100vw - 24px); padding: 18px; }
+  .assistant-panel {
+    left: 12px;
+    right: 12px;
+    bottom: 150px;
+    width: auto;
+    max-height: calc(100vh - 180px);
+    padding: 16px;
+  }
+  .assistant-chat-log { max-height: min(46vh, 420px); }
   .assistant-message { max-width: 100%; }
   .assistant-action-card { grid-template-columns: 1fr; }
   .assistant-input-row { grid-template-columns: 1fr; }
@@ -1148,11 +1156,21 @@ body { overflow-x: hidden; }
 .assistant-fab i { font-size: 26px; }
 .improvement-modal { max-width: 520px; }
 .improvement-backdrop { z-index: 80; }
-.assistant-backdrop { z-index: 82; }
-.assistant-modal { max-width: min(880px, calc(100vw - 32px)); padding: 22px; }
+.assistant-panel {
+  position: fixed;
+  right: 22px;
+  bottom: 164px;
+  z-index: 82;
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 190px));
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 58px rgba(15,23,42,.22);
+}
 .assistant-scope-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
 .assistant-scope-row span { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #c7eadf; border-radius: 999px; background: #ecfdf5; color: #0f766e; padding: 7px 10px; font-size: 12px; font-weight: 850; }
-.assistant-chat-log { display: grid; gap: 12px; max-height: min(56vh, 560px); overflow-y: auto; padding: 4px 4px 12px; scrollbar-gutter: stable; }
+.assistant-chat-log { display: grid; gap: 12px; max-height: min(52vh, 430px); overflow-y: auto; padding: 4px 4px 12px; scrollbar-gutter: stable; }
 .assistant-message { max-width: 86%; border: 1px solid #dbe5f3; border-radius: 10px; padding: 12px; background: #fff; }
 .assistant-message.user { justify-self: end; background: #0f766e; border-color: #0f766e; color: #fff; }
 .assistant-message.assistant { justify-self: start; background: #f8fafc; }
@@ -2031,4 +2049,15 @@ body { overflow-x: hidden; }
   .monthly-calendar-cell { min-height: 68px; padding: 7px 5px; }
   .monthly-calendar-cell span { font-size: 11px; }
   .monthly-calendar-cell small { font-size: 9px; white-space: normal; }
+}
+
+@media (max-width: 640px) {
+  .assistant-panel {
+    left: 12px;
+    right: 12px;
+    bottom: 150px;
+    width: auto;
+    max-height: calc(100vh - 180px);
+    padding: 16px;
+  }
 }
