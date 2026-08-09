@@ -8833,7 +8833,19 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           ))}
         </div>
         <div className="employee-contract-grid">
-          <div><span>계약 유형</span><select className="select compact-select" value={selectedDetailEmployee.contract_type??"daily"} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{contract_type:e.target.value})}>{Object.entries(CONTRACT_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><small>{selectedDetailEmployee.contract_end?`${employeeContractStart(selectedDetailEmployee)} ~ ${selectedDetailEmployee.contract_end}`:`${employeeContractStart(selectedDetailEmployee)}부터`}</small></div>
+          <div>
+            <span>계약 유형</span>
+            <select className="select compact-select" value={selectedDetailEmployee.contract_type??"daily"} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{contract_type:e.target.value,contract_end:e.target.value==="fixed_term"?(selectedDetailEmployee.contract_end??null):null})}>{Object.entries(CONTRACT_LABELS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select>
+            <small>{selectedDetailEmployee.contract_type==="fixed_term"&&selectedDetailEmployee.contract_end?`${employeeContractStart(selectedDetailEmployee)} ~ ${selectedDetailEmployee.contract_end}`:`${employeeContractStart(selectedDetailEmployee)}부터`}</small>
+          </div>
+          {selectedDetailEmployee.contract_type==="fixed_term"&&<div className="employee-contract-period-card">
+            <span>기간제 근무 기간</span>
+            <div className="inline-date-edit">
+              <input className="input" type="date" value={employeeContractStart(selectedDetailEmployee)} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{work_start_date:e.target.value,contract_start:e.target.value})} />
+              <input className="input" type="date" value={selectedDetailEmployee.contract_end??""} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{contract_end:e.target.value||null})} />
+            </div>
+            <small>이 기간 밖 날짜는 주간 캘린더·월간 이슈·급여 예정시간에서 제외</small>
+          </div>}
           <div><span>근무 요일</span><div className="days-grid compact-days">{ALL_DAYS.map(day=><button key={day} type="button" className={`day-btn ${(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"]).includes(day)?"active":""}`} onClick={()=>updateEmployeeContract(selectedDetailEmployee,{work_days:toggleDay(selectedDetailEmployee.work_days??["mon","tue","wed","thu","fri"],day)})}>{DAY_LABELS[day]}</button>)}</div><small>일정·급여 계산에 반영</small></div>
           <div><span>근무 시간</span><div className="inline-time-edit"><input className="input" type="time" value={timeLabel(selectedDetailEmployee.work_start??"09:00")} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{work_start:e.target.value})} /><input className="input" type="time" value={timeLabel(selectedDetailEmployee.work_end??"18:00")} onChange={e=>updateEmployeeContract(selectedDetailEmployee,{work_end:e.target.value})} /></div><small>휴게 {timeRangeLabel(selectedBreakStart,selectedBreakEnd)}</small></div>
           <div><span>1일 실근무</span><b>{formatHourValue(selectedDailyHours)}시간</b><small>휴게시간 제외</small></div>
@@ -10664,7 +10676,7 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
   const baseAfterDeduction=Math.max(0,monthly-deduction);
   const ins=calcInsurance(baseAfterDeduction);
   const netPay=baseAfterDeduction-ins.employee;
-  const payrollSummaryRows=payrollBaseEmployees.slice().sort(sortEmployeesByEmployeeNo).map((employee:any)=>{
+  const payrollSummaryRows=payrollBaseEmployees.slice().map((employee:any)=>{
     const monthStats=payrollScheduledWorkStats(employee,month.start,month.end,overrides,approvedWorkTimeChanges,scheduleEvents);
     const savedMonthlyHours=Number(employee.monthly_standard_hours||0);
     const baseWeeklyDays=Number(employee.weekly_work_days||employee.work_days?.length||0);
@@ -10678,7 +10690,8 @@ function PayrollCard({ employees, absences, overrides, workTimeChanges, schedule
     const scheduledNetBase=Math.max(0,scheduledGrossPay-rowDeduction);
     const scheduledNetPay=scheduledNetBase?Math.max(0,scheduledNetBase-calcInsurance(scheduledNetBase).employee):0;
     return {employee,month:monthStats,monthlyStandardHours,monthlySalary,hourlyWage,scheduledGrossPay,scheduledNetPay,rowAbsentDays,rowDeduction};
-  }).filter((row:any)=>(Number(row.month?.hours||0)>0||Number(row.month?.days||0)>0)&&(isEmployeeActive(row.employee)||month.end<todayIso()));
+  }).filter((row:any)=>(Number(row.month?.hours||0)>0||Number(row.month?.days||0)>0)&&(isEmployeeActive(row.employee)||month.end<todayIso()))
+    .sort((a:any,b:any)=>Number(b.hourlyWage||0)-Number(a.hourlyWage||0)||sortEmployeesByEmployeeNo(a.employee,b.employee));
   const payrollSummaryEmployeeIds=new Set(payrollSummaryRows.map((row:any)=>row.employee.id));
   const payrollSelectableEmployees=payrollBaseEmployees
     .filter((employee:any)=>isEmployeeActive(employee)||payrollSummaryEmployeeIds.has(employee.id))

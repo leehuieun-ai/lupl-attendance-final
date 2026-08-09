@@ -108,6 +108,7 @@ function assistantPrompt({ input, context, employee, today }) {
     "- 월만 있는 기간은 시작월 1일, 종료월 말일로 변환한다. 예: 26년 5월부터 11월까지 => 2026-05-01 ~ 2026-11-30.",
     "- 직원 이름이 여러 명 나오면 employees에서 정확히 매칭하고, KPI 담당자는 employee_ids 배열로 모두 넣는다.",
     "- 프로젝트/사업/지원사업/캡스톤/운영 목표처럼 기간과 담당자가 있는 요청은 create_kpi_entry action을 만든다.",
+    "- 담당자가 따로 나오지 않은 프로젝트/사업 요청도 create_kpi_entry action으로 만들고, 현재 로그인 직원을 employee_id로 넣는다.",
     "- 프로젝트형 KPI는 scope='monthly', work_date는 project_start가 속한 달의 1일, project_start/project_end를 payload에 넣는다.",
     "- 예: '예술창업도약지원사업은 프로젝트 시작일은 26년 5월부터 11월까지야. 담당자는 이희은 정유니야'라면 title='예술창업도약지원사업', scope='monthly', employee_ids=[이희은 id, 정유니 id], project_start='2026-05-01', project_end='2026-11-30'을 반환한다.",
     "- 일정/멘토링/회의/방문은 create_schedule_event, 오늘 확인해야 하는 실행 업무는 create_daily_task로 둔다.",
@@ -181,7 +182,6 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: OPENAI_MODEL,
-        temperature: 0.1,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: "너는 한국어 사내 운영 시스템 AI 비서다. 반드시 JSON만 반환한다." },

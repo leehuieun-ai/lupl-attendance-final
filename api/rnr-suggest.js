@@ -47,7 +47,6 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: OPENAI_MODEL,
-        temperature: 0.2,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: "너는 업무분장과 R&R을 간결하게 구조화하는 한국어 HR 운영 보조자다." },

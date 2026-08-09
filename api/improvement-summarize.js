@@ -33,7 +33,6 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: OPENAI_MODEL,
-        temperature: 0.15,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: "너는 소프트웨어 개선 요청을 실행 가능한 개발 작업으로 정리하는 한국어 PM이다." },
