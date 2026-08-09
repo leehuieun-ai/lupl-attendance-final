@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel, exportWorkbookToXlsx } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "work-map" | "kpi" | "my-documents" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "admin-settings";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "work-map" | "kpi" | "my-documents" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "ai-inquiries" | "admin-settings";
 type KpiNavMode = "personal" | "admin";
 type NavMenuItem = {id:Tab;label:string;icon:string;badge?:number;kpiMode?:KpiNavMode};
 type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection" | "attendancePolicy" | "leaveRequest" | "compTimeRequest";
@@ -33,6 +33,7 @@ const ADMIN_PERMISSION_MENUS: { id: Tab; label: string; description: string }[] 
   { id: "consents", label: "직원 동의서", description: "동의서 조회와 PDF 출력" },
   { id: "rnr", label: "업무 R&R", description: "조직도와 부서별 업무 관리" },
   { id: "improvements", label: "개선 요청함", description: "직원 피드백 접수와 처리 상태 관리" },
+  { id: "ai-inquiries", label: "AI 비서 문의 내역", description: "직원 AI 비서 질문과 답변 기록" },
   { id: "admin-settings", label: "권한 설정", description: "관리자별 메뉴 권한 부여" },
 ];
 const PAYROLL_FIXED_FIELDS = ["monthly","hourly","annual","weeklyDays","dailyHours","monthlyHours"];
@@ -1639,6 +1640,7 @@ export default function App() {
     reports:"리포트",
     consents:"동의서",
     improvements:"개선함",
+    "ai-inquiries":"AI 비서 문의 내역",
     "admin-settings":"권한 설정",
   };
   const personalMenus:NavMenuItem[]=[
@@ -1669,6 +1671,7 @@ export default function App() {
   const supportMenus:NavMenuItem[]=[
     {id:"work-map",label:"업무 분장표",icon:"ti-hierarchy-3"},
     {id:"improvements",label:"개선함",icon:"ti-notes"},
+    ...(isAdmin ? [{id:"ai-inquiries" as Tab,label:"AI 문의",icon:"ti-message-chatbot"}] : []),
   ];
   const visibleAdminMenus=adminMenus.filter(menu=>adminCan(employee,menu.id,"read"));
   const visibleReportMenus=reportMenus.filter(menu=>adminCan(employee,menu.id,"read"));
@@ -1733,6 +1736,7 @@ export default function App() {
           {tab==="reports" && adminCan(employee,"reports","read") && <ReportsPage />}
           {tab==="consents" && adminCan(employee,"consents","read") && <ConsentReportPage />}
           {tab==="improvements" && <ImprovementRequestsPage currentEmployee={employee} menuOptions={improvementMenuOptions} />}
+          {tab==="ai-inquiries" && isAdmin && <AIAssistantInquiryLogPage currentEmployee={employee} />}
           {tab==="admin-settings" && adminCan(employee,"admin-settings","all") && <AdminPermissionSettings currentEmployee={employee} onChanged={load} />}
         </main>
       </div>
@@ -1803,6 +1807,33 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
 
   function appendAssistant(text:string, actions:any[] = [], questions:string[] = []) {
     setMessages(current=>[...current,{id:`assistant-${Date.now()}-${Math.random()}`,role:"assistant",text,actions,questions}]);
+  }
+  async function saveAssistantInquiryLog(question:string, assistant:any, status="answered", errorMessage="") {
+    try {
+      const payload={
+        created_by:employee.id,
+        question,
+        response_text:String(assistant?.reply||errorMessage||"").trim()||"응답 없음",
+        status,
+        model:String(assistant?.model||"").trim()||null,
+        actions:Array.isArray(assistant?.actions)?assistant.actions:[],
+        followup_questions:Array.isArray(assistant?.questions)?assistant.questions:[],
+        page_context:{
+          tab:currentTab,
+          title:currentPageTitle,
+          menu_label:currentMenu?.label??currentPageTitle,
+          path:`${window.location.pathname}${window.location.hash}`,
+        },
+        error_message:errorMessage||null,
+        user_agent:navigator.userAgent,
+        viewport_width:window.innerWidth,
+        viewport_height:window.innerHeight,
+      };
+      const {error}=await supabase.from("ai_assistant_inquiries").insert(payload);
+      if(error) console.warn("AI assistant inquiry log skipped", error.message);
+    } catch(error) {
+      console.warn("AI assistant inquiry log skipped", error);
+    }
   }
   function safeIsoDate(value:any) {
     const text=String(value??"").slice(0,10);
@@ -2019,20 +2050,27 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
       const data=await response.json();
       if(!response.ok) throw new Error(data?.error||"AI 비서 응답을 받지 못했습니다.");
       const assistant=data.assistant??{};
+      void saveAssistantInquiryLog(text,{...assistant,model:data.model??assistant.model},"answered");
       appendAssistant(
         assistant.reply||"요청을 정리했습니다. 아래 항목을 확인해주세요.",
         Array.isArray(assistant.actions)?assistant.actions:[],
         Array.isArray(assistant.questions)?assistant.questions:[],
       );
     } catch(e:any) {
-      appendAssistant("지금은 바로 해석하지 못했습니다. 그래도 개선함에는 남길 수 있어요.", [{
+      const fallbackAssistant={
+        reply:"지금은 바로 해석하지 못했습니다. 그래도 개선함에는 남길 수 있어요.",
+        model:"local-fallback",
+        actions:[{
         id:`improvement-${Date.now()}`,
         type:"create_improvement",
         title:"AI 비서 오류/요청 개선함 기록",
         summary:e.message,
         permission:"employee",
         payload:{note:text},
-      }]);
+      }],
+      };
+      void saveAssistantInquiryLog(text,fallbackAssistant,"error",e.message);
+      appendAssistant(fallbackAssistant.reply, fallbackAssistant.actions);
     } finally {
       setBusy(false);
     }
@@ -3140,6 +3178,112 @@ function AdminConfidentialityModal({ employee, onDone }: { employee:any; onDone:
   );
 }
 
+function AIAssistantInquiryLogPage({ currentEmployee }: { currentEmployee:any }) {
+  const [rows,setRows]=useState<any[]>([]);
+  const [msg,setMsg]=useState("");
+  const [search,setSearch]=useState("");
+  const [statusFilter,setStatusFilter]=useState("all");
+  const [loading,setLoading]=useState(false);
+  async function load() {
+    setLoading(true);
+    const {data,error}=await supabase
+      .from("ai_assistant_inquiries")
+      .select("*, employees(name, employee_no, department, position)")
+      .order("created_at",{ascending:false})
+      .limit(400);
+    if(error) {
+      setRows([]);
+      setMsg(error.message.includes("ai_assistant_inquiries") ? "AI 비서 문의 기록 테이블이 아직 DB에 없습니다. Supabase 패치를 먼저 실행해주세요." : error.message);
+    } else {
+      setRows(data??[]);
+      setMsg("");
+    }
+    setLoading(false);
+  }
+  useEffect(()=>{load();},[]);
+  const query=search.trim().toLowerCase();
+  const filteredRows=rows.filter((row:any)=>{
+    const statusOk=statusFilter==="all"||row.status===statusFilter;
+    if(!statusOk) return false;
+    if(!query) return true;
+    const haystack=[row.question,row.response_text,row.page_context?.title,row.employees?.name,row.employees?.employee_no,row.employees?.department,row.employees?.position]
+      .filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(query);
+  });
+  const today=todayIso();
+  const todayCount=rows.filter(row=>String(row.created_at??"").slice(0,10)===today).length;
+  const errorCount=rows.filter(row=>row.status==="error").length;
+  const uniqueEmployees=new Set(rows.map(row=>row.created_by).filter(Boolean)).size;
+  function inquiryStatusLabel(status:string) {
+    return status==="error" ? "오류" : "응답 완료";
+  }
+  function inquiryActions(row:any) {
+    return Array.isArray(row.actions) ? row.actions : [];
+  }
+  function inquiryQuestions(row:any) {
+    return Array.isArray(row.followup_questions) ? row.followup_questions : [];
+  }
+  return (
+    <section className="card ai-inquiry-page">
+      <div className="section-head">
+        <div>
+          <h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-message-chatbot" aria-hidden="true"></i>AI 비서 문의 내역</h2>
+          <p className="subtle" style={{margin:0}}>직원들이 AI 비서에게 물어본 내용과 답변을 질문별 토글로 확인합니다.</p>
+        </div>
+        <button className="button secondary" onClick={load} disabled={loading}><i className="ti ti-refresh" aria-hidden="true"></i>{loading?"불러오는 중":"새로고침"}</button>
+      </div>
+      {msg&&<div className="alert error">{msg}</div>}
+      <div className="ai-inquiry-metrics">
+        <div><span>전체 문의</span><b>{rows.length}건</b></div>
+        <div><span>오늘 문의</span><b>{todayCount}건</b></div>
+        <div><span>문의 직원</span><b>{uniqueEmployees}명</b></div>
+        <div><span>오류 기록</span><b>{errorCount}건</b></div>
+      </div>
+      <div className="grid two">
+        <div className="form-row"><label className="label">검색</label><input className="input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="직원명, 질문, 답변 검색" /></div>
+        <div className="form-row"><label className="label">상태</label><select className="select" value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="all">전체</option><option value="answered">응답 완료</option><option value="error">오류</option></select></div>
+      </div>
+      <div className="ai-inquiry-list">
+        {filteredRows.length===0 ? <p className="body-text" style={{color:"#64748b"}}>조건에 맞는 AI 비서 문의 내역이 없습니다.</p> : filteredRows.map((row:any)=>(
+          <details className="ai-inquiry-toggle" key={row.id}>
+            <summary>
+              <div>
+                <b>{String(row.question??"문의 내용 없음").replace(/\s+/g," ").slice(0,80)}</b>
+                <span>{row.employees?.name??"직원"}{row.employees?.employee_no?` · ${row.employees.employee_no}`:""} · {formatDateTime(row.created_at)} · {inquiryStatusLabel(row.status)}</span>
+              </div>
+              <i className="ti ti-chevron-down" aria-hidden="true"></i>
+            </summary>
+            <div className="ai-inquiry-body">
+              <div className="ai-inquiry-meta">
+                <span>{row.employees?.department??"-"} · {row.employees?.position??"-"}</span>
+                <span>{row.page_context?.title??"화면 정보 없음"}</span>
+                {row.model&&<span>{row.model}</span>}
+              </div>
+              <div className="ai-inquiry-block">
+                <b>질문</b>
+                <p>{row.question}</p>
+              </div>
+              <div className="ai-inquiry-block answer">
+                <b>답변</b>
+                <p>{row.response_text}</p>
+              </div>
+              {row.error_message&&<div className="alert error">오류: {row.error_message}</div>}
+              {inquiryQuestions(row).length>0&&<div className="ai-inquiry-block">
+                <b>추가 확인 질문</b>
+                <ul>{inquiryQuestions(row).map((question:string,index:number)=><li key={index}>{question}</li>)}</ul>
+              </div>}
+              {inquiryActions(row).length>0&&<div className="ai-inquiry-block">
+                <b>생성된 실행 제안</b>
+                <ul>{inquiryActions(row).map((action:any,index:number)=><li key={action.id??index}><span>{action.title||action.type}</span>{action.summary?` · ${action.summary}`:""}</li>)}</ul>
+              </div>}
+            </div>
+          </details>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function AttendanceRuleConsentModal({ employee, onDone }: { employee:any; onDone:()=>void }) {
   const canvasRef=useRef<HTMLCanvasElement|null>(null);
   const [msg,setMsg]=useState("");
@@ -3333,6 +3477,13 @@ function HomePage({ employee }: { employee: any }) {
   const todoTargetLabel = todoTargetEmployeeId
     ? (todoEmployees.find((e:any)=>e.id===todoTargetEmployeeId)?.name??"선택 직원")
     : "전체 직원";
+  const displayTodayKpis=[...todayKpis].sort((a:any,b:any)=>{
+    const aDone=a.status==="done" ? 1 : 0;
+    const bDone=b.status==="done" ? 1 : 0;
+    if(aDone!==bDone) return aDone-bDone;
+    return (Number(a.sort_order)||0)-(Number(b.sort_order)||0)
+      || String(a.created_at||"").localeCompare(String(b.created_at||""));
+  });
   function todoTaskTargetLabel(task:any) {
     return task?.target_employee_id
       ? (todoEmployees.find((e:any)=>e.id===task.target_employee_id)?.name??"선택 직원")
@@ -4160,7 +4311,7 @@ function HomePage({ employee }: { employee: any }) {
         </div>
         {todayKpis.length>0 ? (
           <div className="kpi-today-list">
-            {todayKpis.map((entry:any,index:number)=>(
+            {displayTodayKpis.map((entry:any,index:number)=>(
               <div className={`kpi-today-row ${entry.status==="done"?"done":entry.status==="missed"?"missed":""}`} key={entry.id}>
                 <span>{index+1}</span>
                 <b>{entry.title}</b>
