@@ -897,8 +897,21 @@ function isImageAttachment(attachment:any) {
 }
 function timeLabel(time?: string | null) { return time ? String(time).slice(0,5) : "-"; }
 function timeRangeLabel(start?: string | null, end?: string | null) { return `${timeLabel(start)} ~ ${timeLabel(end)}`; }
-function employeeContractStart(employee:any) { return employee?.work_start_date ?? employee?.contract_start ?? employee?.joined_at ?? todayIso(); }
-function employeeContractEnd(employee:any) { return employee?.contract_end ?? null; }
+function employeeContractStart(employee:any) { return String(employee?.work_start_date ?? employee?.contract_start ?? employee?.joined_at ?? todayIso()).slice(0,10); }
+function employeeContractEnd(employee:any) {
+  const end=employee?.work_end_date ?? employee?.employment_end_date ?? employee?.contract_end ?? employee?.resigned_at ?? employee?.resignation_date ?? employee?.quit_date ?? employee?.ended_at ?? null;
+  return end ? String(end).slice(0,10) : null;
+}
+function employeeWorksOnDate(employee:any,dateIso:string) {
+  const start=employeeContractStart(employee);
+  const end=employeeContractEnd(employee);
+  return (!start||dateIso>=start)&&(!end||dateIso<=end);
+}
+function employeeWorksInDateRange(employee:any,startIso:string,endIso:string) {
+  const start=employeeContractStart(employee);
+  const end=employeeContractEnd(employee);
+  return (!start||endIso>=start)&&(!end||startIso<=end);
+}
 function employeeSeniorityValue(employee:any) { return String(employee?.work_start_date ?? employee?.joined_at ?? employee?.created_at ?? "9999-12-31").slice(0,10); }
 function sortEmployeesBySeniority(a:any,b:any) {
   return employeeSeniorityValue(a).localeCompare(employeeSeniorityValue(b)) || String(a?.name??"").localeCompare(String(b?.name??""));
@@ -1021,6 +1034,7 @@ function scheduleEventForDate(events:any[] = [], employee:any, dateIso:string){
 }
 function scheduleInfoForDateWithEvents(employee:any,dateIso:string,events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[]) {
   const schedule=getScheduleForDate(employee,dateIso,overrides,workTimeChanges);
+  if(!employeeWorksOnDate(employee,dateIso)) return {workday:false,start:schedule.work_start,end:schedule.work_end,hours:0,event:null,schedule,change:null};
   const change=approvedWorkTimeChangeForDate(workTimeChanges,employee,dateIso);
   const event=scheduleEventForDate(events,employee,dateIso);
   const eventOverridesSchedule=event&&!change;
@@ -1032,10 +1046,8 @@ function scheduleInfoForDateWithEvents(employee:any,dateIso:string,events:any[]=
   return {workday,start,end,hours,event,schedule,change};
 }
 function employeeHasWeekWork(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[]) {
-  const contractStart=employeeContractStart(employee);
-  const contractEnd=employee?.contract_type==="fixed_term" ? employeeContractEnd(employee) : null;
   return dates.some(date=>{
-    if((contractStart&&date<contractStart)||(contractEnd&&date>contractEnd)) return false;
+    if(!employeeWorksOnDate(employee,date)) return false;
     const event=scheduleEventForDate(events,employee,date);
     if(scheduleEventBlocksRoster(event)) return false;
     if(workTimeChangeBlocksRoster(workTimeChanges,employee,date)) return false;
@@ -1049,6 +1061,7 @@ function employeeHasWeekWork(employee:any,dates:string[],events:any[]=[],overrid
 function employeeHasWeekHistory(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[],leaveRequests:any[]=[],compTimeRequests:any[]=[]) {
   if(!employee?.id||dates.length===0) return false;
   const weekStart=dates[0], weekEnd=dates[dates.length-1];
+  if(!employeeWorksInDateRange(employee,weekStart,weekEnd)) return false;
   if(employeeHasWeekWork(employee,dates,events,overrides,workTimeChanges)) return true;
   if(events.some((event:any)=>event.employee_id===employee.id&&dateRangesOverlap(weekStart,weekEnd,event.start_date,event.end_date))) return true;
   if(leaveRequests.some((request:any)=>request.employee_id===employee.id&&request.status==="approved"&&dateRangesOverlap(weekStart,weekEnd,request.start_date,request.end_date))) return true;
@@ -1056,10 +1069,11 @@ function employeeHasWeekHistory(employee:any,dates:string[],events:any[]=[],over
 }
 function employeeVisibleInScheduleWeek(employee:any,dates:string[],events:any[]=[],overrides:any[]=[],workTimeChanges:any[]=[],leaveRequests:any[]=[],compTimeRequests:any[]=[]) {
   if(isTestEmployee(employee)) return false;
+  const rangeStart=dates[0]??todayIso();
+  const rangeEnd=dates[dates.length-1]??rangeStart;
+  if(!employeeWorksInDateRange(employee,rangeStart,rangeEnd)) return false;
   if(isEmployeeActive(employee)) {
     if(employeeHasWeekWork(employee,dates,events,overrides,workTimeChanges)) return true;
-    const contractEnd=employee?.contract_type==="fixed_term" ? employeeContractEnd(employee) : null;
-    if(contractEnd&&dates[0]&&dates[0]>contractEnd) return false;
     const blockedEveryDay=dates.length>0&&dates.every(date=>{
       const event=scheduleEventForDate(events,employee,date);
       return scheduleEventBlocksRoster(event)||workTimeChangeBlocksRoster(workTimeChanges,employee,date);
@@ -1075,9 +1089,7 @@ function approvedWorkTimeChangeForDate(changes:any[] = [], emp:any, dateIso:stri
 function getScheduleForDate(emp:any, dateIso:string, overrides:any[]=[], workTimeChanges:any[]=[]) {
   if(!emp) return {work_days:["mon","tue","wed","thu","fri"], work_start:"09:00", work_end:"18:00"};
   const baseDays=emp.work_days ?? ["mon","tue","wed","thu","fri"];
-  const contractStart=employeeContractStart(emp);
-  const contractEnd=emp.contract_type==="fixed_term" ? emp.contract_end : null;
-  if((contractStart&&dateIso<contractStart)||(contractEnd&&dateIso>contractEnd)) {
+  if(!employeeWorksOnDate(emp,dateIso)) {
     return {work_days:[], work_start:emp.work_start??"09:00", work_end:emp.work_end??"18:00", break_start:"12:00", break_end:"13:00"};
   }
   const change=approvedWorkTimeChangeForDate(workTimeChanges,emp,dateIso);
@@ -4117,6 +4129,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [goalDraft,setGoalDraft]=useState({scope:"monthly",employee_id:"",parent_id:"",title:""});
   const [quickDrafts,setQuickDrafts]=useState({monthly:"",weekly:"",daily:""});
   const [quickEmployeeId,setQuickEmployeeId]=useState(currentEmployee.id);
+  const [quickEmployeeIds,setQuickEmployeeIds]=useState<string[]>(isAdminView?[]:[currentEmployee.id]);
   const [quickMonthlyParentId,setQuickMonthlyParentId]=useState("");
   const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
   const [quickDailyDate,setQuickDailyDate]=useState(todayIso());
@@ -4126,6 +4139,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
   const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:"",employeeId:"",mentorEmployeeId:""});
   const [showDoneKpi,setShowDoneKpi]=useState(false);
+  const [lastKpiStatusChange,setLastKpiStatusChange]=useState<any|null>(null);
   const [kpiTreeGoal,setKpiTreeGoal]=useState<any|null>(null);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
@@ -4140,19 +4154,21 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const weekEnd=weekEndIso(today);
   const monthStart=monthStartIso(month);
   const monthEnd=monthEndIso(month);
+  const yearStart=`${month.slice(0,4)}-01-01`;
+  const yearEnd=`${month.slice(0,4)}-12-31`;
   const selectedDailyDate=quickDailyDate>=monthStart&&quickDailyDate<=monthEnd ? quickDailyDate : monthStart;
 
   async function load() {
     setMessage("");
     const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status,department,position").order("employee_no",{ascending:true});
     const [entryResult,employeeResult,rnrResult]=await Promise.all([
-      supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",monthStart).lte("work_date",monthEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true}),
+      supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",yearStart).lte("work_date",yearEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true}),
       isAdminView ? employeeQuery : employeeQuery.eq("id",currentEmployee.id),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
     ]);
     if(entryResult.error) setMessage("KPI 테이블이 아직 반영되지 않았습니다. Supabase SQL 패치를 먼저 실행해주세요.");
     const loadedEntries=entryResult.data??[];
-    setEntries(isAdminView ? loadedEntries : loadedEntries.filter((entry:any)=>entry.employee_id===currentEmployee.id || (!entry.employee_id&&entry.employee_name==="전체") || entry.created_by===currentEmployee.id));
+    setEntries(isAdminView ? loadedEntries : loadedEntries.filter((entry:any)=>entry.is_public!==false || entry.employee_id===currentEmployee.id || entry.created_by===currentEmployee.id));
     setEmployees(employeeResult.data??[]);
     setRnrEntries(rnrResult.data??[]);
   }
@@ -4160,9 +4176,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   useEffect(()=>{
     if(isAdminView) {
       setFocusEmployeeId("all");
+      setQuickEmployeeId("");
+      setQuickEmployeeIds([]);
     } else {
       setFocusEmployeeId(currentEmployee.id);
       setQuickEmployeeId(currentEmployee.id);
+      setQuickEmployeeIds([currentEmployee.id]);
     }
   },[currentEmployee.id,isAdminView]);
   useEffect(()=>{
@@ -4277,7 +4296,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const selectedDayEntries=dailyEntries.filter((entry:any)=>entry.work_date===selectedDailyDate);
   const weekDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
-  const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly");
+  const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&entry.work_date>=monthStart&&entry.work_date<=monthEnd);
   const selectedProject=focusProjectId==="all"?null:monthlyGoals.find((goal:any)=>goal.id===focusProjectId)??null;
   function personName(id?:string|null) {
     if(!id) return "전체";
@@ -4324,7 +4343,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return entry.status==="done"?100:0;
   }
   function entryMatchesFocus(entry:any) {
-    const employeeOk=focusEmployeeId==="all" || entry.employee_id===focusEmployeeId || (!entry.employee_id&&entry.employee_name==="전체");
+    const employeeOk=focusEmployeeId==="all" || entry.employee_id===focusEmployeeId || (!isAdminView&&entry.created_by===currentEmployee.id);
     const projectOk=focusProjectId==="all" || kpiRootId(entry)===focusProjectId || entry.id===focusProjectId || entry.parent_id===focusProjectId;
     const doneOk=showDoneKpi || entryProgress(entry)<100;
     return employeeOk&&projectOk&&doneOk;
@@ -4345,6 +4364,18 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const visibleMonthlyGoals=monthlyGoals.filter(entryMatchesFocus);
   const visibleWeeklyGoals=weeklyGoals.filter(entryMatchesFocus);
   const visibleDailyEntries=selectedDayEntries.filter(entryMatchesFocus);
+  const currentYear=Number(month.slice(0,4));
+  const currentMonthNumber=Number(month.slice(5,7));
+  const currentQuarter=Math.floor((currentMonthNumber-1)/3)+1;
+  const quarterMonths=Array.from({length:3},(_,index)=>(currentQuarter-1)*3+index+1);
+  const monthKeyFromNumber=(monthNumber:number)=>`${currentYear}-${String(monthNumber).padStart(2,"0")}`;
+  const yearMonthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&String(entry.work_date??"").startsWith(`${currentYear}-`));
+  const quarterMonthlyGoals=yearMonthlyGoals.filter((entry:any)=>quarterMonths.includes(Number(String(entry.work_date??"").slice(5,7))));
+  const roadmapMonths=quarterMonths.map(monthNumber=>{
+    const key=monthKeyFromNumber(monthNumber);
+    const goals=yearMonthlyGoals.filter((entry:any)=>String(entry.work_date??"").slice(0,7)===key);
+    return {key,monthNumber,goals,done:goals.filter((entry:any)=>entry.status==="done").length};
+  });
   const selectedProjectParticipants=Array.from(new Set(entries
     .filter((entry:any)=>selectedProject&&kpiRootId(entry)===selectedProject.id&&entry.employee_id)
     .map((entry:any)=>entry.employee_id)))
@@ -4363,9 +4394,27 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const rate=kpiCompletionRate(list);
     return {rate:rate??0,total:list.length,done:list.filter((entry:any)=>entry.status==="done").length};
   }
+  function setQuickTargets(ids:string[]) {
+    const unique=Array.from(new Set(ids.filter(Boolean)));
+    setQuickEmployeeIds(unique);
+    setQuickEmployeeId(unique[0]??"");
+  }
+  function toggleQuickEmployee(id:string) {
+    setQuickTargets(quickEmployeeIds.includes(id)?quickEmployeeIds.filter(item=>item!==id):[...quickEmployeeIds,id]);
+  }
+  function quickTargetEmployees() {
+    if(!isAdminView) return [currentEmployee];
+    return quickEmployeeIds.map(id=>employeeMap.get(id)??employees.find((employee:any)=>employee.id===id)).filter(Boolean);
+  }
   function quickTargetEmployee() {
-    const employeeId=isAdminView ? quickEmployeeId : currentEmployee.id;
-    return employeeId ? employees.find((employee:any)=>employee.id===employeeId) : null;
+    return quickTargetEmployees()[0]??null;
+  }
+  function quickTargetLabel() {
+    const targets=quickTargetEmployees();
+    if(!isAdminView) return currentEmployee.name;
+    if(targets.length===0) return "전체";
+    if(targets.length<=2) return targets.map((employee:any)=>employee.name).join(", ");
+    return `${targets[0].name} 외 ${targets.length-1}명`;
   }
   function relevantRnrEntries() {
     const target=quickTargetEmployee()??currentEmployee;
@@ -4416,14 +4465,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   async function insertKpiRows(scope:string, titles:string[], options:any={}) {
     if(titles.length===0) return;
-    const target=quickTargetEmployee();
-    const employeeId=target?.id ?? (isAdminView ? null : currentEmployee.id);
-    const employeeName=target?.name ?? (employeeId ? currentEmployee.name : "전체");
+    const targetEmployees=isAdminView ? quickTargetEmployees() : [currentEmployee];
+    const targetRows=targetEmployees.length>0 ? targetEmployees : [null];
     const workDate=scope==="monthly" ? monthStart : scope==="weekly" ? weekStart : selectedDailyDate;
     const parentId=scope==="weekly" ? (quickMonthlyParentId||null) : scope==="daily" ? (quickWeeklyParentId||null) : null;
-    const payloads=titles.map((title,index)=>({
-      employee_id:employeeId,
-      employee_name:employeeName,
+    const payloads=titles.flatMap((title,titleIndex)=>targetRows.map((target:any,rowIndex)=>({
+      employee_id:target?.id ?? null,
+      employee_name:target?.name ?? "전체",
       parent_id:parentId,
       scope,
       work_date:workDate,
@@ -4431,12 +4479,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       description:options.description??null,
       source_rnr_entry_id:options.source_rnr_entry_id??null,
       status:"pending",
-      sort_order:entries.filter((entry:any)=>entry.scope===scope).length+index+1,
+      sort_order:entries.filter((entry:any)=>entry.scope===scope).length+(titleIndex*targetRows.length)+rowIndex+1,
       is_public:true,
       is_active:true,
       created_by:currentEmployee.id,
       updated_by:currentEmployee.id,
-    }));
+    })));
     let result=await supabase.from("kpi_entries").insert(payloads);
     if(result.error&&/description|source_rnr_entry_id|updated_by|schema cache/i.test(result.error.message)){
       const fallbackPayloads=payloads.map(({description,source_rnr_entry_id,updated_by,...fallbackPayload}:any)=>fallbackPayload);
@@ -4474,6 +4522,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       }
       const {error}=result;
       if(error) throw error;
+      if(entry.status!==status) {
+        setLastKpiStatusChange({id:entry.id,title:entry.title,from:entry.status??"pending",to:status});
+      }
       await load();
       setMessage(status==="done"?"KPI를 완료 처리했습니다.":"KPI 상태를 변경했습니다.");
     } catch(e:any) {
@@ -4482,6 +4533,39 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setSaving(false);
     }
   }
+  async function restoreLastKpiStatus() {
+    if(!lastKpiStatusChange?.id||saving) return;
+    setSaving(true); setMessage("");
+    try {
+      let result=await supabase.from("kpi_entries").update({
+        status:lastKpiStatusChange.from,
+        updated_by:currentEmployee.id,
+        updated_at:new Date().toISOString(),
+      }).eq("id",lastKpiStatusChange.id);
+      if(result.error&&/updated_by|schema cache/i.test(result.error.message)){
+        result=await supabase.from("kpi_entries").update({status:lastKpiStatusChange.from,updated_at:new Date().toISOString()}).eq("id",lastKpiStatusChange.id);
+      }
+      if(result.error) throw result.error;
+      const restoredTitle=lastKpiStatusChange.title;
+      setLastKpiStatusChange(null);
+      await load();
+      setMessage(`"${restoredTitle}" 상태를 되돌렸습니다.`);
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  useEffect(()=>{
+    const onKeyDown=(event:KeyboardEvent)=>{
+      if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="z"&&lastKpiStatusChange) {
+        event.preventDefault();
+        restoreLastKpiStatus();
+      }
+    };
+    window.addEventListener("keydown",onKeyDown);
+    return ()=>window.removeEventListener("keydown",onKeyDown);
+  },[lastKpiStatusChange,saving]);
   async function deleteKpiEntry(entry:any) {
     if(!entry?.id) return;
     if(!canManageKpi(entry)) return setMessage("본인 KPI만 삭제할 수 있습니다.");
@@ -4669,6 +4753,31 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           </div>
         )}
         {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
+        {lastKpiStatusChange&&(
+          <div className="kpi-undo-bar">
+            <span>방금 변경: {lastKpiStatusChange.title}</span>
+            <button className="button ghost compact" disabled={saving} onClick={restoreLastKpiStatus}>되돌리기 Ctrl+Z</button>
+          </div>
+        )}
+        {isAdminView&&(
+          <div className="kpi-assignee-picker">
+            <div>
+              <span>담당자 지정</span>
+              <b>{quickTargetLabel()}</b>
+            </div>
+            <button type="button" className={quickEmployeeIds.length===0?"active":""} onClick={()=>setQuickTargets([])}>전체</button>
+            {employees.filter((employee:any)=>employee.is_active!==false&&employee.employment_status!=="inactive").map((employee:any)=>(
+              <button
+                type="button"
+                key={employee.id}
+                className={quickEmployeeIds.includes(employee.id)?"active":""}
+                onClick={()=>toggleQuickEmployee(employee.id)}
+              >
+                {employee.name}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="kpi-score-strip">
           {isAdminView&&(
             <button
@@ -4692,7 +4801,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 className={`kpi-score-card${focusEmployeeId===employee.id?" active":focusEmployeeId!=="all"?" dimmed":""}`}
                 key={employee.id}
                 style={kpiCardStyle(employee.id,score.rate)}
-                onClick={()=>{if(!isAdminView) return; const next=focusEmployeeId===employee.id?"all":employee.id; setFocusEmployeeId(next); if(next!=="all") setQuickEmployeeId(next);}}
+                onClick={()=>{if(!isAdminView) return; const next=focusEmployeeId===employee.id?"all":employee.id; setFocusEmployeeId(next); setQuickTargets(next==="all"?[]:[next]);}}
               >
                 <i aria-hidden="true"></i>
                 <b>{employee.name}</b>
@@ -4702,6 +4811,27 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               </button>
             );
           }) : <p className="body-text">이번 달 KPI 기록이 아직 없습니다.</p>}
+        </div>
+        <div className="kpi-roadmap-band">
+          <div className="kpi-roadmap-node year">
+            <span>연간</span>
+            <b>{currentYear}년</b>
+            <small>월간 목표 {yearMonthlyGoals.length}개</small>
+          </div>
+          <div className="kpi-roadmap-node quarter">
+            <span>분기</span>
+            <b>{currentQuarter}분기</b>
+            <small>분기 목표 {quarterMonthlyGoals.length}개</small>
+          </div>
+          <div className="kpi-roadmap-months">
+            {roadmapMonths.map(item=>(
+              <button type="button" key={item.key} className={item.key===month?"active":""} onClick={()=>setMonth(item.key)}>
+                <span>{item.monthNumber}월</span>
+                <b>{item.goals.length}개</b>
+                <small>완료 {item.done}</small>
+              </button>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -4881,7 +5011,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
-                  {isAdminView&&<div className="kpi-target-chip">담당 {quickEmployeeId?personName(quickEmployeeId):"전체"}</div>}
+                  {isAdminView&&<div className="kpi-target-chip">담당 {quickTargetLabel()}</div>}
                   <div className="kpi-h-input-row">
                     <input className="kpi-h-input-field" value={quickDrafts.monthly} onChange={e=>setQuickDrafts({...quickDrafts,monthly:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"monthly")} placeholder="이번 달 큰 목표 입력 후 Enter" />
                     <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("monthly")}>추가</button>
@@ -4936,7 +5066,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
-                  {isAdminView&&<div className="kpi-target-chip">담당 {quickEmployeeId?personName(quickEmployeeId):"전체"}</div>}
+                  {isAdminView&&<div className="kpi-target-chip">담당 {quickTargetLabel()}</div>}
                   <select className="select" style={{fontSize:12}} value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
                     <option value="">연결 월별 KPI 선택</option>
                     {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
@@ -5039,12 +5169,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 </div>
                 <div className="kpi-h-col-body">
                 <div className="kpi-h-input-wrap">
-                  {isAdminView&&<div className="kpi-target-chip">담당 {quickEmployeeId?personName(quickEmployeeId):"전체"}</div>}
+                  {isAdminView&&<div className="kpi-target-chip">담당 {quickTargetLabel()}</div>}
                   <select className="select" style={{fontSize:12}} value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
                     <option value="">연결 주간 KPI 선택</option>
                     {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
                   </select>
-                  <input className="kpi-date-input" type="date" min={monthStart} max={monthEnd} value={quickDailyDate} onChange={e=>setQuickDailyDate(e.target.value)} title="데일리 KPI 날짜" />
+                  <div className="kpi-date-row">
+                    <input className="kpi-date-input" type="date" min={monthStart} max={monthEnd} value={quickDailyDate} onChange={e=>setQuickDailyDate(e.target.value)} title="데일리 KPI 날짜" />
+                    <button type="button" className="button ghost compact" onClick={()=>{setMonth(today.slice(0,7));setQuickDailyDate(today);}}>오늘</button>
+                  </div>
                   <div className="kpi-h-input-row">
                     <input className="kpi-h-input-field" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"daily")} placeholder="해당 날짜 할 일 입력 후 Enter" />
                     <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("daily")}>추가</button>
@@ -5054,9 +5187,19 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 {visibleDailyEntries.length>0 ? (()=>{
                   const pendingD=visibleDailyEntries.filter((e:any)=>e.status!=="done");
                   const doneD=visibleDailyEntries.filter((e:any)=>e.status==="done");
-                  function suggestWeekly(title:string){
-                    const tokens=title.toLowerCase().replace(/[^\w가-힣]/g," ").split(/\s+/).filter((t:string)=>t.length>1);
-                    return weeklyGoals.filter((w:any)=>tokens.some((t:string)=>w.title.toLowerCase().includes(t))).slice(0,2);
+                  function suggestWeekly(entry:any){
+                    const tokens=String(entry.title??"").toLowerCase().replace(/[^\w가-힣]/g," ").split(/\s+/).filter((t:string)=>t.length>1);
+                    const candidateGoals=weeklyGoals.filter((goal:any)=>{
+                      if(focusProjectId!=="all"&&kpiRootId(goal)!==focusProjectId&&goal.id!==focusProjectId&&goal.parent_id!==focusProjectId) return false;
+                      if(entry.employee_id&&goal.employee_id&&goal.employee_id!==entry.employee_id) return false;
+                      return showDoneKpi||entryProgress(goal)<100;
+                    });
+                    const scored=candidateGoals.map((goal:any)=>({
+                      goal,
+                      score:tokens.reduce((sum:number,token:string)=>sum+(goal.title.toLowerCase().includes(token)?1:0),0),
+                    })).sort((a:any,b:any)=>b.score-a.score);
+                    const matched=scored.filter((item:any)=>item.score>0).map((item:any)=>item.goal);
+                    return (matched.length>0?matched:candidateGoals).slice(0,3);
                   }
                   const renderDaily=(entry:any)=>(
                     <div
@@ -5077,10 +5220,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           {canMoveKpi(entry)&&<button className="kpi-unlink-btn" title="연결 해제" onClick={()=>unlinkKpi(entry)}>×</button>}
                         </div>
                       ):(
-                        suggestWeekly(entry.title).length>0&&(
+                        suggestWeekly(entry).length>0&&(
                           <div className="kpi-suggest-row">
                             <span className="kpi-suggest-label">주간 연결 추천</span>
-                            {suggestWeekly(entry.title).map((w:any)=>(
+                            {suggestWeekly(entry).map((w:any)=>(
                               <button key={w.id} className="kpi-suggest-btn" disabled={saving} onClick={()=>linkKpi(entry.id,w.id)}>
                                 {w.title}
                               </button>
@@ -9367,12 +9510,13 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
   const activeEmployees=employees
     .filter(employee=>employeeVisibleInScheduleWeek(employee,dates,events,overrides,workTimeChanges,leaveRequests,compTimeRequests))
     .sort(sortScheduleEmployee);
-  const employeeHasMonthIssue=(employee:any)=>!isTestEmployee(employee)&&(
-    events.some((event:any)=>event.employee_id===employee.id&&dateRangesOverlap(monthRange.start,monthRange.end,event.start_date,event.end_date))
-    || absences.some((absence:any)=>absence.employee_id===employee.id&&dateRangesOverlap(monthRange.start,monthRange.end,absence.start_date,absence.end_date))
-    || leaveRequests.some((request:any)=>request.employee_id===employee.id&&request.status==="approved"&&dateRangesOverlap(monthRange.start,monthRange.end,request.start_date,request.end_date))
-    || compTimeRequests.some((request:any)=>request.employee_id===employee.id&&dateInRange(request.work_date,monthRange.start,monthRange.end))
-  );
+  const employeeMonthIssueDates=(employee:any)=>monthIssueDates.filter(date=>employeeWorksOnDate(employee,date));
+  const employeeHasMonthIssue=(employee:any)=>!isTestEmployee(employee)&&employeeMonthIssueDates(employee).some(date=>(
+    events.some((event:any)=>event.employee_id===employee.id&&date>=event.start_date&&date<=event.end_date)
+    || absences.some((absence:any)=>absence.employee_id===employee.id&&date>=absence.start_date&&date<=absence.end_date)
+    || leaveRequests.some((request:any)=>request.employee_id===employee.id&&request.status==="approved"&&date>=request.start_date&&date<=request.end_date&&workInfoForDate(employee,date).workday)
+    || compTimeRequests.some((request:any)=>request.employee_id===employee.id&&request.work_date===date)
+  ));
   const monthIssueEmployees=employees
     .filter(employee=>employeeVisibleInScheduleWeek(employee,monthIssueDates,events,overrides,workTimeChanges,leaveRequests,compTimeRequests)||employeeHasMonthIssue(employee))
     .sort(sortScheduleEmployee);
@@ -9514,6 +9658,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
   }
   function workInfoForDate(employee:any,date:string){
     const sched=getScheduleForDate(employee,date,overrides,workTimeChanges);
+    if(!employeeWorksOnDate(employee,date)) return {workday:false,start:sched.work_start,end:sched.work_end,hours:0,scheduledHours:0,leave:null,leaveMinutes:0,fullLeave:false,event:null,change:null};
     const change=approvedWorkTimeChangeForDate(workTimeChanges,employee,date);
     const explicitEvent=explicitScheduleEventFor(employee,date);
     const eventOverridesSchedule=explicitEvent&&!change;
@@ -9527,7 +9672,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
     const companyHoliday=workday&&isCompanySummerHolidayDate(date)?companyHolidayLeaveObject(date):null;
     const leaveMinutes=companyHoliday?scheduledMinutes:(workday?approvedLeaveMinutesForDate(employeeLeaveRequests,date,scheduleForLeave):0);
     const remainingMinutes=Math.max(0,scheduledMinutes-leaveMinutes);
-    const leave=companyHoliday??employeeLeaveRequests.find((request:any)=>request.request_type==="comp_leave_use"||LEAVE_TYPE_META[request.request_type]?.usesLeave)??null;
+    const leave=companyHoliday??(workday?employeeLeaveRequests.find((request:any)=>request.request_type==="comp_leave_use"||LEAVE_TYPE_META[request.request_type]?.usesLeave):null)??null;
     const fullLeave=!!leave&&scheduledMinutes>0&&remainingMinutes<=0;
     const hours=workday?Math.round((remainingMinutes/60)*10)/10:0;
     return {workday,start,end,hours,scheduledHours:scheduledMinutes/60,leave,leaveMinutes,fullLeave,event:explicitEvent,change};
@@ -9975,6 +10120,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
     if(isCompanySummerHolidayDate(date)) chips.push({key:`holiday-${date}`,type:"holiday",kind:"공통",title:COMPANY_SUMMER_HOLIDAY.title,detail:"공통 여름휴가"});
     const issueEmployees=isAll?monthIssueEmployees:visibleEmployees;
     issueEmployees.forEach((employee:any)=>{
+      if(!employeeWorksOnDate(employee,date)) return;
       const employeeColor=employeeColorFromList(monthIssueEmployees,employee.id);
       const info=workInfoForDate(employee,date);
       if(info.leave&&info.leave.request_type!=="company_holiday") {
