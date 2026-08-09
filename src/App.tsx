@@ -2740,6 +2740,7 @@ function HomePage({ employee }: { employee: any }) {
   const [todayKpis,setTodayKpis] = useState<any[]>([]);
   const [weeklyKpiOptions,setWeeklyKpiOptions] = useState<any[]>([]);
   const [openRoleGuideId,setOpenRoleGuideId] = useState<string|null>(null);
+  const [showRoleGuide,setShowRoleGuide] = useState(false);
   const [todoDraft,setTodoDraft] = useState({title:"",content:"",due_date:""});
   const [todoMessage,setTodoMessage] = useState("");
   const [todoTargetEmployeeId,setTodoTargetEmployeeId] = useState("");
@@ -3451,8 +3452,11 @@ function HomePage({ employee }: { employee: any }) {
         </div>
         {roleGuideEntries.length>0&&(
           <div className="role-guide-card">
-            <div><b>내 업무 안내</b><span>{roleGuideEntries[0].position||roleGuideEntries[0].department||"역할"} 기준으로 정리된 업무입니다. 제목을 누르면 세부 순서를 볼 수 있습니다.</span></div>
-            <ul>{roleGuideEntries.slice(0,3).map((entry:any)=>{
+            <div><b>기본 역할 추천</b><span>{roleGuideEntries[0].position||roleGuideEntries[0].department||"역할"} 기준 업무입니다. 필요할 때만 펼쳐 확인합니다.</span></div>
+            <button type="button" className="button ghost compact" onClick={()=>setShowRoleGuide(current=>!current)}>
+              {showRoleGuide?"기본 역할 추천 숨기기":"기본 역할 추천 보기"}
+            </button>
+            {showRoleGuide&&<ul>{roleGuideEntries.slice(0,3).map((entry:any)=>{
               const isOpen=openRoleGuideId===entry.id;
               return <li key={entry.id}>
                 <button type="button" className="role-guide-toggle" onClick={()=>setOpenRoleGuideId(isOpen?null:entry.id)}>
@@ -3465,7 +3469,7 @@ function HomePage({ employee }: { employee: any }) {
                 </div>}
                 {Array.isArray(entry.attachments)&&entry.attachments.length>0&&<div className="rnr-attachments mini readonly">{entry.attachments.map((attachment:any,index:number)=>isImageAttachment(attachment)?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
               </li>;
-            })}</ul>
+            })}</ul>}
           </div>
         )}
         <div className="punch-grid">
@@ -7170,15 +7174,17 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   async function resetEmployeeNo(emp:any){
     const nw=window.prompt(`${emp.name}의 새 사번(로그인 아이디)을 입력하세요.`, emp.employee_no);
-    const nextNo=String(nw??"").trim();
+    const rawNextNo=String(nw??"").trim();
+    const nextNo=rawNextNo.replace(/\D/g,"");
     if(!nextNo||nextNo===emp.employee_no) return;
+    if(!/^\d{8}$/.test(nextNo)) return setMessage("사번은 숫자 8자리로 입력해주세요.");
     const duplicate=employees.find((employee:any)=>employee.id!==emp.id&&String(employee.employee_no??"").trim().toLowerCase()===nextNo.toLowerCase());
     if(duplicate) return setMessage(`이미 ${duplicate.name} 직원이 사용 중인 사번입니다. 다른 사번을 입력해주세요.`);
     const {data,error}=await supabase.functions.invoke("admin-create-employee",{body:{action:"reset_employee_no",employee_id:emp.id,new_employee_no:nextNo}});
     if(!error&&!data?.error) {
       setMessage(data?.auth_updated===false
-        ? `사번 표시는 ${data.employee_no}(으)로 변경했습니다. 로그인 아이디는 기존 사번일 수 있습니다. 함수 오류: ${data.auth_error??"Auth 이메일 미변경"}`
-        : `사번이 ${data.employee_no}(으)로 변경되었습니다. 새 로그인 아이디로 안내해주세요.`);
+        ? `사번 표시는 ${data.employee_no}(으)로 변경했습니다. 로그인 아이디까지 바꾸려면 Supabase Auth 연결 또는 함수 시크릿을 확인해주세요. 사유: ${data.auth_error??"Auth 이메일 미변경"}`
+        : `사번과 로그인 아이디가 ${data.employee_no}(으)로 변경되었습니다. 새 사번으로 안내해주세요.`);
       await load();
       return;
     }

@@ -142,7 +142,8 @@ Deno.serve(async (req) => {
 
     if (action === "reset_employee_no") {
       const employeeId = String(body.employee_id || "");
-      const newEmployeeNo = String(body.new_employee_no || "").trim();
+      const newEmployeeNo = String(body.new_employee_no || "").replace(/\D/g, "");
+      if (newEmployeeNo && !/^\d{8}$/.test(newEmployeeNo)) return json({ error: "사번은 숫자 8자리로 입력해주세요." }, 400);
       if (!employeeId || !newEmployeeNo) return json({ error: "직원 ID와 새 사번이 필요합니다." }, 400);
       const email = internalEmail(newEmployeeNo);
       const { data: emp, error: empError } = await adminClient
@@ -192,7 +193,7 @@ Deno.serve(async (req) => {
         .update({ employee_no: newEmployeeNo, internal_email: email })
         .eq("id", employeeId);
       if (updateError) return json({ error: updateError.message }, 400);
-      return json({ ok: true, employee_no: newEmployeeNo });
+      return json({ ok: true, employee_no: newEmployeeNo, auth_updated: true });
     }
 
     if (action === "delete_employee") {
