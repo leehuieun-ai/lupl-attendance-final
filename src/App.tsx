@@ -1808,7 +1808,16 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
     const text=String(value??"").slice(0,10);
     return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
   }
+  function assistantProjectPeriodNote(payload:any) {
+    const start=safeIsoDate(payload.project_start);
+    const end=safeIsoDate(payload.project_end);
+    const note=String(payload.admin_note||"").trim();
+    if(!start||!end) return note||null;
+    return [`[프로젝트기간:${start}~${end}]`,note].filter(Boolean).join("\n");
+  }
   function defaultWorkDate(scope:string,payload:any={}) {
+    const projectStart=safeIsoDate(payload.project_start);
+    if(scope==="monthly"&&projectStart) return monthStartIso(projectStart.slice(0,7));
     const direct=safeIsoDate(payload.work_date||payload.task_date||payload.start_date);
     if(direct) return direct;
     if(scope==="monthly") return monthStartIso(todayIso().slice(0,7));
@@ -1818,6 +1827,10 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
   function employeeNameById(id?:string|null,context=assistantContext) {
     if(!id) return "";
     return context?.employees?.find((item:any)=>item.id===id)?.name || (id===employee.id?employee.name:"");
+  }
+  function employeeNamesByIds(ids:any,context=assistantContext) {
+    const list=Array.isArray(ids)?ids:[ids].filter(Boolean);
+    return list.map((id:any)=>employeeNameById(id,context)).filter(Boolean).join(", ");
   }
   function actionTypeLabel(type:string) {
     const labels:Record<string,string>={
@@ -1836,7 +1849,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
     const payload=action?.payload??{};
     if(action.type==="create_schedule_event") return [employeeNameById(payload.employee_id),payload.start_date,payload.title].filter(Boolean).join(" · ");
     if(action.type==="create_daily_task") return [employeeNameById(payload.target_employee_id)||"전체",payload.task_date,payload.title].filter(Boolean).join(" · ");
-    if(action.type==="create_kpi_entry") return [payload.scope,payload.work_date,employeeNameById(payload.employee_id),payload.title].filter(Boolean).join(" · ");
+    if(action.type==="create_kpi_entry") return [payload.scope,payload.work_date||payload.project_start,employeeNamesByIds(payload.employee_ids)||employeeNameById(payload.employee_id),payload.project_start&&payload.project_end?`${payload.project_start}~${payload.project_end}`:"",payload.title].filter(Boolean).join(" · ");
     if(action.type==="link_existing_kpi") return `하위 ${payload.child_id||payload.kpi_id||"-"} → 상위 ${payload.parent_id||"없음"}`;
     if(action.type==="create_rnr_entry") return [payload.department,payload.position,payload.title].filter(Boolean).join(" · ");
     if(action.type==="create_improvement") return String(payload.note||action.summary||"개선 요청").slice(0,120);
@@ -1848,7 +1861,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
 
   async function loadAssistantContext() {
     const since=addIsoDays(todayIso(),-14);
-    const kpiSince=monthStartIso(todayIso().slice(0,7));
+    const kpiSince=`${todayIso().slice(0,4)}-01-01`;
     const schedulePromise=isAdmin
       ? supabase.from("employee_schedule_events").select("*").gte("end_date",since).order("start_date",{ascending:true}).limit(120)
       : Promise.resolve({data:[],error:null});
@@ -2009,31 +2022,37 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
         }
       } else if(action.type==="create_kpi_entry") {
         const scope=["daily","weekly","monthly"].includes(payload.scope) ? payload.scope : "daily";
-        const targetEmployeeId=isAdmin ? (payload.employee_id||employee.id) : employee.id;
-        if(!isAdmin&&payload.employee_id&&payload.employee_id!==employee.id) {
+        const requestedEmployeeIds=Array.isArray(payload.employee_ids)&&payload.employee_ids.length>0 ? payload.employee_ids.filter(Boolean) : [payload.employee_id||employee.id];
+        const uniqueEmployeeIds=Array.from(new Set(requestedEmployeeIds));
+        const targetEmployeeIds=isAdmin ? uniqueEmployeeIds : [employee.id];
+        const triesOtherEmployee=!isAdmin&&uniqueEmployeeIds.some((id:any)=>id&&id!==employee.id);
+        if(triesOtherEmployee) {
           await saveActionToImprovement(action,"타인 KPI 변경 요청은 관리자 확인 필요");
         } else {
-          const target=context.employees?.find((item:any)=>item.id===targetEmployeeId);
-          const row={
-            employee_id:targetEmployeeId,
-            employee_name:target?.name||employee.name,
-            parent_id:payload.parent_id||null,
-            mentor_employee_id:payload.mentor_employee_id||null,
-            scope,
-            work_date:defaultWorkDate(scope,payload),
-            title:String(payload.title||action.title||"AI 비서 KPI").trim(),
-            description:String(payload.description||action.summary||"").trim()||null,
-            status:"pending",
-            sort_order:0,
-            is_public:true,
-            is_active:true,
-            created_by:employee.id,
-            updated_by:employee.id,
-          };
-          let result=await supabase.from("kpi_entries").insert(row);
-          if(result.error&&/description|mentor_employee_id|updated_by|schema cache/i.test(result.error.message)){
-            const {description,mentor_employee_id,updated_by,...fallbackRow}=row;
-            result=await supabase.from("kpi_entries").insert(fallbackRow);
+          const rows=targetEmployeeIds.map((targetEmployeeId:any)=>{
+            const target=context.employees?.find((item:any)=>item.id===targetEmployeeId);
+            return {
+              employee_id:targetEmployeeId,
+              employee_name:target?.name||employee.name,
+              parent_id:payload.parent_id||null,
+              mentor_employee_id:payload.mentor_employee_id||null,
+              scope,
+              work_date:defaultWorkDate(scope,payload),
+              title:String(payload.title||action.title||"AI 비서 KPI").trim(),
+              description:String(payload.description||action.summary||"").trim()||null,
+              admin_note:scope==="monthly"?assistantProjectPeriodNote(payload):null,
+              status:"pending",
+              sort_order:0,
+              is_public:true,
+              is_active:true,
+              created_by:employee.id,
+              updated_by:employee.id,
+            };
+          });
+          let result=await supabase.from("kpi_entries").insert(rows);
+          if(result.error&&/description|mentor_employee_id|admin_note|updated_by|schema cache/i.test(result.error.message)){
+            const fallbackRows=rows.map(({description,mentor_employee_id,admin_note,updated_by,...fallbackRow}:any)=>fallbackRow);
+            result=await supabase.from("kpi_entries").insert(fallbackRows);
           }
           if(result.error) throw result.error;
         }
@@ -2702,11 +2721,15 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
           ))}
         </div>
       </details>}
-      {githubIssueGroups.length>0&&<div className="improvement-issue-groups">
-        <div className="improvement-subhead">
-          <h3>GitHub 이슈별 모아보기</h3>
-          <span>{githubIssueGroups.length}개 이슈 · {githubSentRows.length}건</span>
-        </div>
+      {githubIssueGroups.length>0&&<details className="improvement-issue-groups improvement-github-toggle">
+        <summary>
+          <div>
+            <b>GitHub 이슈별 모아보기</b>
+            <span>{githubIssueGroups.length}개 이슈 · {githubSentRows.length}건</span>
+          </div>
+          <i className="ti ti-chevron-down" aria-hidden="true"></i>
+        </summary>
+        <div className="improvement-github-toggle-body">
         {githubIssueGroups.map((group:any)=>{
           const expanded=expandedGithubIssue===group.key;
           const categories=githubGroupCategories(group);
@@ -2747,7 +2770,8 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
             </div>}
           </article>;
         })}
-      </div>}
+        </div>
+      </details>}
       {visible.length===0 ? <p className="subtle">{githubIssueGroups.length>0?"개별로 처리할 개선 요청은 없습니다. GitHub로 보낸 건은 이슈별 모아보기에서 카테고리별로 확인하세요.":"표시할 개선 요청이 없습니다."}</p> : <>
         <div className="improvement-list-toggle">
           <button className="button ghost compact" onClick={()=>setShowIndividualList(value=>!value)}>{showIndividualList?"개별 목록 숨기기":"개별 목록 보기"}</button>
@@ -4183,7 +4207,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setQuickEmployeeId("");
       setQuickEmployeeIds([]);
     } else {
-      setFocusEmployeeId(currentEmployee.id);
+      setFocusEmployeeId("all");
       setQuickEmployeeId(currentEmployee.id);
       setQuickEmployeeIds([currentEmployee.id]);
     }
@@ -4368,7 +4392,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return entry.status==="done"?100:0;
   }
   function entryMatchesFocus(entry:any) {
-    const employeeOk=focusEmployeeId==="all" || entry.employee_id===focusEmployeeId || (!isAdminView&&entry.created_by===currentEmployee.id);
+    const employeeOk=focusEmployeeId==="all" || entry.employee_id===focusEmployeeId;
     const projectOk=focusProjectId==="all" || kpiRootId(entry)===focusProjectId || entry.id===focusProjectId || entry.parent_id===focusProjectId;
     const doneOk=showDoneKpi || entryProgress(entry)<100;
     return employeeOk&&projectOk&&doneOk;
@@ -4756,7 +4780,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         <div className="kpi-dashboard-head">
           <div>
             <h2 className="card-title"><i className="ti ti-target-arrow" aria-hidden="true"></i>{isAdminView?"팀 KPI":"내 KPI"}</h2>
-            <p className="body-text">{isAdminView?"직원 이름을 눌러 담당자를 고르고, 월간 목표를 주간·데일리 KPI로 연결해 봅니다.":"내 월간 목표를 주간 목표와 오늘 할 일로 연결해 봅니다."}</p>
+            <p className="body-text">{isAdminView?"직원 이름을 눌러 담당자를 고르고, 월간 목표를 주간·데일리 KPI로 연결해 봅니다.":"팀 전체 KPI를 함께 보면서 내 목표를 주간 목표와 오늘 할 일로 연결해 봅니다."}</p>
           </div>
           <div className="kpi-head-actions">
             <div className="kpi-period-badge">
@@ -4808,20 +4832,18 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           </div>
         )}
         <div className="kpi-score-strip">
-          {isAdminView&&(
-            <button
-              type="button"
-              className={`kpi-score-card kpi-score-all${focusEmployeeId==="all"?" active":""}`}
-              style={{"--employee-color":"#334155","--kpi-rate":`${kpiCompletionRate(weekDailyEntries)??0}%`} as React.CSSProperties}
-              onClick={()=>setFocusEmployeeId("all")}
-            >
-              <i aria-hidden="true"></i>
-              <b>전체 직원</b>
-              <strong>{kpiCompletionRate(weekDailyEntries)??0}<small>%</small></strong>
-              <span>직원 {scorePeople.length}명</span>
-              <div className="kpi-progress-track"><em></em></div>
-            </button>
-          )}
+          <button
+            type="button"
+            className={`kpi-score-card kpi-score-all${focusEmployeeId==="all"?" active":""}`}
+            style={{"--employee-color":"#334155","--kpi-rate":`${kpiCompletionRate(weekDailyEntries)??0}%`} as React.CSSProperties}
+            onClick={()=>{setFocusEmployeeId("all"); if(isAdminView) setQuickTargets([]);}}
+          >
+            <i aria-hidden="true"></i>
+            <b>전체 직원</b>
+            <strong>{kpiCompletionRate(weekDailyEntries)??0}<small>%</small></strong>
+            <span>직원 {scorePeople.length}명</span>
+            <div className="kpi-progress-track"><em></em></div>
+          </button>
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
             const score=scoreForEmployee(employee.id);
             return (
@@ -4830,7 +4852,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 className={`kpi-score-card${focusEmployeeId===employee.id?" active":focusEmployeeId!=="all"?" dimmed":""}`}
                 key={employee.id}
                 style={kpiCardStyle(employee.id,score.rate)}
-                onClick={()=>{if(!isAdminView) return; const next=focusEmployeeId===employee.id?"all":employee.id; setFocusEmployeeId(next); setQuickTargets(next==="all"?[]:[next]);}}
+                onClick={()=>{const next=focusEmployeeId===employee.id?"all":employee.id; setFocusEmployeeId(next); if(isAdminView) setQuickTargets(next==="all"?[]:[next]);}}
               >
                 <i aria-hidden="true"></i>
                 <b>{employee.name}</b>
@@ -5006,12 +5028,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
             </select>
           </label>
-          {isAdminView&&(
-            <div className="kpi-selected-person">
-              <span>선택 직원</span>
-              <b>{focusEmployeeId==="all"?"전체 직원":personName(focusEmployeeId)}</b>
-            </div>
-          )}
+          <div className="kpi-selected-person">
+            <span>선택 직원</span>
+            <b>{focusEmployeeId==="all"?"전체 직원":personName(focusEmployeeId)}</b>
+          </div>
           <button type="button" className={`kpi-filter-pill ${showDoneKpi?"active":""}`} onClick={()=>setShowDoneKpi(v=>!v)}>
             <i className={`ti ${showDoneKpi?"ti-eye":"ti-eye-off"}`} aria-hidden="true"></i>
             {showDoneKpi?"완료 포함":"완료 자동 숨김"}

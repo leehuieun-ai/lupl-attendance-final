@@ -1183,6 +1183,14 @@ body { overflow-x: hidden; }
 .improvement-subhead h3 { margin: 0; color: #182235; font-size: 15px; letter-spacing: 0; }
 .improvement-subhead span { color: #64748b; font-size: 12px; font-weight: 800; white-space: nowrap; }
 .improvement-issue-groups { display: grid; gap: 10px; margin: 2px 0 14px; }
+.improvement-github-toggle { border: 1px solid #dbe5f3; border-radius: 8px; background: #fbfdff; overflow: hidden; }
+.improvement-github-toggle > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 13px; }
+.improvement-github-toggle > summary::-webkit-details-marker { display: none; }
+.improvement-github-toggle > summary b { display: block; color: #182235; font-size: 14px; }
+.improvement-github-toggle > summary span { display: block; margin-top: 4px; color: #64748b; font-size: 12px; font-weight: 800; }
+.improvement-github-toggle > summary i { color: #64748b; transition: transform .15s ease; }
+.improvement-github-toggle[open] > summary i { transform: rotate(180deg); }
+.improvement-github-toggle-body { display: grid; gap: 10px; padding: 10px; border-top: 1px solid #eef2f7; }
 .improvement-issue-card { border: 1px solid #cbdaf1; border-radius: 8px; background: #f8fbff; padding: 12px; }
 .improvement-issue-card-head { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
 .improvement-issue-card-head b { display: block; color: #182235; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }

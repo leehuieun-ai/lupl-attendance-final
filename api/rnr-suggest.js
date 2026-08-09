@@ -1,6 +1,6 @@
 import { parseJsonText, readJsonBody, requireActiveEmployee, send } from "./_shared.js";
 
-const OPENAI_MODEL = process.env.RNR_OPENAI_MODEL || "gpt-5.5";
+const OPENAI_MODEL = process.env.RNR_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-5.5";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return send(res, 405, { error: "POST만 지원합니다." });

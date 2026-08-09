@@ -1,6 +1,6 @@
 import { parseJsonText, readJsonBody, requireAdmin, send } from "./_shared.js";
 
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const OPENAI_MODEL = process.env.IMPROVEMENT_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-5.5";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return send(res, 405, { error: "POST만 지원합니다." });
