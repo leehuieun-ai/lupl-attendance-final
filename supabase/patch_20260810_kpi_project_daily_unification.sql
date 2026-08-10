@@ -3,7 +3,10 @@
 alter table public.kpi_entries
   add column if not exists due_date date,
   add column if not exists project_start date,
-  add column if not exists project_end date;
+  add column if not exists project_end date,
+  add column if not exists admin_note text,
+  add column if not exists updated_by uuid references public.employees(id),
+  add column if not exists change_log jsonb not null default '[]'::jsonb;
 
 create index if not exists kpi_entries_due_date_idx
 on public.kpi_entries(due_date, employee_id, is_active)
