@@ -6,7 +6,21 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type WorksEventType = "check_in" | "check_out";
+type WorksEventType = "check_in" | "check_out" | "leave_requested" | "leave_approved" | "leave_rejected";
+
+const worksEventTypes: WorksEventType[] = ["check_in", "check_out", "leave_requested", "leave_approved", "leave_rejected"];
+const leaveTypeLabels: Record<string, string> = {
+  annual: "연차",
+  half_am: "오전 반차",
+  half_pm: "오후 반차",
+  hourly: "시간차",
+  sick: "병가",
+  official: "공가",
+  special: "특별휴가",
+  substitute: "대체휴가",
+  compensatory: "보상휴가",
+  comp_leave_use: "보상휴가 시간 사용",
+};
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -122,6 +136,33 @@ function buildMessage(eventType: WorksEventType, employeeName: string, log: any,
   return [header, "오늘의 KPI", ...(lines.length > 0 ? lines : ["- 등록된 KPI 없음"])].join("\n").slice(0, 2000);
 }
 
+function leaveTimeLabel(request: any) {
+  const start = String(request.start_date ?? "").slice(0, 10);
+  const end = String(request.end_date ?? start).slice(0, 10);
+  const dateText = end && end !== start ? `${start} ~ ${end}` : start;
+  const startTime = request.start_time ? String(request.start_time).slice(0, 5) : "";
+  const endTime = request.end_time ? String(request.end_time).slice(0, 5) : "";
+  return startTime && endTime ? `${dateText} ${startTime}~${endTime}` : dateText;
+}
+
+function buildLeaveMessage(eventType: WorksEventType, employeeName: string, request: any) {
+  const statusText = eventType === "leave_requested" ? "신청" : eventType === "leave_approved" ? "승인" : "반려";
+  const title = leaveTypeLabels[String(request.request_type ?? "")] ?? String(request.request_type ?? "휴가");
+  const lines = [
+    `[휴가 ${statusText}] ${employeeName}`,
+    `구분: ${title}`,
+    `일정: ${leaveTimeLabel(request)}`,
+    `상태: ${statusText}`,
+    "사유: 개인 사유",
+  ];
+  return lines.join("\n").slice(0, 2000);
+}
+
+function worksChannelIdFor(eventType: WorksEventType) {
+  if (eventType.startsWith("leave_")) return env("NAVER_WORKS_SCHEDULE_CHANNEL_ID");
+  return env("NAVER_WORKS_KPI_CHANNEL_ID");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ ok: false, error: "POST만 지원합니다." }, 405);
@@ -139,8 +180,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const eventType = String(body.event_type ?? "") as WorksEventType;
     const attendanceLogId = String(body.attendance_log_id ?? "");
-    if (!["check_in", "check_out"].includes(eventType)) return json({ ok: false, error: "event_type이 올바르지 않습니다." }, 400);
-    if (!attendanceLogId) return json({ ok: false, error: "attendance_log_id가 필요합니다." }, 400);
+    if (!worksEventTypes.includes(eventType)) return json({ ok: false, error: "event_type이 올바르지 않습니다." }, 400);
 
     const { data: { user }, error: userError } = await userClient.auth.getUser();
     if (userError || !user) return json({ ok: false, error: "로그인이 필요합니다." }, 401);
@@ -153,6 +193,71 @@ Deno.serve(async (req) => {
       .eq("employment_status", "active")
       .maybeSingle();
     if (!employee) return json({ ok: false, error: "활성화된 직원 정보가 없습니다." }, 403);
+
+    if (eventType.startsWith("leave_")) {
+      const attendanceRequestId = String(body.attendance_request_id ?? body.request_id ?? "");
+      if (!attendanceRequestId) return json({ ok: false, error: "attendance_request_id가 필요합니다." }, 400);
+
+      const { data: request } = await userClient
+        .from("attendance_requests")
+        .select("id, employee_id, request_type, start_date, end_date, start_time, end_time, amount_hours, amount_days, reason, status, review_note, reviewed_at")
+        .eq("id", attendanceRequestId)
+        .maybeSingle();
+      if (!request) return json({ ok: false, error: "휴가 신청 내역을 찾을 수 없습니다." }, 404);
+      if (request.employee_id !== employee.id && employee.role !== "admin") return json({ ok: false, error: "본인 휴가 신청만 전송할 수 있습니다." }, 403);
+      if (eventType !== "leave_requested" && employee.role !== "admin") return json({ ok: false, error: "휴가 승인/반려 알림은 관리자만 전송할 수 있습니다." }, 403);
+
+      const { data: requestEmployee } = await serviceClient
+        .from("employees")
+        .select("id, name")
+        .eq("id", request.employee_id)
+        .maybeSingle();
+
+      const message = buildLeaveMessage(eventType, requestEmployee?.name ?? employee.name, request);
+      const channelId = worksChannelIdFor(eventType);
+      const botId = env("NAVER_WORKS_BOT_ID");
+
+      async function record(status: string, response: unknown = null, error: string | null = null) {
+        await serviceClient.from("kpi_works_notifications").insert({
+          employee_id: request.employee_id,
+          attendance_log_id: null,
+          kpi_entry_ids: [],
+          event_type: eventType,
+          channel_id: channelId || null,
+          message,
+          status,
+          response,
+          error,
+        });
+      }
+
+      if (!channelId || !botId) {
+        await record("skipped", null, "NAVER_WORKS_BOT_ID 또는 NAVER_WORKS_SCHEDULE_CHANNEL_ID가 설정되지 않았습니다.");
+        return json({ ok: true, sent: false, skipped: true, message });
+      }
+
+      const token = await getWorksToken();
+      const worksResponse = await fetch(`https://www.worksapis.com/v1.0/bots/${encodeURIComponent(botId)}/channels/${encodeURIComponent(channelId)}/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content: { type: "text", text: message } }),
+      });
+      const responseText = await worksResponse.text();
+      let responseBody: unknown = responseText;
+      try { responseBody = responseText ? JSON.parse(responseText) : {}; } catch { /* keep text */ }
+      if (!worksResponse.ok) {
+        await record("failed", responseBody, `NAVER WORKS 메시지 전송 실패(${worksResponse.status})`);
+        return json({ ok: true, sent: false, error: `NAVER WORKS 메시지 전송 실패(${worksResponse.status})`, detail: responseBody, message });
+      }
+
+      await record("sent", responseBody, null);
+      return json({ ok: true, sent: true, message });
+    }
+
+    if (!attendanceLogId) return json({ ok: false, error: "attendance_log_id가 필요합니다." }, 400);
 
     const { data: log } = await userClient
       .from("attendance_logs")
@@ -175,7 +280,7 @@ Deno.serve(async (req) => {
       .order("sort_order", { ascending: true });
 
     const message = buildMessage(eventType, employee.name, log, kpis ?? []);
-    const channelId = env("NAVER_WORKS_KPI_CHANNEL_ID");
+    const channelId = worksChannelIdFor(eventType);
     const botId = env("NAVER_WORKS_BOT_ID");
     const entryIds = (kpis ?? []).map((item: any) => item.id);
 

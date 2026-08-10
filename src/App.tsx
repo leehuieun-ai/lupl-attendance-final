@@ -498,6 +498,20 @@ function badgeClass(s?: string | null) {
 function statusLabel(status?: string | null) {
   return ({pending:"승인 대기",approved:"승인",rejected:"반려",denied:"반려"} as Record<string,string>)[String(status??"")] ?? (status || "-");
 }
+async function sendWorksLeaveScheduleMessage(eventType:"leave_requested"|"leave_approved"|"leave_rejected", attendanceRequestId?:string|null) {
+  if(!attendanceRequestId) return {sent:false};
+  const {data,error}=await supabase.functions.invoke("send-works-kpi-message",{
+    body:{event_type:eventType,attendance_request_id:attendanceRequestId},
+  });
+  if(error) return {sent:false,error:error.message};
+  return data ?? {sent:false};
+}
+function worksScheduleMessage(result:any) {
+  if(result?.sent) return " 일정 공유방에도 알림을 보냈습니다.";
+  if(result?.skipped) return " 일정 공유방 알림은 채널 설정 후 전송됩니다.";
+  if(result?.error) return ` 일정 공유방 알림 실패: ${result.error}`;
+  return "";
+}
 function attendanceCorrectionStatusLabel(status?: string | null) {
   return ({pending:"서명 대기",signed:"서명 완료",objected:"이의제기",cancelled:"취소"} as Record<string,string>)[String(status??"")] ?? (status || "-");
 }
@@ -6790,23 +6804,31 @@ function LeavePage({ employee, mode="leave" }: { employee: any; mode?:"leave"|"o
     const single = SINGLE_DAY_TYPES.includes(effectiveRequestType);
     const amountHours = isHourly && form.amount_hours ? requestedHours : null;
     const useTimes = ["half_am","half_pm","hourly","comp_leave_use"].includes(effectiveRequestType);
-    const {error}=await supabase.from("attendance_requests").insert({
+    const {data,error}=await supabase.from("attendance_requests").insert({
       employee_id:employee.id, request_type:effectiveRequestType,
       start_date:form.start_date, end_date:single?form.start_date:form.end_date,
       start_time: useTimes? form.start_time : null,
       end_time: useTimes? form.end_time : null,
       amount_hours:amountHours, amount_days: m?.fixedDays ?? (amountHours?amountHours/8:null),
       reason:form.reason, status:"pending",
-    });
-    if(error) setMessage(error.message); else{setMessage(effectiveRequestType==="comp_leave_use"?"보상휴가 시간 사용 신청이 저장되었습니다.":"휴가 신청이 저장되었습니다.");await load();}
+    }).select("id").single();
+    if(error) setMessage(error.message); else{
+      const works=await sendWorksLeaveScheduleMessage("leave_requested",data?.id);
+      setMessage(`${effectiveRequestType==="comp_leave_use"?"보상휴가 시간 사용 신청이 저장되었습니다.":"휴가 신청이 저장되었습니다."}${worksScheduleMessage(works)}`);
+      await load();
+    }
   }
 
   async function useCompLeave() {
     setMessage(""); const hours=Number(form.amount_hours||0);
     if(!hours||hours<=0) return setMessage("사용할 시간을 입력해주세요.");
     if(hours>compRemainHours+1e-9) return setMessage(`보상휴가 잔여 시간(${formatHourValue(compRemainHours)}시간)이 부족합니다.`);
-    const {error}=await supabase.from("attendance_requests").insert({employee_id:employee.id,request_type:"comp_leave_use",start_date:form.start_date,end_date:form.start_date,amount_hours:hours,amount_days:hours/8,reason:form.reason||"보상휴가 시간 사용",status:"pending"});
-    if(error) setMessage(error.message); else{setMessage("보상휴가 시간 사용 신청이 저장되었습니다.");await load();}
+    const {data,error}=await supabase.from("attendance_requests").insert({employee_id:employee.id,request_type:"comp_leave_use",start_date:form.start_date,end_date:form.start_date,amount_hours:hours,amount_days:hours/8,reason:form.reason||"보상휴가 시간 사용",status:"pending"}).select("id").single();
+    if(error) setMessage(error.message); else{
+      const works=await sendWorksLeaveScheduleMessage("leave_requested",data?.id);
+      setMessage(`보상휴가 시간 사용 신청이 저장되었습니다.${worksScheduleMessage(works)}`);
+      await load();
+    }
   }
 
   function handleCompTimeChange(field:"start_time"|"end_time",val:string){
@@ -8278,7 +8300,12 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const reviewNote=status==="rejected"?rejectionNoteOrNull("휴가 신청"):"";
     if(status==="rejected"&&reviewNote===null) return;
     const {error}=await supabase.rpc("review_attendance_request",{p_request_id:id,p_status:status,p_review_note:reviewNote});
-    if(error)setMessage(error.message);else{setMessage(status==="approved"?"휴가 신청을 승인했고 관련 일정에 반영됩니다.":"휴가 신청을 반려했습니다.");await load();onChanged();}
+    if(error)setMessage(error.message);else{
+      const works=await sendWorksLeaveScheduleMessage(status==="approved"?"leave_approved":"leave_rejected",id);
+      setMessage(`${status==="approved"?"휴가 신청을 승인했고 관련 일정에 반영됩니다.":"휴가 신청을 반려했습니다."}${worksScheduleMessage(works)}`);
+      await load();
+      onChanged();
+    }
   }
   function compAttendance(request:any){
     return allLogs.find((log:any)=>log.employee_id===request.employee_id&&localDateStr(log.check_in_time)===request.work_date);
