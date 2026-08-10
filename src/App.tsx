@@ -699,7 +699,7 @@ function approvedLeaveRangesForDate(requests:any[], dateIso:string, schedule:any
   if(!workRange) return [];
   return requests
     .filter((request:any)=>request.status==="approved"&&dateIso>=request.start_date&&dateIso<=request.end_date)
-    .filter((request:any)=>request.request_type==="comp_leave_use"||LEAVE_TYPE_META[request.request_type]?.usesLeave)
+    .filter((request:any)=>request.request_type==="company_holiday"||request.request_type==="comp_leave_use"||LEAVE_TYPE_META[request.request_type]?.usesLeave)
     .map((request:any)=>{
       if(["half_am","half_pm","hourly","comp_leave_use"].includes(request.request_type)){
         const start=request.request_type==="half_pm" ? (request.start_time??"14:00") : (request.start_time??schedule?.work_start??"09:00");
@@ -756,6 +756,12 @@ function expectedWorkEndForDate(dateIso:string, schedule:any, leaveRequests:any[
   const expectedEnd=addMinutes(kstDateTime(dateIso,minutesToTime(endMinute%(24*60))),Math.floor(endMinute/(24*60))*24*60);
   return {expectedEnd,shiftMinutes:minuteRangeTotal(ranges),leaveMinutes:approvedLeaveMinutesForDate(leaveRequests,dateIso,schedule)};
 }
+function attendanceLeaveRowsForDate(dateIso:string, leaveRequests:any[]=[]) {
+  return isCompanySummerHolidayDate(dateIso) ? [...leaveRequests, companyHolidayLeaveObject(dateIso)] : leaveRequests;
+}
+function hasRequiredAttendanceForDate(dateIso:string, schedule:any, leaveRequests:any[]=[]) {
+  return expectedWorkEndForDate(dateIso,schedule,attendanceLeaveRowsForDate(dateIso,leaveRequests),null).shiftMinutes>0;
+}
 function dateTimeForWorkDateTime(dateIso:string, time?:string|null, after?:Date|null) {
   if(!time) return null;
   let value=kstDateTime(dateIso,time);
@@ -780,7 +786,9 @@ function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequ
   if(!log?.check_in_time||log?.check_out_time) return null;
   const dateIso=localDateStr(log.check_in_time);
   const sched=getScheduleForDate(employee,dateIso,overrides,workTimeChanges);
-  let target=expectedWorkEndForDate(dateIso,sched,leaveRequests,null).expectedEnd;
+  const checkInDate=new Date(log.check_in_time);
+  const employeeLeaveRows=leaveRequests.filter((request:any)=>!request?.employee_id||request.employee_id===employee.id);
+  let target=expectedWorkEndForDate(dateIso,sched,attendanceLeaveRowsForDate(dateIso,employeeLeaveRows),checkInDate).expectedEnd;
   const compEnd=latestCompEndForDate(compRequests,dateIso);
   return compEnd&&compEnd.getTime()>target.getTime()?compEnd:target;
 }
@@ -1581,8 +1589,10 @@ export default function App() {
               const workDate=todayIso();
               const schedule=getScheduleForDate(employee,workDate,ov.data??[],approvedWorkTimeChanges);
               const workday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(workDate)));
+              const employeeLeaveRows=(rq.data??[]).filter((request:any)=>request.employee_id===employee.id);
+              const requiresAttendance=hasRequiredAttendanceForDate(workDate,schedule,employeeLeaveRows);
               const startAt=kstDateTime(workDate,schedule.work_start??employee.work_start??"09:00");
-              return workday&&Date.now()>=startAt.getTime()+30*60000;
+              return workday&&requiresAttendance&&Date.now()>=startAt.getTime()+30*60000;
             }),
           ].length;
           setPendingCount(
@@ -8651,8 +8661,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         const workDate=todayIso();
         const schedule=getScheduleForDate(employee,workDate,overrides,approvedWorkTimeChanges);
         const workday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(workDate)));
+        const employeeLeaveRows=requests.filter((request:any)=>request.employee_id===employee.id);
+        const requiresAttendance=hasRequiredAttendanceForDate(workDate,schedule,employeeLeaveRows);
         const startAt=kstDateTime(workDate,schedule.work_start??employee.work_start??"09:00");
-        if(!workday || Date.now()<startAt.getTime()+30*60000) return null;
+        if(!workday || !requiresAttendance || Date.now()<startAt.getTime()+30*60000) return null;
         return {
           key:`checkin-${employee.id}-${workDate}`,
           employee,
