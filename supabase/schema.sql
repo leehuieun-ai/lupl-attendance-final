@@ -1320,6 +1320,7 @@ create table if not exists public.kpi_works_notifications (
   id uuid primary key default gen_random_uuid(),
   employee_id uuid references public.employees(id) on delete set null,
   attendance_log_id uuid references public.attendance_logs(id) on delete set null,
+  attendance_request_id uuid references public.attendance_requests(id) on delete set null,
   kpi_entry_ids uuid[] not null default '{}',
   event_type text not null check (event_type in ('check_in','check_out','leave_requested','leave_approved','leave_rejected')),
   channel_id text,
@@ -1332,6 +1333,9 @@ create table if not exists public.kpi_works_notifications (
 
 create index if not exists kpi_works_notifications_employee_idx
 on public.kpi_works_notifications(employee_id, created_at desc);
+
+create index if not exists kpi_works_notifications_request_event_idx
+on public.kpi_works_notifications(attendance_request_id, event_type, created_at desc);
 
 alter table public.kpi_entries enable row level security;
 alter table public.kpi_works_notifications enable row level security;

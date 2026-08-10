@@ -221,6 +221,7 @@ Deno.serve(async (req) => {
         await serviceClient.from("kpi_works_notifications").insert({
           employee_id: request.employee_id,
           attendance_log_id: null,
+          attendance_request_id: request.id,
           kpi_entry_ids: [],
           event_type: eventType,
           channel_id: channelId || null,
@@ -288,6 +289,7 @@ Deno.serve(async (req) => {
       await serviceClient.from("kpi_works_notifications").insert({
         employee_id: employee.id,
         attendance_log_id: log.id,
+        attendance_request_id: null,
         kpi_entry_ids: entryIds,
         event_type: eventType,
         channel_id: channelId || null,

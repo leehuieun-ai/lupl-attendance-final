@@ -512,6 +512,12 @@ function worksScheduleMessage(result:any) {
   if(result?.error) return ` 일정 공유방 알림 실패: ${result.error}`;
   return "";
 }
+function leaveWorksEventTypeForRequest(request:any):"leave_requested"|"leave_approved"|"leave_rejected"|null {
+  if(request?.status==="pending") return "leave_requested";
+  if(request?.status==="approved") return "leave_approved";
+  if(request?.status==="rejected") return "leave_rejected";
+  return null;
+}
 function attendanceCorrectionStatusLabel(status?: string | null) {
   return ({pending:"서명 대기",signed:"서명 완료",objected:"이의제기",cancelled:"취소"} as Record<string,string>)[String(status??"")] ?? (status || "-");
 }
@@ -1640,8 +1646,9 @@ export default function App() {
   if (!employee) return <div className="container"><section className="card auth-card"><h1 className="card-title">직원 정보가 없습니다</h1><p className="subtle">관리자 계정의 employees.user_id 연결을 확인해주세요.</p><button className="button full" onClick={signOut}>로그아웃</button></section></div>;
   if (!employee.is_active || employee.employment_status !== "active") return <InactivePage signOut={signOut} />;
   const validPrivacyConsent=consentAppliesToCurrentEmployment(consent,employee) ? consent : null;
+  const currentPrivacyConsent=validPrivacyConsent?.consent_version===PRIVACY_CONSENT_VERSION ? validPrivacyConsent : null;
   const validWorkTimeConsent=consentAppliesToCurrentEmployment(workTimeConsent,employee) ? workTimeConsent : null;
-  const shouldShowCombinedConsent = !validPrivacyConsent || (validPrivacyConsent?.consent_version === PRIVACY_CONSENT_VERSION && !validWorkTimeConsent);
+  const shouldShowCombinedConsent = !currentPrivacyConsent || !validWorkTimeConsent;
   if (shouldShowCombinedConsent) return <ConsentGate employee={employee} onDone={load} signOut={signOut} />;
   const isAdmin = employee.role === "admin";
   const validAdminPledgeConsent = consentAppliesToCurrentEmployment(adminPledgeConsent, employee) ? adminPledgeConsent : null;
@@ -1768,7 +1775,7 @@ export default function App() {
       <AIAssistantQuickCapture employee={employee} currentTab={tab} currentPageTitle={currentPageTitle} menuOptions={improvementMenuOptions} onChanged={load} />
       <ImprovementQuickCapture employee={employee} currentTab={tab} currentPageTitle={currentPageTitle} menuOptions={improvementMenuOptions} />
       {showPwModal && <PasswordModal onClose={()=>setShowPwModal(false)} />}
-      {validPrivacyConsent && !validWorkTimeConsent && validPrivacyConsent.consent_version !== PRIVACY_CONSENT_VERSION && <WorkTimeConsentModal employee={employee} onDone={load} />}
+      {currentPrivacyConsent && !validWorkTimeConsent && <WorkTimeConsentModal employee={employee} onDone={load} />}
       {!validAdminPledgeConsent && <AdminConfidentialityModal employee={employee} onDone={load} />}
     </div>
   );
@@ -3482,8 +3489,6 @@ function HomePage({ employee }: { employee: any }) {
   const [expandedLogId,setExpandedLogId] = useState<string|null>(null);
   const [recheckAsk,setRecheckAsk] = useState<any|null>(null);
   const [earlyCheckoutAsk,setEarlyCheckoutAsk] = useState<any|null>(null);
-  const [lateCheckoutAsk,setLateCheckoutAsk] = useState<any|null>(null);
-  const [lateCheckoutText,setLateCheckoutText] = useState("");
   const [earlyLeaveNotice,setEarlyLeaveNotice] = useState(false);
   const [recheckMode,setRecheckMode] = useState(false);
   const [compTimeRows,setCompTimeRows] = useState<any[]>([]);
@@ -3891,9 +3896,33 @@ function HomePage({ employee }: { employee: any }) {
         is_active:true,
         created_by:employee.id,
       }));
-      const {data,error}=await supabase.from("kpi_entries").insert(payload).select("*");
-      if(error) throw error;
-      const savedRows=(data??[]).sort((a:any,b:any)=>Number(a.sort_order??0)-Number(b.sort_order??0));
+      let insertResult=await supabase.from("kpi_entries").insert(payload).select("*");
+      if(insertResult.error&&/select|row-level|rls|policy|permission|schema cache/i.test(insertResult.error.message)){
+        const existingResult=await supabase
+          .from("kpi_entries")
+          .select("*")
+          .eq("employee_id",employee.id)
+          .eq("work_date",workDate)
+          .eq("scope","daily")
+          .eq("is_active",true)
+          .order("sort_order",{ascending:true});
+        if(existingResult.error||!existingResult.data?.length) {
+          const fallbackResult=await supabase.from("kpi_entries").insert(payload);
+          if(fallbackResult.error) throw fallbackResult.error;
+          insertResult=await supabase
+            .from("kpi_entries")
+            .select("*")
+            .eq("employee_id",employee.id)
+            .eq("work_date",workDate)
+            .eq("scope","daily")
+            .eq("is_active",true)
+            .order("sort_order",{ascending:true});
+        } else {
+          insertResult=existingResult;
+        }
+      }
+      if(insertResult.error) throw insertResult.error;
+      const savedRows=(insertResult.data??[]).sort((a:any,b:any)=>Number(a.sort_order??0)-Number(b.sort_order??0));
       setTodayKpis(savedRows);
       if(andContinueCheckout) {
         setKpiReview(savedRows.reduce((map:Record<string,string>,entry:any)=>({...map,[entry.id]:""}),{}));
@@ -4034,36 +4063,6 @@ function HomePage({ employee }: { employee: any }) {
     if(error) setMessage(error.message); else setMessage("주말 근무 보상휴가 신청이 저장되었습니다. 관리자 승인 후 적립됩니다.");
     setWeekendAsk(null);
   }
-  function lateOvertimeRange() {
-    const fallbackStart=lateCheckoutAsk?.targetTime ? hhmmFromDate(new Date(lateCheckoutAsk.targetTime)) : "18:00";
-    const fallbackEnd=hhmmFromDate(new Date(lateCheckoutAsk?.nowTime??Date.now()));
-    const match=lateCheckoutText.match(/(\d{1,2})(?::(\d{2}))?\s*(?:~|-|부터|에서)\s*(\d{1,2})(?::(\d{2}))?/);
-    const normalize=(h:string,m?:string)=>`${String(Math.min(23,Number(h))).padStart(2,"0")}:${String(Math.min(59,Number(m??0))).padStart(2,"0")}`;
-    const start_time=match?normalize(match[1],match[2]):fallbackStart;
-    const end_time=match?normalize(match[3],match[4]):fallbackEnd;
-    const start=timeToMinutes(start_time)??0;
-    const endRaw=timeToMinutes(end_time)??start;
-    const minutes=(endRaw<=start?endRaw+1440:endRaw)-start;
-    return {start_time,end_time,hours:Math.round((minutes/60)*10)/10};
-  }
-  async function confirmLateOvertime() {
-    if(!todayLog?.check_in_time) return;
-    const range=lateOvertimeRange();
-    if(range.hours<=0) return setMessage("추가근무 시간을 확인해주세요.");
-    if(!window.confirm(`${range.start_time}~${range.end_time} 추가근무가 맞습니까?\n관리자 승인 후 보상휴가로 적립됩니다.`)) return;
-    setBusy(true);
-    const {error}=await supabase.from("comp_time_requests").insert({employee_id:employee.id,work_date:localDateStr(todayLog.check_in_time),start_time:range.start_time,end_time:range.end_time,hours:range.hours,converted_days:Number((range.hours/8).toFixed(4)),reason:lateCheckoutText.trim()||"퇴근 지연 추가근무",status:"pending"});
-    setBusy(false);
-    if(error) return setMessage(error.message);
-    setLateCheckoutAsk(null);
-    await checkOut({sendKpi:true});
-    setMessage("추가근무 신청이 저장되었습니다. 관리자 승인 후 보상휴가로 적립됩니다.");
-  }
-  async function skipLateOvertime() {
-    setLateCheckoutAsk(null);
-    await checkOut({sendKpi:true});
-    setMessage("퇴근은 처리했습니다. 추가근무가 아니라 늦게 누른 경우 실제 퇴근시각으로 출퇴근 기록 정정을 요청해주세요.");
-  }
   function closeEarlyLeaveNotice() {
     const today=todayIso();
     try { localStorage.setItem(`lupl_early_leave_notice_${today.slice(0,7)}`,"1"); } catch {/**/}
@@ -4107,12 +4106,6 @@ function HomePage({ employee }: { employee: any }) {
     }
     if(reminderTargetTime&&Date.now()<reminderTargetTime) {
       setEarlyCheckoutAsk({targetTime:new Date(reminderTargetTime).toISOString()});
-      return;
-    }
-    if(reminderTargetTime&&Date.now()>=reminderTargetTime+10*60000) {
-      const nowDate=new Date();
-      setLateCheckoutText(`추가근무 ${hhmmFromDate(new Date(reminderTargetTime))}~${hhmmFromDate(nowDate)}`);
-      setLateCheckoutAsk({targetTime:new Date(reminderTargetTime).toISOString(),nowTime:nowDate.toISOString()});
       return;
     }
     await checkOut({sendKpi:true});
@@ -4369,20 +4362,6 @@ function HomePage({ employee }: { employee: any }) {
           <p style={{margin:"0 0 8px"}}>오늘 퇴근 기준 시각은 <b>{timeOnly(earlyCheckoutAsk.targetTime)}</b>입니다.</p>
           <p style={{margin:0}}>지금 퇴근하면 현재 시각으로 퇴근 기록이 저장됩니다.</p>
         </ConfirmModal>)}
-        {lateCheckoutAsk&&(
-          <div className="modal-backdrop" onClick={()=>setLateCheckoutAsk(null)}>
-            <div className="modal-box" onClick={e=>e.stopPropagation()}>
-              <div className="modal-header"><h2 className="card-title" style={{margin:0}}>퇴근 시간이 10분 넘게 지났습니다</h2><button className="modal-close" onClick={()=>setLateCheckoutAsk(null)}>✕</button></div>
-              <p className="body-text">퇴근 기준 시각은 <b>{timeOnly(lateCheckoutAsk.targetTime)}</b>입니다. 실제 추가근무가 있었나요?</p>
-              <input className="input" value={lateCheckoutText} onChange={e=>setLateCheckoutText(e.target.value)} />
-              <div className="actions" style={{justifyContent:"flex-end",marginTop:12}}>
-                <button className="button ghost" disabled={busy} onClick={()=>setLateCheckoutAsk(null)}>닫기</button>
-                <button className="button secondary" disabled={busy} onClick={skipLateOvertime}>추가근무 아님</button>
-                <button className="button" disabled={busy} onClick={confirmLateOvertime}>추가근무 신청</button>
-              </div>
-            </div>
-          </div>
-        )}
       </section>
 
       <div className="home-side-stack">
@@ -7587,6 +7566,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [editingRnr,setEditingRnr]=useState<any|null>(null);
   const [editingRnrTask,setEditingRnrTask]=useState<any|null>(null);
   const [editingRnrReview,setEditingRnrReview]=useState<any|null>(null);
+  const leaveWorksSyncRef=useRef<Set<string>>(new Set());
   const [rnrTaskDate,setRnrTaskDate]=useState(todayIso());
   const [rnrTaskDueDate,setRnrTaskDueDate]=useState(todayIso());
   const [rnrDepartmentFilter,setRnrDepartmentFilter]=useState("all");
@@ -7640,6 +7620,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       supabase.from("daily_tasks").select("*").eq("is_active",true).order("task_date",{ascending:false}).order("created_at",{ascending:false}).limit(200),
     ]);
     setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setRnrReviewRequests(rr.error?[]:rr.data??[]); setDailyTasks(dt.data??[]);
+    syncMissingLeaveWorksNotifications(r.data??[]);
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
@@ -7667,6 +7648,33 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     return due ? `기한 ${due}` : "";
   }
   const pendingRnrReviewRequests=rnrReviewRequests.filter((row:any)=>row.status==="pending");
+  async function syncMissingLeaveWorksNotifications(rows:any[]) {
+    const cutoff=Date.now()-3*24*60*60*1000;
+    const candidates=rows
+      .filter((request:any)=>leaveWorksEventTypeForRequest(request))
+      .filter((request:any)=>new Date(request.reviewed_at??request.created_at??0).getTime()>=cutoff)
+      .slice(0,30);
+    if(candidates.length===0) return;
+    const ids=candidates.map((request:any)=>request.id).filter(Boolean);
+    const {data,error}=await supabase
+      .from("kpi_works_notifications")
+      .select("attendance_request_id,event_type,status")
+      .in("attendance_request_id",ids);
+    const sentKeys=new Set<string>();
+    if(!error) {
+      (data??[]).forEach((row:any)=>{
+        if(row.attendance_request_id&&row.event_type) sentKeys.add(`${row.attendance_request_id}:${row.event_type}`);
+      });
+    }
+    for(const request of candidates) {
+      const eventType=leaveWorksEventTypeForRequest(request);
+      if(!eventType) continue;
+      const key=`${request.id}:${eventType}`;
+      if(sentKeys.has(key)||leaveWorksSyncRef.current.has(key)) continue;
+      leaveWorksSyncRef.current.add(key);
+      await sendWorksLeaveScheduleMessage(eventType,request.id);
+    }
+  }
   function rnrReviewRequester(row:any) {
     return empMap[row.requester_id]??employees.find((employee:any)=>employee.id===row.requester_id)??null;
   }
