@@ -872,9 +872,11 @@ body { overflow-x: hidden; }
 .kpi-textarea { min-height: 150px; line-height: 1.65; }
 .kpi-empty { display: grid; gap: 12px; }
 .kpi-today-list, .kpi-review-list { display: grid; gap: 8px; }
-.kpi-today-row { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; gap: 9px; align-items: center; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 9px 10px; }
+.kpi-today-row { display: grid; grid-template-columns: 28px 18px minmax(0,1fr) auto; gap: 9px; align-items: center; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 9px 10px; }
 .kpi-today-row span { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; background: #eef3fe; color: var(--blue-dark); font-size: 12px; font-weight: 850; }
-.kpi-today-row b { color: var(--ink); font-size: 13px; font-weight: 450; overflow-wrap: anywhere; }
+.kpi-today-row input { width: 16px; height: 16px; accent-color: #059669; }
+.kpi-today-row b { color: var(--ink); font-size: 13px; font-weight: 450; overflow-wrap: anywhere; display: grid; gap: 2px; }
+.kpi-today-row b small { color: #64748b; font-size: 11px; font-weight: 700; }
 .kpi-today-row em { font-style: normal; font-size: 11px; font-weight: 600; color: #94a3b8; white-space: nowrap; background: #f1f5f9; border-radius: 99px; padding: 2px 8px; }
 .kpi-today-row.done { background: #f0fbf6; border-color: #bdebd5; }
 .kpi-today-row.done b { color: #475569; }
@@ -965,15 +967,24 @@ body { overflow-x: hidden; }
 .kpi-progress-track em { display: block; width: var(--kpi-rate); height: 100%; border-radius: inherit; background: var(--employee-color); }
 .kpi-score-ring { display: none; }
 .kpi-roadmap-band { display: grid; grid-template-columns: minmax(130px,.75fr) minmax(130px,.75fr) minmax(240px,1.8fr); gap: 10px; margin-top: 12px; align-items: stretch; }
-.kpi-roadmap-node, .kpi-roadmap-months button { border: 1px solid #dbe5f3; border-radius: 8px; background: #fff; padding: 11px 12px; text-align: left; }
+.kpi-roadmap-node, .kpi-roadmap-months button { border: 1px solid #dbe5f3; border-radius: 8px; background: #fff; padding: 11px 12px; text-align: left; font: inherit; }
+.kpi-roadmap-node { cursor: pointer; }
 .kpi-roadmap-node.year { border-left: 4px solid #2563eb; }
 .kpi-roadmap-node.quarter { border-left: 4px solid #7c3aed; }
+.kpi-roadmap-node.active { background: #f8fbff; box-shadow: inset 0 0 0 1px rgba(37,99,235,.14); }
 .kpi-roadmap-node span, .kpi-roadmap-months span { display: block; color: #64748b; font-size: 11px; font-weight: 850; }
 .kpi-roadmap-node b, .kpi-roadmap-months b { display: block; margin-top: 3px; color: #172033; font-size: 18px; font-weight: 850; letter-spacing: 0; }
 .kpi-roadmap-node small, .kpi-roadmap-months small { display: block; margin-top: 3px; color: #64748b; font-size: 12px; font-weight: 750; }
 .kpi-roadmap-months { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
 .kpi-roadmap-months button { cursor: pointer; font: inherit; }
 .kpi-roadmap-months button.active { border-color: #059669; background: #ecfdf5; box-shadow: inset 0 0 0 1px rgba(5,150,105,.16); }
+.kpi-project-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 8px; margin-top: 12px; border: 1px solid var(--kpi-line); border-radius: 8px; background: #fbfdff; padding: 10px; }
+.kpi-project-list-head { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #172033; font-size: 13px; font-weight: 850; }
+.kpi-project-list-head span { color: #64748b; font-size: 12px; }
+.kpi-project-card { --employee-color: #2563eb; min-width: 0; border: 1px solid color-mix(in srgb,var(--employee-color) 18%,#dbe5f3); border-left: 4px solid var(--employee-color); border-radius: 8px; background: #fff; padding: 10px; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 8px; text-align: left; font: inherit; cursor: pointer; }
+.kpi-project-card b { min-width: 0; color: #172033; font-size: 13px; font-weight: 820; overflow-wrap: anywhere; }
+.kpi-project-card span { grid-column: 1; color: #64748b; font-size: 12px; font-weight: 720; }
+.kpi-project-card em { grid-row: 1 / span 2; grid-column: 2; align-self: center; border-radius: 999px; background: color-mix(in srgb,var(--employee-color) 10%,#fff); color: var(--employee-color); padding: 4px 8px; font-style: normal; font-size: 12px; font-weight: 850; }
 @media (max-width: 700px) {
   .kpi-roadmap-band { grid-template-columns: 1fr; }
   .kpi-assignee-picker > div { width: 100%; }

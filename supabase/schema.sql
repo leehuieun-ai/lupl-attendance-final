@@ -1290,6 +1290,11 @@ alter table public.kpi_entries
 alter table public.kpi_entries
   add column if not exists mentor_employee_id uuid references public.employees(id) on delete set null;
 
+alter table public.kpi_entries
+  add column if not exists due_date date,
+  add column if not exists project_start date,
+  add column if not exists project_end date;
+
 create index if not exists kpi_entries_employee_date_idx
 on public.kpi_entries(employee_id, work_date desc, scope, is_active);
 
@@ -1302,6 +1307,14 @@ on public.kpi_entries(parent_id);
 create index if not exists kpi_entries_mentor_employee_idx
 on public.kpi_entries(mentor_employee_id, work_date desc)
 where mentor_employee_id is not null;
+
+create index if not exists kpi_entries_due_date_idx
+on public.kpi_entries(due_date, employee_id, is_active)
+where due_date is not null;
+
+create index if not exists kpi_entries_project_period_idx
+on public.kpi_entries(project_start, project_end, is_active)
+where project_start is not null or project_end is not null;
 
 create table if not exists public.kpi_works_notifications (
   id uuid primary key default gen_random_uuid(),
