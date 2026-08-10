@@ -518,6 +518,34 @@ function leaveWorksEventTypeForRequest(request:any):"leave_requested"|"leave_app
   if(request?.status==="rejected") return "leave_rejected";
   return null;
 }
+const leaveWorksSyncKeys = new Set<string>();
+async function syncMissingLeaveWorksNotificationsForRows(rows:any[]) {
+  const cutoff=Date.now()-3*24*60*60*1000;
+  const candidates=rows
+    .filter((request:any)=>leaveWorksEventTypeForRequest(request))
+    .filter((request:any)=>new Date(request.reviewed_at??request.created_at??0).getTime()>=cutoff)
+    .slice(0,30);
+  if(candidates.length===0) return;
+  const ids=candidates.map((request:any)=>request.id).filter(Boolean);
+  const {data,error}=await supabase
+    .from("kpi_works_notifications")
+    .select("attendance_request_id,event_type,status")
+    .in("attendance_request_id",ids);
+  const completedKeys=new Set<string>();
+  if(!error) {
+    (data??[]).forEach((row:any)=>{
+      if(row.attendance_request_id&&row.event_type&&["sent","skipped"].includes(String(row.status??""))) completedKeys.add(`${row.attendance_request_id}:${row.event_type}`);
+    });
+  }
+  for(const request of candidates) {
+    const eventType=leaveWorksEventTypeForRequest(request);
+    if(!eventType) continue;
+    const key=`${request.id}:${eventType}`;
+    if(completedKeys.has(key)||leaveWorksSyncKeys.has(key)) continue;
+    leaveWorksSyncKeys.add(key);
+    await sendWorksLeaveScheduleMessage(eventType,request.id);
+  }
+}
 function attendanceCorrectionStatusLabel(status?: string | null) {
   return ({pending:"서명 대기",signed:"서명 완료",objected:"이의제기",cancelled:"취소"} as Record<string,string>)[String(status??"")] ?? (status || "-");
 }
@@ -1615,6 +1643,7 @@ export default function App() {
               return workday&&requiresAttendance&&Date.now()>=startAt.getTime()+30*60000;
             }),
           ].length;
+          void syncMissingLeaveWorksNotificationsForRows(rq.data??[]);
           setPendingCount(
             (rq.data??[]).filter((x:any)=>x.status==="pending").length +
             actionableCompCount +
@@ -7566,7 +7595,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [editingRnr,setEditingRnr]=useState<any|null>(null);
   const [editingRnrTask,setEditingRnrTask]=useState<any|null>(null);
   const [editingRnrReview,setEditingRnrReview]=useState<any|null>(null);
-  const leaveWorksSyncRef=useRef<Set<string>>(new Set());
   const [rnrTaskDate,setRnrTaskDate]=useState(todayIso());
   const [rnrTaskDueDate,setRnrTaskDueDate]=useState(todayIso());
   const [rnrDepartmentFilter,setRnrDepartmentFilter]=useState("all");
@@ -7620,7 +7648,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       supabase.from("daily_tasks").select("*").eq("is_active",true).order("task_date",{ascending:false}).order("created_at",{ascending:false}).limit(200),
     ]);
     setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setRnrReviewRequests(rr.error?[]:rr.data??[]); setDailyTasks(dt.data??[]);
-    syncMissingLeaveWorksNotifications(r.data??[]);
+    void syncMissingLeaveWorksNotificationsForRows(r.data??[]);
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
@@ -7648,33 +7676,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     return due ? `기한 ${due}` : "";
   }
   const pendingRnrReviewRequests=rnrReviewRequests.filter((row:any)=>row.status==="pending");
-  async function syncMissingLeaveWorksNotifications(rows:any[]) {
-    const cutoff=Date.now()-3*24*60*60*1000;
-    const candidates=rows
-      .filter((request:any)=>leaveWorksEventTypeForRequest(request))
-      .filter((request:any)=>new Date(request.reviewed_at??request.created_at??0).getTime()>=cutoff)
-      .slice(0,30);
-    if(candidates.length===0) return;
-    const ids=candidates.map((request:any)=>request.id).filter(Boolean);
-    const {data,error}=await supabase
-      .from("kpi_works_notifications")
-      .select("attendance_request_id,event_type,status")
-      .in("attendance_request_id",ids);
-    const sentKeys=new Set<string>();
-    if(!error) {
-      (data??[]).forEach((row:any)=>{
-        if(row.attendance_request_id&&row.event_type) sentKeys.add(`${row.attendance_request_id}:${row.event_type}`);
-      });
-    }
-    for(const request of candidates) {
-      const eventType=leaveWorksEventTypeForRequest(request);
-      if(!eventType) continue;
-      const key=`${request.id}:${eventType}`;
-      if(sentKeys.has(key)||leaveWorksSyncRef.current.has(key)) continue;
-      leaveWorksSyncRef.current.add(key);
-      await sendWorksLeaveScheduleMessage(eventType,request.id);
-    }
-  }
   function rnrReviewRequester(row:any) {
     return empMap[row.requester_id]??employees.find((employee:any)=>employee.id===row.requester_id)??null;
   }
@@ -8310,6 +8311,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const {error}=await supabase.rpc("review_attendance_request",{p_request_id:id,p_status:status,p_review_note:reviewNote});
     if(error)setMessage(error.message);else{
       const works=await sendWorksLeaveScheduleMessage(status==="approved"?"leave_approved":"leave_rejected",id);
+      if(!works?.sent) await syncMissingLeaveWorksNotificationsForRows([{id,status,created_at:new Date().toISOString(),reviewed_at:new Date().toISOString()}]);
       setMessage(`${status==="approved"?"휴가 신청을 승인했고 관련 일정에 반영됩니다.":"휴가 신청을 반려했습니다."}${worksScheduleMessage(works)}`);
       await load();
       onChanged();
