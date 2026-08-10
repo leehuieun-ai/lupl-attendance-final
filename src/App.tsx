@@ -4158,10 +4158,10 @@ function HomePage({ employee }: { employee: any }) {
   },[todayLog?.id,todayLog?.check_in_time,todayLog?.check_out_time,reminderTargetTime,notificationPermission]);
 
   let flexNote="";
-  if(checkedIn&&!checkedOut&&todayLog?.check_in_time){
+  if(checkedIn&&!checkedOut&&todayLog?.check_in_time&&reminderTarget){
     const cinKst=new Date(new Date(todayLog.check_in_time).getTime()+9*3600000);
     const h=cinKst.getUTCHours(), m=cinKst.getUTCMinutes();
-    if(h>=9&&(h<10||(h===10&&m===0))) flexNote=`시차출근 적용 중 · 퇴근 기준 ${String(h+9).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+    if(h>=9&&(h<10||(h===10&&m===0))) flexNote=`시차출근 적용 중 · 퇴근 기준 ${timeOnly(reminderTarget.toISOString())}`;
   }
 
   return (
@@ -4927,6 +4927,35 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setSaving(false);
     }
   }
+  async function updateKpiWorkDate(entry:any,nextDate:string) {
+    const date=String(nextDate??"").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    if(!entry?.id||!date) return;
+    if(!canManageKpi(entry)) return setMessage("본인 KPI만 날짜를 변경할 수 있습니다.");
+    setSaving(true); setMessage("");
+    try {
+      let result=await supabase.from("kpi_entries").update({
+        work_date:date,
+        due_date:entry.scope==="daily" ? date : entry.due_date??null,
+        updated_by:currentEmployee.id,
+        updated_at:new Date().toISOString(),
+      }).eq("id",entry.id);
+      if(result.error&&/due_date|updated_by|schema cache/i.test(result.error.message)){
+        result=await supabase.from("kpi_entries").update({work_date:date,updated_at:new Date().toISOString()}).eq("id",entry.id);
+      }
+      if(result.error) throw result.error;
+      if(entry.scope==="daily") {
+        setMonth(date.slice(0,7));
+        setQuickDailyDate(date);
+      }
+      await load();
+      setMessage("데일리 KPI 날짜를 변경했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
   useEffect(()=>{
     const onKeyDown=(event:KeyboardEvent)=>{
       if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="z"&&lastKpiStatusChange) {
@@ -5654,6 +5683,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           {entry.title}
                         </label>
                         {canManageKpi(entry)&&<div className="kpi-h-actions">
+                          <input
+                            className="kpi-daily-date-input"
+                            type="date"
+                            value={String(entry.work_date??selectedDailyDate).slice(0,10)}
+                            title="데일리 KPI 날짜 변경"
+                            disabled={saving}
+                            onClick={event=>event.stopPropagation()}
+                            onDragStart={event=>event.stopPropagation()}
+                            onChange={event=>updateKpiWorkDate(entry,event.target.value)}
+                          />
                           <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
                           <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
                         </div>}
