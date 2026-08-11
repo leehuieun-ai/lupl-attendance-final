@@ -201,12 +201,12 @@ Deno.serve(async (req) => {
 
     const { data: employee } = await userClient
       .from("employees")
-      .select("id, name, role")
+      .select("id, name, role, is_active, employment_status")
       .eq("user_id", user.id)
-      .eq("is_active", true)
-      .eq("employment_status", "active")
       .maybeSingle();
-    if (!employee) return json({ ok: false, error: "활성화된 직원 정보가 없습니다." }, 403);
+    if (!employee || employee.is_active === false || employee.employment_status === "inactive") {
+      return json({ ok: false, error: "활성화된 직원 정보가 없습니다." }, 403);
+    }
 
     if (eventType.startsWith("leave_")) {
       const attendanceRequestId = String(body.attendance_request_id ?? body.request_id ?? "");
