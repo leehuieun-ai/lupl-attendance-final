@@ -274,7 +274,7 @@ Deno.serve(async (req) => {
     const { data: kpis } = await userClient
       .from("kpi_entries")
       .select("id, title, status, sort_order")
-      .eq("employee_id", employee.id)
+      .or(`employee_id.eq.${employee.id},employee_id.is.null`)
       .eq("work_date", isoDate)
       .eq("scope", "daily")
       .eq("is_active", true)

@@ -3616,7 +3616,7 @@ function HomePage({ employee }: { employee: any }) {
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(80),
       supabase.from("attendance_correction_requests").select("*").eq("employee_id",employee.id).eq("status","pending").order("created_at",{ascending:true}).limit(10),
       supabase.from("work_time_change_consents").select("*").eq("employee_id",employee.id).eq("consent_version",ATTENDANCE_RULE_CONSENT_VERSION).maybeSingle(),
-      supabase.from("kpi_entries").select("*").eq("employee_id",employee.id).eq("work_date",today).eq("scope","daily").eq("is_active",true).order("sort_order",{ascending:true}),
+      supabase.from("kpi_entries").select("*").or(`employee_id.eq.${employee.id},employee_id.is.null`).eq("work_date",today).eq("scope","daily").eq("is_active",true).order("sort_order",{ascending:true}),
       supabase.from("kpi_entries").select("*").eq("scope","weekly").eq("is_active",true).gte("work_date",weekStart).lte("work_date",weekEnd).order("work_date",{ascending:true}).order("created_at",{ascending:true}).limit(100),
     ]);
     setWorkplaces(places??[]);
@@ -3858,12 +3858,40 @@ function HomePage({ employee }: { employee: any }) {
       setBusy(false);
     }
   }
-  function openCheckInKpiModal(attendanceLogId?:string|null) {
-    const currentText=todayKpis.map((entry:any,index:number)=>`${index+1}. ${entry.title}`).join("\n");
+  function openCheckInKpiModal(attendanceLogId?:string|null, kpis:any[]=todayKpis) {
+    const currentText=kpis.map((entry:any,index:number)=>`${index+1}. ${entry.title}`).join("\n");
     setKpiDraftText(currentText);
-    setKpiParentId(todayKpis.find((entry:any)=>entry.parent_id)?.parent_id??"");
+    setKpiParentId(kpis.find((entry:any)=>entry.parent_id)?.parent_id??"");
     setKpiNotice("");
     setKpiModal({mode:"check_in",attendanceLogId});
+  }
+  async function fetchTodayDailyKpis() {
+    const {data,error}=await supabase.from("kpi_entries")
+      .select("*")
+      .or(`employee_id.eq.${employee.id},employee_id.is.null`)
+      .eq("work_date",todayIso())
+      .eq("scope","daily")
+      .eq("is_active",true)
+      .order("sort_order",{ascending:true});
+    if(error) throw error;
+    return data??[];
+  }
+  async function handlePostCheckIn(attendanceLogId?:string|null) {
+    await load();
+    const kpis=await fetchTodayDailyKpis();
+    setTodayKpis(kpis);
+    if(kpis.length===0) {
+      openCheckInKpiModal(attendanceLogId, kpis);
+      return;
+    }
+    const works=await sendWorksKpiMessage("check_in", attendanceLogId);
+    if(works?.sent===false&&works?.skipped) {
+      setMessage(`${kpis.length}개 당일 KPI를 확인했습니다. 웍스 Secret 설정 후 자동 전송됩니다.`);
+    } else if(works?.sent===false&&works?.error) {
+      setMessage(`${kpis.length}개 당일 KPI를 확인했습니다. 웍스 전송 오류: ${works.error}`);
+    } else {
+      setMessage(`${kpis.length}개 당일 KPI를 웍스방에 전송했습니다.`);
+    }
   }
   function openCheckoutKpiModal() {
     setKpiNotice("");
@@ -4028,7 +4056,7 @@ function HomePage({ employee }: { employee: any }) {
         setDetectedPlace(place);setSelectedWorkplaceId(d.id);setMessage(`${d.name} GPS가 확인되어 ${isRecheck?"재출근":"출근"} 처리 중입니다.`);
         const data=await submitCheckIn(d.id,place,isRecheck);
         setMessage(`${d.name} ${isRecheck?"재출근":"출근"} 완료: ${data?.attendance_status??"처리 완료"}`);
-        setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load(); openCheckInKpiModal(data?.attendance_log_id);
+        setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await handlePostCheckIn(data?.attendance_log_id);
       }
       else{setDetectedPlace({currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip});setSelectedWorkplaceId("");setMessage("등록된 근무지 반경 안이 아닙니다. 현재 장소명을 입력하면 관리자 승인 대기 근무지로 저장됩니다.");}
     } catch(e:any){setMessage(e.message);setRecheckMode(false);} finally{setBusy(false);}
@@ -4065,7 +4093,7 @@ function HomePage({ employee }: { employee: any }) {
       }
       if(!workplaceId) throw new Error("근무지 선택 또는 현재 장소명 입력이 필요합니다.");
       const data=await submitCheckIn(workplaceId,detectedPlace,recheckMode);
-      setMessage(recheckMode ? `출근 시간을 갱신했습니다: ${data?.attendance_status??"처리 완료"}` : `출근 처리 결과: ${data?.attendance_status??"처리 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await load(); openCheckInKpiModal(data?.attendance_log_id);
+      setMessage(recheckMode ? `출근 시간을 갱신했습니다: ${data?.attendance_status??"처리 완료"}` : `출근 처리 결과: ${data?.attendance_status??"처리 완료"}`); setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await handlePostCheckIn(data?.attendance_log_id);
     } catch(e:any){setMessage(e.message);} finally{setBusy(false);}
   }
   async function checkOut(options:{sendKpi?:boolean}={}) {
