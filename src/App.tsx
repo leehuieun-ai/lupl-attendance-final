@@ -632,8 +632,9 @@ function dateTimeLocalToIso(value?: string | null) {
 function addMinutes(d: Date, minutes: number) {
   return new Date(d.getTime() + minutes * 60000);
 }
-function latestCompEndForDate(compRequests:any[], dateIso:string) {
+function latestCompEndForDate(compRequests:any[], dateIso:string, employeeId?:string|null) {
   return compRequests.filter((r:any)=>r.status==="approved")
+    .filter((r:any)=>!employeeId||r.employee_id===employeeId)
     .filter((r:any)=>r.work_date===dateIso&&r.end_time)
     .reduce((latest:Date|null,r:any)=>{
       let end=kstDateTime(dateIso,r.end_time);
@@ -837,7 +838,7 @@ function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequ
   const checkInDate=new Date(log.check_in_time);
   const employeeLeaveRows=leaveRequests.filter((request:any)=>!request?.employee_id||request.employee_id===employee.id);
   let target=expectedWorkEndForDate(dateIso,sched,attendanceLeaveRowsForDate(dateIso,employeeLeaveRows),checkInDate).expectedEnd;
-  const compEnd=latestCompEndForDate(compRequests,dateIso);
+  const compEnd=latestCompEndForDate(compRequests,dateIso,employee?.id);
   return compEnd&&compEnd.getTime()>target.getTime()?compEnd:target;
 }
 function readSentReminderKeys() {
@@ -904,9 +905,9 @@ function employeeScheduleColor(employeeId:string){
   return EMPLOYEE_COLORS[hash%EMPLOYEE_COLORS.length];
 }
 function employeeColorFromList(employees:any[],employeeId:string){
-  const ordered=[...employees].sort((a,b)=>String(a.employee_no??a.id).localeCompare(String(b.employee_no??b.id)));
-  const index=ordered.findIndex(e=>e.id===employeeId);
-  return index>=0?EMPLOYEE_COLORS[index%EMPLOYEE_COLORS.length]:employeeScheduleColor(employeeId);
+  const employee=employees.find(e=>e.id===employeeId);
+  const seed=String(employee?.employee_no??employee?.id??employeeId);
+  return employeeScheduleColor(seed);
 }
 function monthDates(anchor:string){
   const d=dateFromIso(anchor);
@@ -1626,7 +1627,7 @@ export default function App() {
             .filter((log:any)=>isToday(log.check_in_time))
             .sort(byCheckInDesc)
             .forEach((log:any)=>{ if(!todayLogByEmployee[log.employee_id]) todayLogByEmployee[log.employee_id]=log; });
-          const activeEmployeesForBadge=(emps.data??[]).filter((employee:any)=>isEmployeeActive(employee)&&!isTestEmployee(employee));
+          const activeEmployeesForBadge=(emps.data??[]).filter((employee:any)=>isEmployeeActive(employee)&&employeeWorksOnDate(employee,todayIso())&&!isTestEmployee(employee));
           const approvedWorkTimeChanges=(wt.data??[]).filter((x:any)=>x.status==="approved");
           const hasPendingCorrectionForBadge=(employeeId:string)=>correctionRows.some((x:any)=>x.employee_id===employeeId&&x.status==="pending");
           const attendanceCorrectionCandidateCount=[
@@ -4553,6 +4554,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [highlightKpiId,setHighlightKpiId]=useState<string|null>(null);
   const [dailyRoutineChecks,setDailyRoutineChecks]=useState<Record<string,string[]>>(()=>{try{return JSON.parse(localStorage.getItem("lupl_daily_kpi_routine_checks")??"{}");}catch{return {};}});
   const [kpiCommentDrafts,setKpiCommentDrafts]=useState<Record<string,string>>({});
+  const [openKpiCommentId,setOpenKpiCommentId]=useState("");
   const [kpiTaskComments,setKpiTaskComments]=useState<Record<string,any[]>>(()=>{try{return JSON.parse(localStorage.getItem("lupl_kpi_task_comments")??"{}");}catch{return {};}});
   const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
@@ -5147,7 +5149,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const kpiCommentProblems=operatingDailyEntries.flatMap((entry:any)=>
     (kpiTaskComments[entry.id]??[]).map((comment:any)=>({entry,comment}))
   ).sort((a:any,b:any)=>String(b.comment.createdAt??"").localeCompare(String(a.comment.createdAt??"")));
-  const kpiUnlinkedProblems=operatingTodoEntries.filter((entry:any)=>!entry.parent_id);
+  const kpiUnlinkedProblems=operatingTodoEntries.filter((entry:any)=>!entry.parent_id&&!isDailyRoutineEntry(entry));
   const kpiProblemCount=kpiCommentProblems.length+kpiUnlinkedProblems.length;
   function boardEntriesForProject(project:any|null) {
     const projectIds=new Set(operatingProjectGoals.map((goal:any)=>goal.id));
@@ -5825,7 +5827,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 const summary=projectSummary(goal);
                 const period=kpiProjectPeriod(goal);
                 return (
-                  <button type="button" key={goal.id} className={`kpi-perdoo-node${focusProjectId===goal.id?" active":""}`} style={kpiLinkedStyle(goal)} onClick={()=>setFocusProjectId(focusProjectId===goal.id?"all":goal.id)}>
+                  <button type="button" key={goal.id} className={`kpi-perdoo-node${focusProjectId===goal.id?" active":""}`} style={kpiLinkedStyle(goal)} onClick={()=>setFocusProjectId(goal.id)}>
                     <span>Objective</span>
                     <b>{goal.title}</b>
                     <small>{period?`${period.start} ~ ${period.end}`:String(goal.work_date??monthStart).slice(0,7)}</small>
@@ -5880,7 +5882,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               {operatingProjectGoals.length===0&&<p className="kpi-weekdone-empty">월간 KPI를 만들면 계층 트리가 표시됩니다.</p>}
               {operatingProjectGoals.slice(0,3).map((goal:any)=>(
                 <div className="kpi-weekdone-objective" key={goal.id} style={kpiLinkedStyle(goal)}>
-                  <button type="button" onClick={()=>setFocusProjectId(focusProjectId===goal.id?"all":goal.id)}>
+                  <button type="button" onClick={()=>setFocusProjectId(goal.id)}>
                     <span>O</span>
                     <b>{goal.title}</b>
                     <em>{projectSummary(goal).rate}%</em>
@@ -5915,13 +5917,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             <div className="kpi-weekdone-column problems">
               <b>Problems</b>
               <span>연결/반복 점검</span>
-              {operatingTodoEntries.filter((entry:any)=>!entry.parent_id).slice(0,3).map((entry:any)=>(
+              {operatingTodoEntries.filter((entry:any)=>!entry.parent_id&&!isDailyRoutineEntry(entry)).slice(0,3).map((entry:any)=>(
                 <button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>주간 KPI 연결 필요 · {entry.title}</button>
               ))}
               {isAdminView&&operatingRnrCandidates.slice(0,2).map((candidate:any)=>(
                 <button type="button" key={candidate.key}>R&R 후보 · {candidate.title}</button>
               ))}
-              {operatingTodoEntries.filter((entry:any)=>!entry.parent_id).length===0&&(!isAdminView||operatingRnrCandidates.length===0)&&<small>점검 이슈 없음</small>}
+              {operatingTodoEntries.filter((entry:any)=>!entry.parent_id&&!isDailyRoutineEntry(entry)).length===0&&(!isAdminView||operatingRnrCandidates.length===0)&&<small>점검 이슈 없음</small>}
             </div>
           </section>
         </div>
@@ -5988,13 +5990,17 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           <span>{entry.title}</span>
                         </label>
                         <small>{weeklyTitleForDaily(entry)}</small>
-                        {canManageKpi(entry)&&<button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>}
+                        {canManageKpi(entry)&&<div className="kpi-task-actions">
+                          <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                          <button className="icon-button" title="댓글" onClick={()=>setOpenKpiCommentId(openKpiCommentId===entry.id?"":entry.id)}><i className="ti ti-message-circle" aria-hidden="true"></i></button>
+                          <button className="icon-button danger" title="삭제" onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                        </div>}
                         <div className="kpi-task-comment-box">
                           {(kpiTaskComments[entry.id]??[]).slice(-2).map((comment:any)=><p key={comment.id}><b>{comment.author||"댓글"}</b> {comment.text}</p>)}
-                          <div>
+                          {openKpiCommentId===entry.id&&<div>
                             <input className="input" value={kpiCommentDrafts[entry.id]??""} onChange={event=>setKpiCommentDrafts(prev=>({...prev,[entry.id]:event.target.value}))} onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();addKpiTaskComment(entry);}}} placeholder="댓글 입력" />
                             <button className="button ghost compact" onClick={()=>addKpiTaskComment(entry)}>등록</button>
-                          </div>
+                          </div>}
                         </div>
                       </>
                     )}
@@ -6030,7 +6036,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 const participantIds=projectParticipantIds(goal);
                 const notionUrl=projectNotionUrl(goal);
                 return (
-                  <button type="button" className={`kpi-ops-project${focusProjectId===goal.id?" active":""}${highlightKpiId===goal.id?" kpi-focus-pulse":""}`} key={goal.id} data-operating-kpi-id={goal.id} style={kpiLinkedStyle(goal)} onClick={()=>{setFocusProjectId(focusProjectId===goal.id?"all":goal.id);setKpiView("monthly");}}>
+                  <button type="button" className={`kpi-ops-project${focusProjectId===goal.id?" active":""}${highlightKpiId===goal.id?" kpi-focus-pulse":""}`} key={goal.id} data-operating-kpi-id={goal.id} style={kpiLinkedStyle(goal)} onClick={()=>{setFocusProjectId(goal.id);setKpiView("monthly");}}>
                     <div>
                       <b>{goal.title}</b>
                       <span>기간 {projectMonthPeriodLabel(goal)}</span>
@@ -6281,7 +6287,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             {operatingProjectGoals.slice(0,7).map((goal:any)=>{
               const summary=projectSummary(goal);
               return (
-                <button type="button" key={goal.id} className={`kpi-slack-channel${focusProjectId===goal.id?" active":""}`} onClick={()=>setFocusProjectId(focusProjectId===goal.id?"all":goal.id)}>
+                <button type="button" key={goal.id} className={`kpi-slack-channel${focusProjectId===goal.id?" active":""}`} onClick={()=>setFocusProjectId(goal.id)}>
                   <i className="ti ti-hash" aria-hidden="true"></i>
                   <span>{goal.title}</span>
                   <em>{summary.rate}%</em>
@@ -8778,6 +8784,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [scheduleMsg,setScheduleMsg]=useState("");
   const [leaveModalEmp,setLeaveModalEmp]=useState<any|null>(null);
   const [leaveUsageEmpId,setLeaveUsageEmpId]=useState("all");
+  const [openLeaveUsageId,setOpenLeaveUsageId]=useState("");
   const [correctionDraft,setCorrectionDraft]=useState<any|null>(null);
   const [approvalCommand,setApprovalCommand]=useState("");
   const [approvalCommandMsg,setApprovalCommandMsg]=useState("");
@@ -9859,6 +9866,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     onChanged();
   }
   const activeEmployees=employees.filter(e=>isEmployeeActive(e)&&!isTestEmployee(e)).sort(sortEmployeesBySeniority);
+  const todayActiveEmployees=activeEmployees.filter((employee:any)=>employeeWorksOnDate(employee,todayIso()));
   const rnrKpiCandidateRoleGroups=(()=>{
     const candidateMap=new Map<string,any>();
     rnrKpiEntries.forEach((entry:any)=>{
@@ -9911,7 +9919,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     .filter((l:any)=>isToday(l.check_in_time))
     .sort(byCheckInDesc)
     .forEach((l:any)=>{ if(!todayLogByEmployee[l.employee_id]) todayLogByEmployee[l.employee_id]=l; });
-  const dailyRows=activeEmployees.map((e:any)=>({employee:e,log:todayLogByEmployee[e.id]}));
+  const dailyRows=todayActiveEmployees.map((e:any)=>({employee:e,log:todayLogByEmployee[e.id]}));
   const pW=workplaces.filter(w=>w.approval_status==="pending");
   const approvedWorkTimeChanges=workTimeRequests.filter(r=>r.status==="approved");
   const payrollMonth=currentMonthRange();
@@ -9964,7 +9972,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         };
       })
       .filter(Boolean),
-    ...activeEmployees
+    ...todayActiveEmployees
       .filter((employee:any)=>!todayLogByEmployee[employee.id]&&!hasPendingAttendanceCorrection(employee.id))
       .map((employee:any)=>{
         const workDate=todayIso();
@@ -10094,6 +10102,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const visibleRnrDepartmentCards=rnrDepartmentFilter==="all"
     ? rnrDepartmentCards
     : rnrDepartmentCards.filter((card:any)=>card.department===rnrDepartmentFilter);
+  const rnrOrgDepartmentNames=rnrDepartmentNames.filter((department:string)=>department!=="공통");
+  const visibleRnrOrgDepartmentCards=visibleRnrDepartmentCards.filter((card:any)=>card.department!=="공통");
   const selectedDetailEmployee=activeEmployees.find((employee:any)=>employee.id===selectedDetailEmployeeId)??activeEmployees[0]??null;
   const selectedBreakStart=selectedDetailEmployee?.break_start??"12:00";
   const selectedBreakEnd=selectedDetailEmployee?.break_end??"13:00";
@@ -10362,7 +10372,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           </div>
         </div>
         <div className="admin-command-metrics">
-          <div><span>출근</span><b>{checkedInCount}/{activeEmployees.length}</b><small>오늘 출근 기록</small></div>
+          <div><span>출근</span><b>{checkedInCount}/{todayActiveEmployees.length}</b><small>오늘 출근 기록</small></div>
           <div><span>퇴근 미완료</span><b>{openClockOutCount}</b><small>미퇴근 기록 확인 대상</small></div>
           <div><span>승인 대기</span><b>{pendingTotal}</b><small>휴가·추가근무·출퇴근 정정</small></div>
           <div><span>근태 확인</span><b>{attentionTotal}</b><small>누락·정정 서명 대상</small></div>
@@ -10372,7 +10382,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       {view==="dashboard"&&<section className="card dashboard-status-card">
         <h2 className="card-title"><i className="ti ti-users" aria-hidden="true"></i>오늘 직원 출퇴근</h2>
         <div className="grid four" style={{marginBottom:16}}>
-          <div className="metric"><div className="metric-value">{activeEmployees.length}</div><div className="metric-label">재직 직원</div></div>
+          <div className="metric"><div className="metric-value">{todayActiveEmployees.length}</div><div className="metric-label">오늘 근무 대상</div></div>
           <div className="metric"><div className="metric-value">{checkedInCount}</div><div className="metric-label">오늘 출근</div></div>
           <div className="metric"><div className="metric-value">{checkedOutCount}</div><div className="metric-label">오늘 퇴근</div></div>
           <div className="metric"><div className="metric-value">{pendingTotal}</div><div className="metric-label">확인 대기</div></div>
@@ -10614,13 +10624,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         <div className="comp-employee-filter leave-usage-filter">
           <button className={leaveUsageEmpId==="all"?"active":""} onClick={()=>setLeaveUsageEmpId("all")}>
             <b>전체</b>
-            <span>직원별 소진 내역 전체 보기</span>
+            <span>{leaveUsageRows.length}건</span>
           </button>
           {activeEmployees.map((employee:any)=>{
             const lv=leaveForEmployee(employee.id);
             return <button key={employee.id} className={leaveUsageEmpId===employee.id?"active":""} onClick={()=>setLeaveUsageEmpId(employee.id)}>
               <b>{employee.name}</b>
-              <span>{employee.no_annual_leave?"연차 없음":`연차 사용 ${lv?.used.toFixed(1)??"0.0"}일`} · 보상휴가 사용 {formatHourValue(lv?.compUsedH||0)}시간</span>
+              <span>{employee.employee_no||"사번 없음"}</span>
             </button>;
           })}
         </div>
@@ -10628,16 +10638,22 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           <table>
             <thead><tr><th>직원</th><th>구분</th><th>기간/시간</th><th>차감 기준</th><th>상태</th><th>사유</th></tr></thead>
             <tbody>
-              {leaveUsageRows.slice(0,80).map((request:any)=>(
-                <tr key={request.id}>
-                  <td data-label="직원"><b>{empName(request.employee_id)}</b></td>
-                  <td data-label="구분">{leaveTypeDisplayLabel(request)}</td>
-                  <td data-label="기간/시간">{leaveRequestTimeLabel(request)}</td>
-                  <td data-label="차감 기준"><span className={isCompLeaveUsageRequest(request)?"leave-source comp":"leave-source annual"}>{leaveDeductionLabel(request)}</span></td>
-                  <td data-label="상태"><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
-                  <td data-label="사유">{request.reason??"-"}</td>
-                </tr>
-              ))}
+              {leaveUsageRows.slice(0,80).map((request:any)=>{
+                const opened=openLeaveUsageId===request.id;
+                return (
+                  <>
+                    <tr key={request.id} className="leave-usage-summary-row" onClick={()=>setOpenLeaveUsageId(opened?"":request.id)}>
+                      <td data-label="직원"><button type="button" className="table-link-button"><b>{empName(request.employee_id)}</b></button></td>
+                      <td data-label="구분">{leaveTypeDisplayLabel(request)}</td>
+                      <td data-label="기간/시간">{leaveRequestTimeLabel(request)}</td>
+                      <td data-label="차감 기준"><span className={isCompLeaveUsageRequest(request)?"leave-source comp":"leave-source annual"}>{leaveDeductionLabel(request)}</span></td>
+                      <td data-label="상태"><span className={`badge ${badgeClass(request.status)}`}>{request.status==="pending"?"승인 대기":request.status==="approved"?"승인":"반려"}</span></td>
+                      <td data-label="사유"><button type="button" className="button ghost compact" onClick={event=>{event.stopPropagation();setOpenLeaveUsageId(opened?"":request.id);}}>{opened?"접기":"상세"}</button></td>
+                    </tr>
+                    {opened&&<tr key={`${request.id}-detail`} className="leave-usage-detail-row"><td colSpan={6}><b>{request.reason||"사유 없음"}</b><span>{formatDateTime(request.created_at)} 신청 · {request.reviewed_at?`${formatDateTime(request.reviewed_at)} 처리`:"처리 전"}</span></td></tr>}
+                  </>
+                );
+              })}
               {leaveUsageRows.length===0&&<tr><td colSpan={6} className="subtle">휴가 사용 기록이 없습니다.</td></tr>}
             </tbody>
           </table>
@@ -10847,7 +10863,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         <div className="rnr-section-title"><b>조직도</b><span>직원을 부서와 직책 기준으로 배치합니다. 업무 후보와 세부 R&R은 위 후보/업무 정리 영역에서 관리합니다.</span></div>
         <div className="rnr-department-tabs">
           <button className={rnrDepartmentFilter==="all"?"active":""} onClick={()=>setRnrDepartmentFilter("all")}>전체</button>
-          {rnrDepartmentNames.map((department:string)=><button key={department} className={rnrDepartmentFilter===department?"active":""} onClick={()=>setRnrDepartmentFilter(department)}>{department}</button>)}
+          {rnrOrgDepartmentNames.map((department:string)=><button key={department} className={rnrDepartmentFilter===department?"active":""} onClick={()=>setRnrDepartmentFilter(department)}>{department}</button>)}
         </div>
         <div className="rnr-hierarchy-chart">
           <div className="rnr-hierarchy-root">
@@ -10855,7 +10871,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             <span>{currentEmployee.name}</span>
           </div>
           <div className="rnr-hierarchy-branches">
-            {visibleRnrDepartmentCards.map((card:any)=>(
+            {visibleRnrOrgDepartmentCards.map((card:any)=>(
               <div className={`rnr-hierarchy-dept ${card.department==="경영지원부서"?"rnr-support-dept":""}`} key={`hierarchy-${card.department}`}>
                 <div className="rnr-hierarchy-dept-head">
                   <b>{card.department}</b>
@@ -10871,7 +10887,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           </div>
         </div>
         <div className="rnr-org-board">
-          {visibleRnrDepartmentCards.map((card:any)=>{
+          {visibleRnrOrgDepartmentCards.map((card:any)=>{
             const draft=rnrOrgDraftFor(card.department);
             return (
             <div className={`rnr-org-card ${card.department==="경영지원부서"?"rnr-support-dept":""}`} key={card.department}>
@@ -10885,7 +10901,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   <div className="rnr-member-row" key={member.id}>
                     <div className="rnr-member-name"><b>{member.name}</b><span>{member.employee_no}</span></div>
                     <select className="select compact-select" value={employeeDepartmentLabel(member)} onChange={e=>updateRnrOrgEmployee(member,{department:e.target.value})}>
-                      {rnrDepartmentNames.map((department:string)=><option key={department} value={department}>{department}</option>)}
+                      {rnrOrgDepartmentNames.map((department:string)=><option key={department} value={department}>{department}</option>)}
                     </select>
                     <select className="select compact-select" value={member.position??""} onChange={e=>updateRnrOrgEmployee(member,{position:e.target.value})}>
                       {POSITION_OPTIONS.map(option=><option key={option||"none"} value={option}>{option||"직책 없음"}</option>)}
@@ -12139,8 +12155,11 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
                   const dayEvents=rawDayEvents.map((event:any)=>displayScheduleEventForDate(employee,event,date));
                   const leaveEvents=leaveEventsFor(employee,date);
                   const overtimeEvents=overtimeEventsFor(employee,date);
-                  const shown=[...dayEvents.filter(event=>event.event_type!=="hidden"),...leaveEvents,...overtimeEvents];
                   const fullDayLeaveEvents=leaveEvents.filter(event=>!["hourly","comp_leave_use","half_am","half_pm"].includes(event.request_type));
+                  const shownDayEvents=fullDayLeaveEvents.length>0
+                    ? dayEvents.filter(event=>!["work","am_only","pm_only"].includes(event.event_type))
+                    : dayEvents;
+                  const shown=[...shownDayEvents.filter(event=>event.event_type!=="hidden"),...leaveEvents,...overtimeEvents];
                   const suppressBase=fullDayLeaveEvents.length>0||rawDayEvents.some(event=>["hidden","work","unavailable","am_only","pm_only"].includes(event.event_type));
                   const schedule=getScheduleForDate(employee,date,overrides,workTimeChanges);
                   const isBaseWorkday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(date)));
@@ -13029,7 +13048,13 @@ function ConsentReportPage() {
   workTimeConsents.filter(consent=>consent.consent_version===ATTENDANCE_RULE_CONSENT_VERSION).forEach(consent=>{if(!latestAttendancePolicyByEmployee[consent.employee_id]) latestAttendancePolicyByEmployee[consent.employee_id]=consent;});
   const employeeMap:Record<string,any>={};
   employees.forEach(employee=>{employeeMap[employee.id]=employee;});
-  const visibleConsentEmployees=employees.filter(employee=>isEmployeeActive(employee));
+  const documentEmployeeIds=new Set([
+    ...consents.map((record:any)=>record.employee_id),
+    ...workTimeConsents.map((record:any)=>record.employee_id),
+    ...workTimeRequests.map((record:any)=>record.employee_id),
+    ...attendanceCorrections.map((record:any)=>record.employee_id),
+  ].filter(Boolean));
+  const visibleConsentEmployees=employees.filter(employee=>isEmployeeActive(employee)||documentEmployeeIds.has(employee.id));
   const visibleConsentEmployeeIds=new Set(visibleConsentEmployees.map(employee=>employee.id));
   const deletedWorkTimeRequestIdSet=new Set(deletedWorkTimeRequestIds);
   const visibleWorkTimeRequests=workTimeRequests.filter(request=>visibleConsentEmployeeIds.has(request.employee_id)&&!deletedWorkTimeRequestIdSet.has(request.id));
@@ -13608,10 +13633,9 @@ function ReportsPage() {
         </div>
       </section>
 
-      <section className="card">
-        <h2 className="card-title"><i className="ti ti-list-check" aria-hidden="true"></i>전체 근태 기록</h2>
+      <CollapsibleSection title="전체 근태 기록" icon="ti-list-check" defaultOpen={false}>
         <DataTable rows={allLogRows} />
-      </section>
+      </CollapsibleSection>
 
       <section className="card">
         <h2 className="card-title"><i className="ti ti-alert-triangle" aria-hidden="true"></i>예외함</h2>
