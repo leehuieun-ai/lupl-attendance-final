@@ -9148,13 +9148,25 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       updated_at:new Date().toISOString(),
     };
     const existing=(existingRows??[]).find((event:any)=>["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type));
-    const result=existing?.id
-      ? await supabase.from("employee_schedule_events").update(payload).eq("id",existing.id)
-      : await supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
+    let savedEventId=existing?.id??null;
+    let result:any;
+    if(existing?.id){
+      result=await supabase.from("employee_schedule_events").update(payload).eq("id",existing.id);
+    } else {
+      result=await supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id}).select("id").single();
+      savedEventId=result.data?.id??null;
+    }
     if(result.error) return setApprovalCommandMsg(`일정 변경 실패: ${result.error.message}`);
-    if(noWork&&existing?.id){
-      const extraIds=(existingRows??[])
-        .filter((event:any)=>event.id!==existing.id&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type))
+    if(noWork){
+      const overlapResult=await supabase
+        .from("employee_schedule_events")
+        .select("id,event_type,start_date,end_date")
+        .eq("employee_id",employee.id)
+        .lte("start_date",dateRange.end_date)
+        .gte("end_date",dateRange.start_date);
+      if(overlapResult.error) return setApprovalCommandMsg(`겹친 일정 정리 실패: ${overlapResult.error.message}`);
+      const extraIds=(overlapResult.data??[])
+        .filter((event:any)=>event.id!==savedEventId&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type))
         .map((event:any)=>event.id)
         .filter(Boolean);
       if(extraIds.length>0) await supabase.from("employee_schedule_events").delete().in("id",extraIds);
