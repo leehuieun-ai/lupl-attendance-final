@@ -908,9 +908,9 @@ body { overflow-x: hidden; }
 .kpi-dashboard-head { display: grid; grid-template-columns: minmax(0,1fr) minmax(220px,300px); align-items: start; gap: 16px; }
 .kpi-dashboard-head .body-text { max-width: 760px; color: var(--kpi-muted); line-height: 1.65; }
 .kpi-month-select { width: 180px; flex-shrink: 0; background: var(--kpi-soft); }
-.kpi-head-actions { display: grid; gap: 8px; justify-items: stretch; }
-.kpi-head-actions .kpi-month-select { width: 100%; }
-.kpi-period-badge { border: 1px solid #dbe5f3; border-radius: 8px; background: #f8fbff; padding: 10px 12px; text-align: right; }
+.kpi-head-actions { display: flex; align-items: stretch; justify-content: flex-end; gap: 8px; min-width: 0; }
+.kpi-head-actions .kpi-month-select { width: 170px; min-width: 160px; }
+.kpi-period-badge { min-width: 160px; border: 1px solid #dbe5f3; border-radius: 8px; background: #f8fbff; padding: 10px 12px; text-align: left; display: grid; align-content: center; }
 .kpi-period-badge span { display: block; color: #64748b; font-size: 11px; font-weight: 850; }
 .kpi-period-badge b { display: block; margin-top: 3px; color: #172033; font-size: 20px; line-height: 1.1; font-weight: 850; letter-spacing: 0; }
 .kpi-guide-toggle { width: 100%; min-height: 46px; margin-top: 16px; border: 1px solid var(--kpi-line); border-radius: var(--kpi-radius); background: var(--kpi-surface); color: var(--kpi-body); display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 14px; font-size: 14px; font-weight: 700; cursor: pointer; }
@@ -989,6 +989,9 @@ body { overflow-x: hidden; }
   .kpi-roadmap-band { grid-template-columns: 1fr; }
   .kpi-assignee-picker > div { width: 100%; }
   .kpi-period-inputs { grid-template-columns: 1fr; }
+  .kpi-head-actions { flex-wrap: wrap; justify-content: stretch; }
+  .kpi-head-actions .kpi-month-select,
+  .kpi-period-badge { width: 100%; min-width: 0; }
 }
 .kpi-grid { display: grid; gap: 12px; }
 .kpi-grid.four { grid-template-columns: repeat(4,minmax(0,1fr)); }
@@ -1115,6 +1118,7 @@ body { overflow-x: hidden; }
 .kpi-h-daily-row label { display: flex; align-items: center; gap: 7px; font-size: 13px; color: #172033; cursor: pointer; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .kpi-h-daily-row label.done-label { color: #94a3b8; text-decoration: line-through; }
 .kpi-role-line { margin-top: 4px; color: #64748b; font-size: 11px; font-weight: 750; line-height: 1.35; overflow-wrap: anywhere; }
+.kpi-description-line { margin-top: 6px; border: 1px solid #dbeafe; border-radius: 6px; background: #f8fbff; color: #475569; padding: 7px 8px; font-size: 11px; font-weight: 750; line-height: 1.45; overflow-wrap: anywhere; }
 .kpi-h-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .kpi-daily-date-input {
   width: 118px;
@@ -1130,8 +1134,9 @@ body { overflow-x: hidden; }
 .kpi-daily-date-input:disabled { opacity: .62; }
 .kpi-h-empty { font-size: 12px; color: #94a3b8; padding: 6px 0; }
 .kpi-h-input-wrap { background: #f8fbff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 9px 10px; display: flex; flex-direction: column; gap: 7px; box-shadow: inset 0 0 0 1px rgba(37,99,235,.04); }
-.kpi-h-input-wrap input { background: #fff; border: 1px solid #dbe5f3; border-radius: 6px; outline: none; min-height: 34px; padding: 0 9px; font-size: 13px; color: #172033; width: 100%; }
+.kpi-h-input-wrap input { background: #fff; border: 1px solid #dbe5f3; border-radius: 6px; outline: none; min-height: 42px; padding: 0 11px; font-size: 14px; color: #172033; width: 100%; }
 .kpi-h-input-wrap input::placeholder { color: #b0b8c8; }
+.kpi-h-input-wrap select { min-height: 38px; font-size: 13px; }
 .kpi-h-input-wrap .kpi-date-input { min-height: 34px; border: 1px solid #dbe5f3; border-radius: 6px; background: #fff; padding: 0 9px; color: #172033; font-size: 12px; font-weight: 750; }
 .kpi-date-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px; align-items: center; }
 .kpi-h-input-row { display: flex; gap: 6px; align-items: center; }
@@ -1992,6 +1997,10 @@ body { overflow-x: hidden; }
 
   .kpi-month-select {
     width: 100%;
+  }
+
+  .kpi-head-actions {
+    justify-content: stretch;
   }
 
   .rnr-section-title {

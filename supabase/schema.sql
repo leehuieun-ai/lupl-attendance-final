@@ -1288,6 +1288,14 @@ alter table public.kpi_entries
   add column if not exists employee_name text;
 
 alter table public.kpi_entries
+  add column if not exists source_daily_task_id uuid references public.daily_tasks(id) on delete set null,
+  add column if not exists source_rnr_entry_id uuid references public.rnr_entries(id) on delete set null,
+  add column if not exists description text,
+  add column if not exists updated_by uuid references public.employees(id),
+  add column if not exists admin_note text,
+  add column if not exists change_log jsonb not null default '[]'::jsonb;
+
+alter table public.kpi_entries
   add column if not exists mentor_employee_id uuid references public.employees(id) on delete set null;
 
 alter table public.kpi_entries
@@ -1303,6 +1311,14 @@ on public.kpi_entries(scope, work_date desc, is_active);
 
 create index if not exists kpi_entries_parent_idx
 on public.kpi_entries(parent_id);
+
+create index if not exists kpi_entries_source_daily_task_idx
+on public.kpi_entries(source_daily_task_id, employee_id, work_date desc)
+where source_daily_task_id is not null;
+
+create index if not exists kpi_entries_source_rnr_idx
+on public.kpi_entries(source_rnr_entry_id, scope, work_date desc)
+where source_rnr_entry_id is not null;
 
 create index if not exists kpi_entries_mentor_employee_idx
 on public.kpi_entries(mentor_employee_id, work_date desc)

@@ -1079,7 +1079,7 @@ function scheduleEventPriorityValue(event:any){
 }
 function displayScheduleEventValue(event:any){
   if(event?.event_type==="hidden"&&scheduleEventIsNoWork(event)){
-    return {...event,event_type:"unavailable",title:event.title||"출근 안 함",start_time:event.start_time??"09:00",end_time:event.end_time??"19:00"};
+    return {...event,event_type:"unavailable",title:event.title||"출근 안 함"};
   }
   return event;
 }
@@ -1182,7 +1182,7 @@ function attendanceDisplay(emp:any,log:any,overrides:any[],workTimeChanges:any[]
   const workType=workplaceType==="remote"||log.status==="재택"?"재택":["special_school","external_education","other_field"].includes(workplaceType)||log.status==="외근"?"외근":null;
   const thresholdText=minutesToTime(lateThreshold);
   const statusText=log.status==="관리자 강제퇴근"?"관리자 마감":log.status==="지각"?"지각 확인 필요":log.status==="결근"?"결근 확인 필요":log.status;
-  if(reviewStatuses.includes(log.status)||["지각","결근"].includes(log.status)) return {primary:statusText,primaryClass:badgeClass(statusText),workType,lateMinutes,scheduleStart:thresholdText};
+  if(reviewStatuses.includes(log.status)||log.status==="결근"||(log.status==="지각"&&lateMinutes>=1)) return {primary:statusText,primaryClass:badgeClass(statusText),workType,lateMinutes,scheduleStart:thresholdText};
   return {primary:lateMinutes>=1?"지각 확인 필요":"정상출근",primaryClass:lateMinutes>=1?"bad":"good",workType,lateMinutes,scheduleStart:thresholdText};
 }
 function countScheduledWorkdays(emp:any, startIso:string, endIso:string, overrides:any[]=[], workTimeChanges:any[]=[], events:any[]=[]) {
@@ -1293,6 +1293,12 @@ function kpiCompletionRate(entries:any[]) {
   if(actionable.length===0) return null;
   const done=actionable.filter((entry:any)=>entry.status==="done").length;
   return Math.round((done/actionable.length)*100);
+}
+const DEFAULT_DAILY_KPI_TITLE = "기본 데일리 업무";
+const DEFAULT_DAILY_KPI_ITEMS = ["스케줄 정리","웍스 피드백","메일 확인","연락 회신","업무 마무리"];
+const DEFAULT_DAILY_KPI_DESCRIPTION = DEFAULT_DAILY_KPI_ITEMS.map(item=>`- ${item}`).join("\n");
+function optionalKpiColumnError(error:any) {
+  return /description|source_daily_task_id|source_rnr_entry_id|due_date|project_start|project_end|mentor_employee_id|admin_note|updated_by|change_log|schema cache|column .* does not exist/i.test(String(error?.message??""));
 }
 
 
@@ -1639,7 +1645,9 @@ export default function App() {
               const workday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(workDate)));
               const employeeLeaveRows=(rq.data??[]).filter((request:any)=>request.employee_id===employee.id);
               const requiresAttendance=hasRequiredAttendanceForDate(workDate,schedule,employeeLeaveRows);
-              const startAt=kstDateTime(workDate,schedule.work_start??employee.work_start??"09:00");
+              const requiredRanges=requiredWorkRangesForDate(workDate,schedule,attendanceLeaveRowsForDate(workDate,employeeLeaveRows));
+              const startMinute=requiredRanges[0]?.[0]??timeToMinutes(schedule.work_start??employee.work_start??"09:00")??9*60;
+              const startAt=kstDateTime(workDate,minutesToTime(startMinute));
               return workday&&requiresAttendance&&Date.now()>=startAt.getTime()+30*60000;
             }),
           ].length;
@@ -2205,10 +2213,10 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
           };
         });
         let result=await supabase.from("kpi_entries").insert(rows);
-        if(result.error&&/description|source_rnr_entry_id|due_date|updated_by|schema cache/i.test(result.error.message)){
-          const fallbackRows=rows.map(({description,source_rnr_entry_id,due_date,updated_by,...fallbackRow}:any)=>fallbackRow);
-          result=await supabase.from("kpi_entries").insert(fallbackRows);
-        }
+    if(result.error&&optionalKpiColumnError(result.error)){
+      const fallbackRows=rows.map(({description,source_rnr_entry_id,due_date,updated_by,...fallbackRow}:any)=>fallbackRow);
+      result=await supabase.from("kpi_entries").insert(fallbackRows);
+    }
         if(result.error) throw result.error;
       } else if(action.type==="create_schedule_event") {
         if(!isAdmin) {
@@ -2265,7 +2273,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
             };
           });
           let result=await supabase.from("kpi_entries").insert(rows);
-          if(result.error&&/description|due_date|project_start|project_end|mentor_employee_id|admin_note|updated_by|schema cache/i.test(result.error.message)){
+          if(result.error&&optionalKpiColumnError(result.error)){
             const fallbackRows=rows.map(({description,due_date,project_start,project_end,mentor_employee_id,admin_note,updated_by,...fallbackRow}:any)=>fallbackRow);
             result=await supabase.from("kpi_entries").insert(fallbackRows);
           }
@@ -2293,7 +2301,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
             updated_at:new Date().toISOString(),
           };
           let result=await supabase.from("kpi_entries").update(updatePayload).eq("id",childId);
-          if(result.error&&/project_start|project_end|admin_note|updated_by|schema cache/i.test(result.error.message)){
+          if(result.error&&optionalKpiColumnError(result.error)){
             const {project_start,project_end,admin_note,updated_by,...fallbackPayload}=updatePayload;
             result=await supabase.from("kpi_entries").update(fallbackPayload).eq("id",childId);
           }
@@ -3783,7 +3791,7 @@ function HomePage({ employee }: { employee: any }) {
         updated_by:employee.id,
         updated_at:nowIso,
       }).eq("id",existing.id);
-      if(updateResult.error&&/description|source_daily_task_id|source_rnr_entry_id|updated_by|schema cache/i.test(updateResult.error.message)){
+      if(updateResult.error&&optionalKpiColumnError(updateResult.error)){
         updateResult=await supabase.from("kpi_entries").update({status:"done",updated_at:nowIso}).eq("id",existing.id);
       }
       if(updateResult.error) throw updateResult.error;
@@ -3808,7 +3816,7 @@ function HomePage({ employee }: { employee: any }) {
       updated_by:employee.id,
     };
     let insertResult=await supabase.from("kpi_entries").insert(payload);
-    if(insertResult.error&&/description|source_daily_task_id|source_rnr_entry_id|updated_by|schema cache/i.test(insertResult.error.message)){
+    if(insertResult.error&&optionalKpiColumnError(insertResult.error)){
       const {description,source_daily_task_id,source_rnr_entry_id,updated_by,...fallbackPayload}=payload;
       insertResult=await supabase.from("kpi_entries").insert(fallbackPayload);
     }
@@ -3930,7 +3938,7 @@ function HomePage({ employee }: { employee: any }) {
       const workDate=todayIso();
       const nowIso=new Date().toISOString();
       const attendanceLogId=kpiModal?.attendanceLogId ?? todayLog?.id ?? null;
-      const deactivate=await supabase.from("kpi_entries")
+      let deactivate=await supabase.from("kpi_entries")
         .update({is_active:false,updated_at:nowIso})
         .eq("employee_id",employee.id)
         .eq("created_by",employee.id)
@@ -3938,6 +3946,15 @@ function HomePage({ employee }: { employee: any }) {
         .eq("scope","daily")
         .eq("is_active",true)
         .is("source_rnr_entry_id",null);
+      if(deactivate.error&&optionalKpiColumnError(deactivate.error)){
+        deactivate=await supabase.from("kpi_entries")
+          .update({is_active:false,updated_at:nowIso})
+          .eq("employee_id",employee.id)
+          .eq("created_by",employee.id)
+          .eq("work_date",workDate)
+          .eq("scope","daily")
+          .eq("is_active",true);
+      }
       if(deactivate.error) throw deactivate.error;
       const payload=lines.map((title,index)=>({
         employee_id:employee.id,
@@ -4153,7 +4170,7 @@ function HomePage({ employee }: { employee: any }) {
   const reminderTargetTime=reminderTarget?.getTime() ?? null;
   const activeCompRows=compTimeRows.filter((request:any)=>request.status==="approved");
   const reminderOffsets=[-5,5,15,30];
-  const monthlyLateCount=monthLogs.filter((log:any)=>attendanceDisplay(employee,log,todayOverrides,workTimeChanges,monthLeaveRequests).lateMinutes>0||String(log.status??"").includes("지각")).length;
+  const monthlyLateCount=monthLogs.filter((log:any)=>attendanceDisplay(employee,log,todayOverrides,workTimeChanges,monthLeaveRequests).lateMinutes>0).length;
   const monthlyLateLevel=monthlyLateCount>=3?"danger":monthlyLateCount>=2?"warn":"normal";
 
   async function continueCheckoutAfterKpi() {
@@ -4544,6 +4561,51 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const yearStart=`${month.slice(0,4)}-01-01`;
   const yearEnd=`${month.slice(0,4)}-12-31`;
   const selectedDailyDate=quickDailyDate>=monthStart&&quickDailyDate<=monthEnd ? quickDailyDate : monthStart;
+  async function insertKpiEntryRows(rows:any[]) {
+    let result=await supabase.from("kpi_entries").insert(rows);
+    if(result.error&&optionalKpiColumnError(result.error)){
+      const fallbackRows=rows.map(({description,source_daily_task_id,source_rnr_entry_id,due_date,project_start,project_end,mentor_employee_id,admin_note,updated_by,change_log,...fallbackRow}:any)=>fallbackRow);
+      result=await supabase.from("kpi_entries").insert(fallbackRows);
+    }
+    return result;
+  }
+  async function ensureDefaultDailyKpis(employeeRows:any[], loadedEntries:any[]) {
+    if(today<yearStart||today>yearEnd) return loadedEntries;
+    const targetEmployees=(isAdminView ? employeeRows : employeeRows.filter((employee:any)=>employee.id===currentEmployee.id))
+      .filter((employee:any)=>employee?.id&&employee.is_active!==false&&employee.employment_status!=="inactive"&&!isTestEmployee(employee));
+    const missing=targetEmployees.filter((employee:any)=>!loadedEntries.some((entry:any)=>
+      entry?.is_active!==false
+      && entry.scope==="daily"
+      && entry.work_date===today
+      && entry.employee_id===employee.id
+      && String(entry.title??"").trim()===DEFAULT_DAILY_KPI_TITLE
+    ));
+    if(missing.length===0) return loadedEntries;
+    const baseOrder=loadedEntries.filter((entry:any)=>entry.scope==="daily"&&entry.work_date===today).length;
+    const rows=missing.map((employee:any,index:number)=>({
+      employee_id:employee.id,
+      employee_name:employee.name,
+      parent_id:null,
+      scope:"daily",
+      work_date:today,
+      due_date:today,
+      title:DEFAULT_DAILY_KPI_TITLE,
+      description:DEFAULT_DAILY_KPI_DESCRIPTION,
+      status:"pending",
+      sort_order:baseOrder+index+1,
+      is_public:true,
+      is_active:true,
+      created_by:isAdminView?currentEmployee.id:employee.id,
+      updated_by:currentEmployee.id,
+    }));
+    const result=await insertKpiEntryRows(rows);
+    if(result.error) {
+      setMessage(`기본 데일리 업무 자동 생성 실패: ${result.error.message}`);
+      return loadedEntries;
+    }
+    const refreshed=await supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",yearStart).lte("work_date",yearEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true});
+    return refreshed.data??loadedEntries;
+  }
 
   async function load() {
     setMessage("");
@@ -4554,7 +4616,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
     ]);
     if(entryResult.error) setMessage("KPI 테이블이 아직 반영되지 않았습니다. Supabase SQL 패치를 먼저 실행해주세요.");
-    const loadedEntries=entryResult.data??[];
+    const loadedEntries=await ensureDefaultDailyKpis(employeeResult.data??[],entryResult.data??[]);
     setEntries(isAdminView ? loadedEntries : loadedEntries.filter((entry:any)=>entry.is_public!==false || entry.employee_id===currentEmployee.id || entry.created_by===currentEmployee.id));
     setEmployees(employeeResult.data??[]);
     setRnrEntries(rnrResult.data??[]);
@@ -4708,6 +4770,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const weekDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&kpiProjectOverlapsMonth(entry,month));
+  const parentGoalOptions=(list:any[])=>isAdminView
+    ? list
+    : list.filter((goal:any)=>!goal.employee_id||goal.employee_id===currentEmployee.id||goal.mentor_employee_id===currentEmployee.id||goal.created_by===currentEmployee.id);
+  const quickMonthlyGoals=parentGoalOptions(monthlyGoals);
+  const quickWeeklyGoals=parentGoalOptions(weeklyGoals);
   const selectedProject=focusProjectId==="all"?null:monthlyGoals.find((goal:any)=>goal.id===focusProjectId)??null;
   function personName(id?:string|null) {
     if(!id) return "전체";
@@ -4806,7 +4873,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return Array.from(groups.entries()).sort(([a],[b])=>employeeSortValue(a).localeCompare(employeeSortValue(b)));
   }
   function scoreForEmployee(employeeId:string) {
-    const list=weekDailyEntries.filter((entry:any)=>entry.employee_id===employeeId);
+    const list=selectedDayEntries.filter((entry:any)=>entry.employee_id===employeeId);
     const rate=kpiCompletionRate(list);
     return {rate:rate??0,total:list.length,done:list.filter((entry:any)=>entry.status==="done").length};
   }
@@ -4905,11 +4972,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       created_by:currentEmployee.id,
       updated_by:currentEmployee.id,
     })));
-    let result=await supabase.from("kpi_entries").insert(payloads);
-    if(result.error&&/description|source_rnr_entry_id|due_date|project_start|project_end|admin_note|updated_by|schema cache/i.test(result.error.message)){
-      const fallbackPayloads=payloads.map(({description,source_rnr_entry_id,due_date,project_start,project_end,admin_note,updated_by,...fallbackPayload}:any)=>fallbackPayload);
-      result=await supabase.from("kpi_entries").insert(fallbackPayloads);
-    }
+    const result=await insertKpiEntryRows(payloads);
     if(result.error) throw result.error;
   }
   async function saveQuickKpi(scope:string) {
@@ -5159,13 +5222,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         {scope==="weekly"&&(
           <select className="select" value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
             <option value="">연결 월별 KPI 선택</option>
-            {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+            {quickMonthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
           </select>
         )}
         {scope==="daily"&&(
           <select className="select" value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
             <option value="">연결 주간 KPI 선택</option>
-            {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+            {quickWeeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
           </select>
         )}
         <input className="input" value={quickDrafts[scope]} onKeyDown={event=>handleQuickKpiKeyDown(event,scope)} onChange={e=>setQuickDrafts({...quickDrafts,[scope]:e.target.value})} placeholder={placeholder} />
@@ -5249,12 +5312,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           <button
             type="button"
             className={`kpi-score-card kpi-score-all${focusEmployeeId==="all"?" active":""}`}
-            style={{"--employee-color":"#334155","--kpi-rate":`${kpiCompletionRate(weekDailyEntries)??0}%`} as React.CSSProperties}
+            style={{"--employee-color":"#334155","--kpi-rate":`${kpiCompletionRate(selectedDayEntries)??0}%`} as React.CSSProperties}
             onClick={()=>{setFocusEmployeeId("all"); if(isAdminView) setQuickTargets([]);}}
           >
             <i aria-hidden="true"></i>
             <b>전체 직원</b>
-            <strong>{kpiCompletionRate(weekDailyEntries)??0}<small>%</small></strong>
+            <strong>{kpiCompletionRate(selectedDayEntries)??0}<small>%</small></strong>
             <span>직원 {scorePeople.length}명</span>
             <div className="kpi-progress-track"><em></em></div>
           </button>
@@ -5386,7 +5449,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 <label className="label">연결 월간 KPI</label>
                 <select className="select" value={editKpiDraft.parentId} onChange={e=>setEditKpiDraft({...editKpiDraft,parentId:e.target.value})}>
                   <option value="">연결 없음</option>
-                  {monthlyGoals.map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
+                  {quickMonthlyGoals.map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
                 </select>
               </div>
             )}
@@ -5395,7 +5458,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 <label className="label">연결 주간 KPI</label>
                 <select className="select" value={editKpiDraft.parentId} onChange={e=>setEditKpiDraft({...editKpiDraft,parentId:e.target.value})}>
                   <option value="">연결 없음</option>
-                  {weeklyGoals.map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
+                  {quickWeeklyGoals.map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
                 </select>
               </div>
             )}
@@ -5565,7 +5628,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   {isAdminView&&<div className="kpi-target-chip">담당 {quickTargetLabel()}</div>}
                   <select className="select" style={{fontSize:12}} value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
                     <option value="">연결 월별 KPI 선택</option>
-                    {monthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+                    {quickMonthlyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
                   </select>
                   <div className="kpi-h-input-row">
                     <input className="kpi-h-input-field" value={quickDrafts.weekly} onChange={e=>setQuickDrafts({...quickDrafts,weekly:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"weekly")} placeholder="이번 주 목표 입력 후 Enter" />
@@ -5668,7 +5731,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   {isAdminView&&<div className="kpi-target-chip">담당 {quickTargetLabel()}</div>}
                   <select className="select" style={{fontSize:12}} value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
                     <option value="">연결 주간 KPI 선택</option>
-                    {weeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+                    {quickWeeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
                   </select>
                   <div className="kpi-date-row">
                     <input className="kpi-date-input" type="date" min={monthStart} max={monthEnd} value={quickDailyDate} onChange={e=>setQuickDailyDate(e.target.value)} title="데일리 KPI 날짜" />
@@ -5748,6 +5811,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                         </div>}
                       </div>
                       {kpiRoleLine(entry)&&<div className="kpi-role-line">{kpiRoleLine(entry)}</div>}
+                      {entry.description&&<div className="kpi-description-line">{String(entry.description).split(/\r?\n/).filter(Boolean).slice(0,6).join(" · ")}</div>}
                     </div>
                   );
                   return (<>
@@ -8153,7 +8217,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     };});
     if(payloads.length===0) return setRnrMsg("데일리 KPI를 배정할 직원을 찾지 못했습니다.");
     let result=await supabase.from("kpi_entries").insert(payloads);
-    if(result.error&&/description|source_rnr_entry_id|due_date|updated_by|schema cache/i.test(result.error.message)){
+    if(result.error&&optionalKpiColumnError(result.error)){
       const fallbackPayloads=payloads.map(({description,source_rnr_entry_id,due_date,updated_by,...fallbackPayload}:any)=>fallbackPayload);
       result=await supabase.from("kpi_entries").insert(fallbackPayloads);
     }
@@ -8250,7 +8314,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       created_by:currentEmployee.id,
     }));
     let result=await supabase.from("kpi_entries").insert(payloads);
-    if(result.error&&/description|source_rnr_entry_id|schema cache/i.test(result.error.message)){
+    if(result.error&&optionalKpiColumnError(result.error)){
       const fallbackPayloads=payloads.map(({description,source_rnr_entry_id,...fallbackPayload}:any)=>fallbackPayload);
       result=await supabase.from("kpi_entries").insert(fallbackPayloads);
     }
@@ -8767,7 +8831,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         const workday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(workDate)));
         const employeeLeaveRows=requests.filter((request:any)=>request.employee_id===employee.id);
         const requiresAttendance=hasRequiredAttendanceForDate(workDate,schedule,employeeLeaveRows);
-        const startAt=kstDateTime(workDate,schedule.work_start??employee.work_start??"09:00");
+        const requiredRanges=requiredWorkRangesForDate(workDate,schedule,attendanceLeaveRowsForDate(workDate,employeeLeaveRows));
+        const startMinute=requiredRanges[0]?.[0]??timeToMinutes(schedule.work_start??employee.work_start??"09:00")??9*60;
+        const startAt=kstDateTime(workDate,minutesToTime(startMinute));
         if(!workday || !requiresAttendance || Date.now()<startAt.getTime()+30*60000) return null;
         return {
           key:`checkin-${employee.id}-${workDate}`,
@@ -8775,7 +8841,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           log:null,
           kind:"출근 미기록",
           workDate,
-          detail:`예정 출근 ${String(schedule.work_start??employee.work_start??"09:00").slice(0,5)} · 예정 퇴근 ${String(schedule.work_end??employee.work_end??"18:00").slice(0,5)}`,
+          detail:`예정 출근 ${minutesToTime(startMinute)} · 예정 퇴근 ${String(schedule.work_end??employee.work_end??"18:00").slice(0,5)}`,
         };
       })
       .filter(Boolean),
@@ -9076,8 +9142,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       event_type:noWork?"unavailable":"work",
       start_date:dateRange.start_date,
       end_date:dateRange.end_date,
-      start_time:noWork?"09:00":nextStart,
-      end_time:noWork?"19:00":nextEnd,
+      start_time:nextStart,
+      end_time:nextEnd,
       note:null,
       updated_at:new Date().toISOString(),
     };
@@ -9086,6 +9152,13 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       ? await supabase.from("employee_schedule_events").update(payload).eq("id",existing.id)
       : await supabase.from("employee_schedule_events").insert({...payload,created_by:currentEmployee.id});
     if(result.error) return setApprovalCommandMsg(`일정 변경 실패: ${result.error.message}`);
+    if(noWork&&existing?.id){
+      const extraIds=(existingRows??[])
+        .filter((event:any)=>event.id!==existing.id&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type))
+        .map((event:any)=>event.id)
+        .filter(Boolean);
+      if(extraIds.length>0) await supabase.from("employee_schedule_events").delete().in("id",extraIds);
+    }
     setApprovalCommand("");
     setApprovalCommandMsg(`${employee.name} ${periodLabel} 일정 예외를 저장했습니다.`);
     await load();
@@ -9154,7 +9227,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             <thead><tr><th>직원</th><th>출근 위치</th><th>출근 시각</th><th>퇴근 시각</th><th>상태</th><th>처리</th></tr></thead>
             <tbody>
               {dailyRows.map(({employee:e,log}:any)=>{
-                const display=attendanceDisplay(e,log,overrides,workTimeRequests.filter(r=>r.status==="approved"));
+                const display=attendanceDisplay(e,log,overrides,workTimeRequests.filter(r=>r.status==="approved"),requests);
                 const correctionPending=hasPendingAttendanceCorrection(e.id);
                 return (
                 <tr key={e.id}>
@@ -10167,7 +10240,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
   }
   function displayScheduleEvent(event:any){
     if(event?.event_type==="hidden"&&isNoWorkEvent(event)){
-      return {...event,event_type:"unavailable",title:event.title||"출근 안 함",start_time:event.start_time??"09:00",end_time:event.end_time??"19:00"};
+      return {...event,event_type:"unavailable",title:event.title||"출근 안 함"};
     }
     return event;
   }
@@ -10184,6 +10257,10 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
   }
   function displayScheduleEventForDate(employee:any,event:any,date:string){
     const shown=displayScheduleEvent(event);
+    if(isNoWorkEvent(shown)){
+      const sched=getScheduleForDate(employee,date,overrides,workTimeChanges);
+      return {...shown,start_time:shown?.start_time??sched.work_start,end_time:shown?.end_time??sched.work_end};
+    }
     const change=approvedWorkTimeChangeForDate(workTimeChanges,employee,date);
     const dayKey=dayKeyFromDate(dateFromIso(date));
     if(change&&["work","am_only","pm_only"].includes(shown?.event_type)&&(change.new_work_days??[]).includes(dayKey)){
@@ -10395,7 +10472,7 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
       const replacedIds=new Set<string>();
       if(replaceOverlappingNoWork){
         const overlapIds=events
-          .filter((event:any)=>event.employee_id===employee.id&&["hidden","unavailable"].includes(event.event_type)&&dateRangeList.some((period:any)=>dateRangesOverlap(period.start_date,period.end_date,event.start_date,event.end_date)))
+          .filter((event:any)=>event.employee_id===employee.id&&["hidden","unavailable","work","am_only","pm_only"].includes(event.event_type)&&dateRangeList.some((period:any)=>dateRangesOverlap(period.start_date,period.end_date,event.start_date,event.end_date)))
           .map((event:any)=>event.id)
           .filter(Boolean);
         if(overlapIds.length>0){
@@ -10411,8 +10488,8 @@ function TeamScheduleBoard({employees,events,overrides,workTimeChanges,absences,
           event_type:noWork?"unavailable":"work",
           start_date:period.start_date,
           end_date:period.end_date,
-          start_time:noWork?"09:00":nextStart,
-          end_time:noWork?"19:00":nextEnd,
+          start_time:nextStart,
+          end_time:nextEnd,
           note:null,
           updated_at:new Date().toISOString(),
         };
