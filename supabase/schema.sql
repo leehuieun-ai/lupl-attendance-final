@@ -1338,7 +1338,7 @@ create table if not exists public.kpi_works_notifications (
   attendance_log_id uuid references public.attendance_logs(id) on delete set null,
   attendance_request_id uuid references public.attendance_requests(id) on delete set null,
   kpi_entry_ids uuid[] not null default '{}',
-  event_type text not null check (event_type in ('check_in','check_out','leave_requested','leave_approved','leave_rejected')),
+  event_type text not null check (event_type in ('check_in','check_out','leave_requested','leave_approved','leave_rejected','kpi_comment')),
   channel_id text,
   message text not null,
   status text not null default 'pending' check (status in ('pending','sent','skipped','failed')),

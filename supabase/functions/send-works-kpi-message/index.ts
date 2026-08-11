@@ -6,9 +6,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-type WorksEventType = "check_in" | "check_out" | "leave_requested" | "leave_approved" | "leave_rejected";
+type WorksEventType = "check_in" | "check_out" | "leave_requested" | "leave_approved" | "leave_rejected" | "kpi_comment";
 
-const worksEventTypes: WorksEventType[] = ["check_in", "check_out", "leave_requested", "leave_approved", "leave_rejected"];
+const worksEventTypes: WorksEventType[] = ["check_in", "check_out", "leave_requested", "leave_approved", "leave_rejected", "kpi_comment"];
 const leaveTypeLabels: Record<string, string> = {
   annual: "연차",
   half_am: "오전 반차",
@@ -158,6 +158,20 @@ function buildLeaveMessage(eventType: WorksEventType, employeeName: string, requ
   return lines.join("\n").slice(0, 2000);
 }
 
+function buildKpiCommentMessage(projectTitle: string, entryTitle: string, author: string, commentText: string, appUrl: string) {
+  const lines = [
+    "[KPI 댓글 알림]",
+    `프로젝트: ${projectTitle || "연결 프로젝트 없음"}`,
+    `항목: ${entryTitle}`,
+    `작성자: ${author || "직원"}`,
+    `댓글: ${commentText}`,
+    "",
+    "확인하러 가시겠습니까?",
+    appUrl,
+  ];
+  return lines.join("\n").slice(0, 2000);
+}
+
 function worksChannelIdFor(eventType: WorksEventType) {
   if (eventType.startsWith("leave_")) return env("NAVER_WORKS_SCHEDULE_CHANNEL_ID");
   return env("NAVER_WORKS_KPI_CHANNEL_ID");
@@ -252,6 +266,116 @@ Deno.serve(async (req) => {
       if (!worksResponse.ok) {
         await record("failed", responseBody, `NAVER WORKS 메시지 전송 실패(${worksResponse.status})`);
         return json({ ok: true, sent: false, error: `NAVER WORKS 메시지 전송 실패(${worksResponse.status})`, detail: responseBody, message });
+      }
+
+      await record("sent", responseBody, null);
+      return json({ ok: true, sent: true, message });
+    }
+
+    if (eventType === "kpi_comment") {
+      const kpiEntryId = String(body.kpi_entry_id ?? "");
+      const commentText = String(body.comment_text ?? "").trim();
+      const commentAuthor = String(body.comment_author ?? employee.name ?? "").trim();
+      const appUrl = String(body.app_url ?? "").trim();
+      if (!kpiEntryId) return json({ ok: false, error: "kpi_entry_id가 필요합니다." }, 400);
+      if (!commentText) return json({ ok: false, error: "comment_text가 필요합니다." }, 400);
+
+      const { data: entry } = await userClient
+        .from("kpi_entries")
+        .select("id, employee_id, employee_name, title, scope, work_date, parent_id, created_by, mentor_employee_id")
+        .eq("id", kpiEntryId)
+        .maybeSingle();
+      if (!entry) return json({ ok: false, error: "KPI 항목을 찾을 수 없습니다." }, 404);
+
+      let weekly: any = null;
+      let project: any = entry.scope === "monthly" ? entry : null;
+      if (entry.scope === "weekly" && entry.parent_id) {
+        const { data } = await serviceClient
+          .from("kpi_entries")
+          .select("id, employee_id, title, scope, parent_id, mentor_employee_id")
+          .eq("id", entry.parent_id)
+          .maybeSingle();
+        project = data ?? null;
+      }
+      if (entry.scope === "daily" && entry.parent_id) {
+        const { data } = await serviceClient
+          .from("kpi_entries")
+          .select("id, employee_id, title, scope, parent_id, mentor_employee_id")
+          .eq("id", entry.parent_id)
+          .maybeSingle();
+        weekly = data ?? null;
+        if (weekly?.parent_id) {
+          const { data: monthly } = await serviceClient
+            .from("kpi_entries")
+            .select("id, employee_id, title, scope, parent_id, mentor_employee_id")
+            .eq("id", weekly.parent_id)
+            .maybeSingle();
+          project = monthly ?? null;
+        }
+      }
+
+      const allowedEmployeeIds = new Set([
+        entry.employee_id,
+        entry.created_by,
+        entry.mentor_employee_id,
+        weekly?.employee_id,
+        weekly?.mentor_employee_id,
+        project?.employee_id,
+        project?.mentor_employee_id,
+      ].filter(Boolean));
+      if (employee.role !== "admin" && !allowedEmployeeIds.has(employee.id)) {
+        return json({ ok: false, error: "해당 KPI 댓글 알림을 보낼 권한이 없습니다." }, 403);
+      }
+
+      const recipientId = entry.employee_id ?? project?.employee_id ?? weekly?.employee_id ?? null;
+      const recipientResult = recipientId
+        ? await serviceClient
+          .from("employees")
+          .select("id, name, works_user_id")
+          .eq("id", recipientId)
+          .maybeSingle()
+        : { data: null };
+      const recipient = recipientResult.data;
+      const projectTitle = project?.title ?? weekly?.title ?? "연결 프로젝트 없음";
+      const message = buildKpiCommentMessage(projectTitle, entry.title, commentAuthor, commentText, appUrl);
+      const botId = env("NAVER_WORKS_BOT_ID");
+      const worksUserId = String(recipient?.works_user_id ?? "").trim();
+
+      async function record(status: string, response: unknown = null, error: string | null = null) {
+        await serviceClient.from("kpi_works_notifications").insert({
+          employee_id: recipient?.id ?? entry.employee_id ?? employee.id,
+          attendance_log_id: null,
+          attendance_request_id: null,
+          kpi_entry_ids: [entry.id],
+          event_type: eventType,
+          channel_id: worksUserId ? `user:${worksUserId}` : null,
+          message,
+          status,
+          response,
+          error,
+        });
+      }
+
+      if (!botId || !worksUserId) {
+        await record("skipped", null, "NAVER_WORKS_BOT_ID 또는 직원 works_user_id가 설정되지 않았습니다.");
+        return json({ ok: true, sent: false, skipped: true, message });
+      }
+
+      const token = await getWorksToken();
+      const worksResponse = await fetch(`https://www.worksapis.com/v1.0/bots/${encodeURIComponent(botId)}/users/${encodeURIComponent(worksUserId)}/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content: { type: "text", text: message } }),
+      });
+      const responseText = await worksResponse.text();
+      let responseBody: unknown = responseText;
+      try { responseBody = responseText ? JSON.parse(responseText) : {}; } catch { /* keep text */ }
+      if (!worksResponse.ok) {
+        await record("failed", responseBody, `NAVER WORKS 1:1 메시지 전송 실패(${worksResponse.status})`);
+        return json({ ok: true, sent: false, error: `NAVER WORKS 1:1 메시지 전송 실패(${worksResponse.status})`, detail: responseBody, message });
       }
 
       await record("sent", responseBody, null);

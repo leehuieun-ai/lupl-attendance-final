@@ -934,7 +934,7 @@ function daysLabel(days:string[] = []) {
   return ordered.length ? ordered.map((d:string)=>DAY_LABELS[d]??d).join(", ") : "-";
 }
 function isEmployeeActive(employee:any) {
-  return employee?.employment_status==="active"&&employee?.is_active!==false;
+  return employee?.is_active!==false&&employee?.employment_status!=="inactive";
 }
 function isTestEmployee(employee:any) {
   const name=String(employee?.name??"").trim().toLowerCase();
@@ -1675,13 +1675,26 @@ export default function App() {
     const { data } = supabase.auth.onAuthStateChange(() => setTimeout(load, 0));
     return () => data.subscription.unsubscribe();
   }, []);
+  useEffect(()=>{
+    if(!employee) return;
+    const openKpiFromHash=()=>{
+      const params=new URLSearchParams(window.location.hash.replace(/^#/,""));
+      if(params.get("kpi")) {
+        setTab("kpi");
+        setKpiNavMode(employee.role==="admin"?"admin":"personal");
+      }
+    };
+    openKpiFromHash();
+    window.addEventListener("hashchange",openKpiFromHash);
+    return ()=>window.removeEventListener("hashchange",openKpiFromHash);
+  },[employee?.id,employee?.role]);
 
   async function signOut() { await supabase.auth.signOut(); setSession(null); setEmployee(null); setConsent(null); setWorkTimeConsent(null); setAdminPledgeConsent(null); }
 
   if (loading) return <div className="container" style={{ paddingTop: 48, textAlign: "center", color: "#8b94a6" }}>불러오는 중…</div>;
   if (!session) return <LoginPage />;
   if (!employee) return <div className="container"><section className="card auth-card"><h1 className="card-title">직원 정보가 없습니다</h1><p className="subtle">관리자 계정의 employees.user_id 연결을 확인해주세요.</p><button className="button full" onClick={signOut}>로그아웃</button></section></div>;
-  if (!employee.is_active || employee.employment_status !== "active") return <InactivePage signOut={signOut} />;
+  if (!isEmployeeActive(employee)) return <InactivePage signOut={signOut} />;
   const validPrivacyConsent=consentAppliesToCurrentEmployment(consent,employee) ? consent : null;
   const currentPrivacyConsent=validPrivacyConsent?.consent_version===PRIVACY_CONSENT_VERSION ? validPrivacyConsent : null;
   const validWorkTimeConsent=consentAppliesToCurrentEmployment(workTimeConsent,employee) ? workTimeConsent : null;
@@ -2069,12 +2082,13 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
       ? supabase.from("employee_schedule_events").select("*").gte("end_date",since).order("start_date",{ascending:true}).limit(120)
       : Promise.resolve({data:[],error:null});
     const [employeesResult,kpiResult,tasksResult,scheduleResult,rnrResult]=await Promise.all([
-      supabase.from("employees").select("id,name,employee_no,department,position,role,is_active,employment_status").eq("is_active",true).eq("employment_status","active").order("employee_no",{ascending:true}).limit(120),
+      supabase.from("employees").select("id,name,employee_no,department,position,role,is_active,employment_status").order("employee_no",{ascending:true}).limit(120),
       supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",kpiSince).order("work_date",{ascending:false}).limit(200),
       supabase.from("daily_tasks").select("*").eq("is_active",true).gte("task_date",since).order("task_date",{ascending:false}).limit(120),
       schedulePromise,
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(140),
     ]);
+    const activeAssistantEmployees=(employeesResult.data??[]).filter((row:any)=>isEmployeeActive(row));
     const context={
       current_page:{
         tab:currentTab,
@@ -2090,7 +2104,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
         position:employee.position,
         role:employee.role,
       },
-      employees:employeesResult.data??[],
+      employees:activeAssistantEmployees,
       kpis:kpiResult.data??[],
       daily_tasks:tasksResult.data??[],
       schedule_events:(scheduleResult as any).data??[],
@@ -3641,8 +3655,8 @@ function HomePage({ employee }: { employee: any }) {
     setTodayKpis(kpiRows??[]);
     setWeeklyKpiOptions(kpiWeeklyRows??[]);
     if(employee.role==="admin"){
-      const {data:todoEmployeeRows}=await supabase.from("employees").select("id,name,employee_no").eq("employment_status","active").order("employee_no",{ascending:true});
-      setTodoEmployees(todoEmployeeRows??[]);
+      const {data:todoEmployeeRows}=await supabase.from("employees").select("id,name,employee_no,is_active,employment_status").order("employee_no",{ascending:true});
+      setTodoEmployees((todoEmployeeRows??[]).filter((row:any)=>isEmployeeActive(row)));
     } else {
       setTodoEmployees([]);
     }
@@ -4189,10 +4203,6 @@ function HomePage({ employee }: { employee: any }) {
       if(openLogs[0]) closeSpecificLog(openLogs[0]);
       return;
     }
-    if(!checkoutKpiReady()) {
-      openCheckoutKpiModal();
-      return;
-    }
     continueCheckoutAfterKpi();
   }
   async function confirmEarlyCheckout() {
@@ -4533,21 +4543,28 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [quickMonthlyParentId,setQuickMonthlyParentId]=useState("");
   const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
   const [quickDailyDate,setQuickDailyDate]=useState(todayIso());
+  const [quickProjectNotionUrl,setQuickProjectNotionUrl]=useState("");
   const [quickProjectPeriod,setQuickProjectPeriod]=useState(()=>{
     const currentMonth=todayIso().slice(0,7);
     return {start:monthStartIso(currentMonth),end:monthEndIso(currentMonth)};
   });
   const [focusEmployeeId,setFocusEmployeeId]=useState(isAdminView?"all":currentEmployee.id);
   const [focusProjectId,setFocusProjectId]=useState("all");
+  const [highlightKpiId,setHighlightKpiId]=useState<string|null>(null);
+  const [dailyRoutineChecks,setDailyRoutineChecks]=useState<Record<string,string[]>>(()=>{try{return JSON.parse(localStorage.getItem("lupl_daily_kpi_routine_checks")??"{}");}catch{return {};}});
+  const [kpiCommentDrafts,setKpiCommentDrafts]=useState<Record<string,string>>({});
+  const [kpiTaskComments,setKpiTaskComments]=useState<Record<string,any[]>>(()=>{try{return JSON.parse(localStorage.getItem("lupl_kpi_task_comments")??"{}");}catch{return {};}});
   const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
-  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:"",employeeId:"",mentorEmployeeId:"",projectStart:"",projectEnd:""});
+  const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",parentId:"",employeeId:"",mentorEmployeeId:"",connectedEmployeeIds:[] as string[],projectStart:"",projectEnd:"",notionUrl:""});
   const [showDoneKpi,setShowDoneKpi]=useState(false);
   const [lastKpiStatusChange,setLastKpiStatusChange]=useState<any|null>(null);
   const [kpiTreeGoal,setKpiTreeGoal]=useState<any|null>(null);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
   const [kpiView,setKpiView]=useState<"daily"|"weekly"|"monthly"|"quarterly"|"yearly">("daily");
+  const [kpiFlowOpen,setKpiFlowOpen]=useState(false);
+  const [kpiRoadmapOpen,setKpiRoadmapOpen]=useState(false);
   const [draggingKpi,setDraggingKpi]=useState<{id:string,scope:"daily"|"weekly"|"monthly",sortOrder:number}|null>(null);
   const [dropTargetId,setDropTargetId]=useState<string|null>(null);
   const [dropColTarget,setDropColTarget]=useState<"monthly"|"weekly"|"daily"|null>(null);
@@ -4560,7 +4577,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const monthEnd=monthEndIso(month);
   const yearStart=`${month.slice(0,4)}-01-01`;
   const yearEnd=`${month.slice(0,4)}-12-31`;
-  const selectedDailyDate=quickDailyDate>=monthStart&&quickDailyDate<=monthEnd ? quickDailyDate : monthStart;
+  const selectedDailyDate=quickDailyDate>=monthStart&&quickDailyDate<=monthEnd
+    ? quickDailyDate
+    : today>=monthStart&&today<=monthEnd
+      ? today
+      : monthStart;
   async function insertKpiEntryRows(rows:any[]) {
     let result=await supabase.from("kpi_entries").insert(rows);
     if(result.error&&optionalKpiColumnError(result.error)){
@@ -4609,7 +4630,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
 
   async function load() {
     setMessage("");
-    const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status,department,position").order("employee_no",{ascending:true});
+    const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status,department,position,works_user_id").order("employee_no",{ascending:true});
     const [entryResult,employeeResult,rnrResult]=await Promise.all([
       supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",yearStart).lte("work_date",yearEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true}),
       employeeQuery,
@@ -4746,13 +4767,48 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const match=String(note??"").match(/\[프로젝트기간:(\d{4}-\d{2}-\d{2})~(\d{4}-\d{2}-\d{2})\]/);
     return match ? {start:match[1],end:match[2]} : null;
   }
+  function parseKpiNotionUrl(note?:string|null) {
+    const match=String(note??"").match(/\[노션:([^\]\n]+)\]/);
+    return match ? match[1].trim() : "";
+  }
+  function parseKpiConnectedEmployeeIds(note?:string|null) {
+    const match=String(note??"").match(/\[연결직원:([^\]\n]+)\]/);
+    if(!match) return [];
+    return Array.from(new Set(match[1].split(",").map(id=>id.trim()).filter(Boolean)));
+  }
   function stripKpiProjectPeriod(note?:string|null) {
     return String(note??"").replace(/\[프로젝트기간:\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}\]\s*/,"").trim();
+  }
+  function stripKpiNotionUrl(note?:string|null) {
+    return String(note??"").replace(/\[노션:[^\]\n]+\]\s*/,"").trim();
+  }
+  function stripKpiConnectedEmployees(note?:string|null) {
+    return String(note??"").replace(/\[연결직원:[^\]\n]+\]\s*/,"").trim();
+  }
+  function stripKpiAdminMeta(note?:string|null) {
+    return stripKpiConnectedEmployees(stripKpiNotionUrl(stripKpiProjectPeriod(note)));
   }
   function withKpiProjectPeriod(note:string,start?:string,end?:string) {
     const body=stripKpiProjectPeriod(note);
     if(!start||!end) return body;
     return [`[프로젝트기간:${start}~${end}]`,body].filter(Boolean).join("\n");
+  }
+  function withKpiProjectMeta(note:string,start?:string,end?:string,notionUrl?:string,connectedEmployeeIds:string[] = []) {
+    const body=stripKpiAdminMeta(note);
+    const notion=String(notionUrl??"").trim();
+    const connected=Array.from(new Set(connectedEmployeeIds.filter(Boolean)));
+    return [
+      start&&end ? `[프로젝트기간:${start}~${end}]` : "",
+      notion ? `[노션:${notion}]` : "",
+      connected.length>0 ? `[연결직원:${connected.join(",")}]` : "",
+      body,
+    ].filter(Boolean).join("\n");
+  }
+  function projectNotionUrl(project:any) {
+    return parseKpiNotionUrl(project?.admin_note);
+  }
+  function projectConnectedEmployeeIds(project:any) {
+    return parseKpiConnectedEmployeeIds(project?.admin_note);
   }
   function kpiProjectPeriod(entry:any) {
     const start=String(entry?.project_start??"").slice(0,10);
@@ -4766,13 +4822,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return dateRangesOverlap(monthStartIso(monthKey),monthEndIso(monthKey),period.start,period.end);
   }
   const dailyEntries=entries.filter((entry:any)=>entry.scope==="daily");
+  const allWeeklyEntries=entries.filter((entry:any)=>entry.scope==="weekly");
+  const monthDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=monthStart&&entry.work_date<=monthEnd);
   const selectedDayEntries=dailyEntries.filter((entry:any)=>entry.work_date===selectedDailyDate);
   const weekDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&kpiProjectOverlapsMonth(entry,month));
   const parentGoalOptions=(list:any[])=>isAdminView
     ? list
-    : list.filter((goal:any)=>!goal.employee_id||goal.employee_id===currentEmployee.id||goal.mentor_employee_id===currentEmployee.id||goal.created_by===currentEmployee.id);
+    : list.filter((goal:any)=>!goal.employee_id||goal.employee_id===currentEmployee.id||goal.mentor_employee_id===currentEmployee.id||projectConnectedEmployeeIds(goal).includes(currentEmployee.id)||goal.created_by===currentEmployee.id);
   const quickMonthlyGoals=parentGoalOptions(monthlyGoals);
   const quickWeeklyGoals=parentGoalOptions(weeklyGoals);
   const selectedProject=focusProjectId==="all"?null:monthlyGoals.find((goal:any)=>goal.id===focusProjectId)??null;
@@ -4781,9 +4839,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return employeeMap.get(id)?.name ?? entries.find((entry:any)=>entry.employee_id===id)?.employee_name ?? "직원";
   }
   function kpiRoleLine(entry:any) {
+    const connected=entry?.scope==="monthly"?projectConnectedEmployeeIds(entry):[];
     const parts=[
       entry?.employee_id ? `담당 ${personName(entry.employee_id)}` : "",
       entry?.mentor_employee_id ? `사수 ${personName(entry.mentor_employee_id)}` : "",
+      connected.length>0 ? `연결 ${personListLabel(connected,"")}` : "",
     ].filter(Boolean);
     return parts.join(" · ");
   }
@@ -4798,6 +4858,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const rootId=kpiRootId(entry);
     const root=rootId?monthlyGoals.find((goal:any)=>goal.id===rootId):null;
     return root?.employee_id??entry?.employee_id??null;
+  }
+  function kpiProjectId(entry:any):string|null {
+    if(!entry) return null;
+    if(entry.scope==="monthly") return entry.id;
+    if(entry.scope==="weekly") return entry.parent_id??entry.id;
+    const weekly=allWeeklyEntries.find((goal:any)=>goal.id===entry.parent_id);
+    return weekly?.parent_id??weekly?.id??entry.parent_id??null;
+  }
+  function weeklyTitleForDaily(entry:any) {
+    return allWeeklyEntries.find((goal:any)=>goal.id===entry.parent_id)?.title??"연결 주간 목표 없음";
   }
   function kpiProjectColor(entry:any) {
     const rootId=kpiRootId(entry);
@@ -4834,7 +4904,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const rootId=kpiRootId(entry);
     const root=rootId?monthlyGoals.find((goal:any)=>goal.id===rootId):null;
     const projectOwnerId=root?.employee_id??null;
-    return isAdminView || !entry?.employee_id || entry.employee_id===currentEmployee.id || entry.mentor_employee_id===currentEmployee.id || projectOwnerId===currentEmployee.id;
+    const connectedIds=root?projectConnectedEmployeeIds(root):projectConnectedEmployeeIds(entry);
+    return isAdminView || !entry?.employee_id || entry.employee_id===currentEmployee.id || entry.mentor_employee_id===currentEmployee.id || projectOwnerId===currentEmployee.id || connectedIds.includes(currentEmployee.id);
   }
   function canMoveKpi(entry:any) {
     return isAdminView || entry?.employee_id===currentEmployee.id;
@@ -4847,6 +4918,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const currentQuarter=Math.floor((currentMonthNumber-1)/3)+1;
   const quarterMonths=Array.from({length:3},(_,index)=>(currentQuarter-1)*3+index+1);
   const monthKeyFromNumber=(monthNumber:number)=>`${currentYear}-${String(monthNumber).padStart(2,"0")}`;
+  const quarterStart=monthStartIso(monthKeyFromNumber(quarterMonths[0]));
+  const quarterEnd=monthEndIso(monthKeyFromNumber(quarterMonths[2]));
+  const kpiViewStart=kpiView==="daily" ? selectedDailyDate : kpiView==="weekly" ? weekStart : kpiView==="monthly" ? monthStart : kpiView==="quarterly" ? quarterStart : `${currentYear}-01-01`;
+  const kpiViewEnd=kpiView==="daily" ? selectedDailyDate : kpiView==="weekly" ? weekEnd : kpiView==="monthly" ? monthEnd : kpiView==="quarterly" ? quarterEnd : `${currentYear}-12-31`;
+  const kpiViewLabel=kpiView==="daily" ? "데일리" : kpiView==="weekly" ? "주간" : kpiView==="monthly" ? "월간" : kpiView==="quarterly" ? `${currentQuarter}분기` : `${currentYear}년`;
+  const kpiViewRangeLabel=kpiViewStart===kpiViewEnd ? kpiViewStart : `${kpiViewStart} ~ ${kpiViewEnd}`;
+  const periodScoreEntries=dailyEntries.filter((entry:any)=>entry.work_date>=kpiViewStart&&entry.work_date<=kpiViewEnd);
+  const periodOverallRate=kpiCompletionRate(periodScoreEntries)??0;
   const yearMonthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&String(entry.work_date??"").startsWith(`${currentYear}-`));
   const quarterMonthlyGoals=yearMonthlyGoals.filter((entry:any)=>quarterMonths.some(monthNumber=>kpiProjectOverlapsMonth(entry,monthKeyFromNumber(monthNumber))));
   const roadmapMonths=quarterMonths.map(monthNumber=>{
@@ -4873,10 +4952,267 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return Array.from(groups.entries()).sort(([a],[b])=>employeeSortValue(a).localeCompare(employeeSortValue(b)));
   }
   function scoreForEmployee(employeeId:string) {
-    const list=selectedDayEntries.filter((entry:any)=>entry.employee_id===employeeId);
+    const list=periodScoreEntries.filter((entry:any)=>entry.employee_id===employeeId);
     const rate=kpiCompletionRate(list);
     return {rate:rate??0,total:list.length,done:list.filter((entry:any)=>entry.status==="done").length};
   }
+  const operatingEmployeeId=!isAdminView ? currentEmployee.id : focusEmployeeId==="all" ? null : focusEmployeeId;
+  function entryMatchesOperatingScope(entry:any) {
+    const root=monthlyGoals.find((goal:any)=>goal.id===kpiProjectId(entry)||goal.id===entry.id);
+    const connectedIds=root?projectConnectedEmployeeIds(root):projectConnectedEmployeeIds(entry);
+    const employeeOk=!operatingEmployeeId || entry.employee_id===operatingEmployeeId || entry.mentor_employee_id===operatingEmployeeId || entry.created_by===operatingEmployeeId || connectedIds.includes(operatingEmployeeId);
+    const projectOk=isDailyRoutineEntry(entry) || focusProjectId==="all" || kpiProjectId(entry)===focusProjectId || entry.id===focusProjectId || entry.parent_id===focusProjectId;
+    return employeeOk&&projectOk;
+  }
+  function projectLinkedEntries(project:any) {
+    return entries.filter((entry:any)=>entry.id===project.id||kpiProjectId(entry)===project.id);
+  }
+  function projectParticipantIds(project:any) {
+    return Array.from(new Set(projectLinkedEntries(project)
+      .flatMap((entry:any)=>[entry.employee_id,entry.mentor_employee_id,...(entry.id===project.id?projectConnectedEmployeeIds(project):[])])
+      .filter(Boolean)));
+  }
+  function personListLabel(ids:any[],fallback="담당 미정") {
+    const names=ids.map((id:any)=>personName(id)).filter(Boolean);
+    if(names.length===0) return fallback;
+    if(names.length<=3) return names.join(", ");
+    return `${names.slice(0,3).join(", ")} 외 ${names.length-3}명`;
+  }
+  function projectMonthPeriodLabel(project:any) {
+    const period=kpiProjectPeriod(project);
+    if(!period) return `${Number(String(project?.work_date??monthStart).slice(5,7))}월`;
+    const startYear=period.start.slice(0,4);
+    const endYear=period.end.slice(0,4);
+    const startMonth=Number(period.start.slice(5,7));
+    const endMonth=Number(period.end.slice(5,7));
+    return startYear===endYear ? `${startYear}년 ${startMonth}월 ~ ${endMonth}월` : `${startYear}년 ${startMonth}월 ~ ${endYear}년 ${endMonth}월`;
+  }
+  function kpiDeepLink(entry:any) {
+    const url=new URL(window.location.href);
+    url.hash=new URLSearchParams({
+      kpi:String(entry?.id??""),
+      project:String(kpiProjectId(entry)??entry?.id??"all"),
+      date:String(entry?.work_date??selectedDailyDate).slice(0,10),
+    }).toString();
+    return url.toString();
+  }
+  function focusKpiEntry(entry:any) {
+    const projectId=kpiProjectId(entry)??(entry?.scope==="monthly"?entry.id:null);
+    setFocusProjectId(projectId??"all");
+    if(entry?.work_date&&String(entry.work_date).length>=10) {
+      const date=String(entry.work_date).slice(0,10);
+      setMonth(date.slice(0,7));
+      setQuickDailyDate(date);
+    }
+    setKpiView(entry?.scope==="monthly"?"monthly":entry?.scope==="weekly"?"weekly":"daily");
+    setHighlightKpiId(entry?.id??null);
+    window.setTimeout(()=>{
+      const target=document.querySelector(`[data-operating-kpi-id="${entry?.id}"], [data-kpi-id="${entry?.id}"]`);
+      target?.scrollIntoView({behavior:"smooth",block:"center",inline:"center"});
+    },160);
+  }
+  async function sendWorksKpiCommentMessage(entry:any, comment:any) {
+    const {data,error}=await supabase.functions.invoke("send-works-kpi-message",{
+      body:{
+        event_type:"kpi_comment",
+        kpi_entry_id:entry.id,
+        comment_text:comment.text,
+        comment_author:comment.author,
+        app_url:kpiDeepLink(entry),
+      },
+    });
+    if(error) return {sent:false,error:error.message};
+    return data??{sent:false};
+  }
+  function dailyRoutineKey(entry:any) {
+    return String(entry?.id??`${entry?.employee_id??currentEmployee.id}-${entry?.work_date??selectedDailyDate}`);
+  }
+  function isDailyRoutineEntry(entry:any) {
+    return entry?.scope==="daily"&&String(entry?.title??"").trim()===DEFAULT_DAILY_KPI_TITLE;
+  }
+  function isSyntheticDailyRoutineEntry(entry:any) {
+    return entry?.isSyntheticRoutine===true;
+  }
+  function routineCheckedItems(entry:any) {
+    const key=dailyRoutineKey(entry);
+    const saved=dailyRoutineChecks[key];
+    if(Array.isArray(saved)) return saved;
+    return entry?.status==="done" ? DEFAULT_DAILY_KPI_ITEMS : [];
+  }
+  function routinePercent(entry:any) {
+    return Math.round((routineCheckedItems(entry).length/DEFAULT_DAILY_KPI_ITEMS.length)*100);
+  }
+  function toggleRoutineItem(entry:any,item:string,checked:boolean) {
+    if(!canManageKpi(entry)||saving) return;
+    const key=dailyRoutineKey(entry);
+    const current=new Set(routineCheckedItems(entry));
+    if(checked) current.add(item);
+    else current.delete(item);
+    const next=Array.from(current).filter(value=>DEFAULT_DAILY_KPI_ITEMS.includes(value));
+    setDailyRoutineChecks(prev=>{
+      const updated={...prev,[key]:next};
+      localStorage.setItem("lupl_daily_kpi_routine_checks",JSON.stringify(updated));
+      return updated;
+    });
+    const nextStatus=next.length===DEFAULT_DAILY_KPI_ITEMS.length ? "done" : "pending";
+    if(isSyntheticDailyRoutineEntry(entry)) return;
+    if(entry.status!==nextStatus) void updateKpiStatus(entry,nextStatus as "pending"|"done");
+  }
+  function addKpiTaskComment(entry:any) {
+    const key=String(entry?.id??"");
+    const text=String(kpiCommentDrafts[key]??"").trim();
+    if(!key||!text) return;
+    const comment={id:`${Date.now()}-${Math.random().toString(16).slice(2)}`,text,author:currentEmployee.name,employeeId:currentEmployee.id,createdAt:new Date().toISOString()};
+    setKpiTaskComments(prev=>{
+      const next={...prev,[key]:[...(prev[key]??[]),comment]};
+      localStorage.setItem("lupl_kpi_task_comments",JSON.stringify(next));
+      return next;
+    });
+    setKpiCommentDrafts(prev=>({...prev,[key]:""}));
+    void sendWorksKpiCommentMessage(entry,comment).then((result:any)=>{
+      if(result?.sent===false&&result?.skipped) setMessage("댓글은 저장됐고, 웍스 1:1 알림은 직원 works_user_id 설정 후 전송됩니다.");
+      else if(result?.sent===false&&result?.error) setMessage(`댓글은 저장됐지만 웍스 알림 오류: ${result.error}`);
+    });
+  }
+  function projectSummary(project:any) {
+    const linkedEntries=projectLinkedEntries(project);
+    const projectWeeklies=linkedEntries.filter((entry:any)=>entry.scope==="weekly");
+    const projectDailies=monthDailyEntries.filter((entry:any)=>kpiProjectId(entry)===project.id);
+    const done=projectDailies.filter((entry:any)=>entry.status==="done").length;
+    const total=projectDailies.length;
+    return {
+      weeklyCount:projectWeeklies.length,
+      monthlyCount:linkedEntries.filter((entry:any)=>entry.scope==="monthly").length,
+      allCount:linkedEntries.length,
+      todayCount:selectedDayEntries.filter((entry:any)=>kpiProjectId(entry)===project.id&&entry.status!=="done").length,
+      done,
+      total,
+      rate:total>0?Math.round(done/total*100):monthlyProgress(project),
+    };
+  }
+  const routineOwnerId=operatingEmployeeId??currentEmployee.id;
+  const routineOwner=employeeMap.get(routineOwnerId)??currentEmployee;
+  const hasOperatingDailyRoutine=selectedDayEntries.some((entry:any)=>isDailyRoutineEntry(entry)&&entryMatchesOperatingScope(entry));
+  const syntheticDailyRoutineEntry=hasOperatingDailyRoutine?null:{
+    id:`daily-routine-${routineOwnerId}-${selectedDailyDate}`,
+    isSyntheticRoutine:true,
+    employee_id:routineOwnerId,
+    employee_name:routineOwner?.name??currentEmployee.name,
+    parent_id:null,
+    scope:"daily",
+    work_date:selectedDailyDate,
+    due_date:selectedDailyDate,
+    title:DEFAULT_DAILY_KPI_TITLE,
+    description:DEFAULT_DAILY_KPI_DESCRIPTION,
+    status:"pending",
+    sort_order:-1000,
+    is_public:true,
+    is_active:true,
+    created_by:routineOwnerId,
+  };
+  const operatingDailyEntries=[
+    ...(syntheticDailyRoutineEntry?[syntheticDailyRoutineEntry]:[]),
+    ...selectedDayEntries,
+  ]
+    .filter(entryMatchesOperatingScope)
+    .sort((a:any,b:any)=>(isDailyRoutineEntry(a)?0:1)-(isDailyRoutineEntry(b)?0:1)||(a.status==="done"?1:0)-(b.status==="done"?1:0)||(a.sort_order??0)-(b.sort_order??0));
+  const operatingTodoEntries=operatingDailyEntries.filter((entry:any)=>entry.status!=="done");
+  const operatingDoneEntries=operatingDailyEntries.filter((entry:any)=>entry.status==="done");
+  const operatingMonthDoneEntries=monthDailyEntries
+    .filter((entry:any)=>entry.status==="done"&&entryMatchesOperatingScope(entry))
+    .sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??""))||(b.sort_order??0)-(a.sort_order??0));
+  const operatingProjectGoals=monthlyGoals.filter((goal:any)=>{
+    if(isAdminView&&!operatingEmployeeId) return true;
+    const ids=projectParticipantIds(goal);
+    return ids.includes(operatingEmployeeId??currentEmployee.id)||!goal.employee_id||goal.employee_id===(operatingEmployeeId??currentEmployee.id)||goal.created_by===(operatingEmployeeId??currentEmployee.id);
+  });
+  const operatingRnrCandidates=(()=>{
+    const groups=new Map<string,any>();
+    operatingMonthDoneEntries.forEach((entry:any)=>{
+      const source=entry.source_rnr_entry_id?rnrEntries.find((item:any)=>item.id===entry.source_rnr_entry_id):null;
+      const title=source?rnrPublicTitle(source):String(entry.title??"업무 기록").trim();
+      const key=source?.id??title.toLowerCase();
+      const prev=groups.get(key)??{key,title,source,count:0,employees:new Set<string>(),dates:new Set<string>()};
+      prev.count+=1;
+      if(entry.employee_id) prev.employees.add(entry.employee_id);
+      if(entry.work_date) prev.dates.add(entry.work_date);
+      groups.set(key,prev);
+    });
+    return Array.from(groups.values())
+      .map((group:any)=>({...group,employeeIds:Array.from(group.employees),dateCount:group.dates.size}))
+      .filter((group:any)=>group.count>=2||group.source)
+      .sort((a:any,b:any)=>b.count-a.count)
+      .slice(0,6);
+  })();
+  const kpiCommentProblems=operatingDailyEntries.flatMap((entry:any)=>
+    (kpiTaskComments[entry.id]??[]).map((comment:any)=>({entry,comment}))
+  ).sort((a:any,b:any)=>String(b.comment.createdAt??"").localeCompare(String(a.comment.createdAt??"")));
+  const kpiUnlinkedProblems=operatingTodoEntries.filter((entry:any)=>!entry.parent_id);
+  const kpiProblemCount=kpiCommentProblems.length+kpiUnlinkedProblems.length;
+  function boardEntriesForProject(project:any|null) {
+    const projectIds=new Set(operatingProjectGoals.map((goal:any)=>goal.id));
+    return entries.filter((entry:any)=>{
+      const root=monthlyGoals.find((goal:any)=>goal.id===kpiProjectId(entry)||goal.id===entry.id);
+      const connectedIds=root?projectConnectedEmployeeIds(root):projectConnectedEmployeeIds(entry);
+      const employeeOk=!operatingEmployeeId || entry.employee_id===operatingEmployeeId || entry.scope==="monthly" || entry.mentor_employee_id===operatingEmployeeId || entry.created_by===operatingEmployeeId || connectedIds.includes(operatingEmployeeId);
+      if(!employeeOk) return false;
+      if(project) return entry.id===project.id || kpiProjectId(entry)===project.id;
+      const projectId=kpiProjectId(entry);
+      return projectId ? projectIds.has(projectId) : entry.scope==="daily" || entry.scope==="weekly";
+    });
+  }
+  function boardCountSummary(project:any|null=null) {
+    const list=boardEntriesForProject(project);
+    return {
+      today:list.filter((entry:any)=>entry.scope==="daily"&&entry.work_date===selectedDailyDate).length,
+      weekly:list.filter((entry:any)=>entry.scope==="weekly").length,
+      monthly:list.filter((entry:any)=>entry.scope==="monthly").length,
+      all:list.length,
+    };
+  }
+  const boardTotalCounts=boardCountSummary(null);
+  const boardRecordGroups=operatingProjectGoals
+    .map((goal:any)=>({goal,records:operatingMonthDoneEntries.filter((entry:any)=>kpiProjectId(entry)===goal.id)}))
+    .filter((group:any)=>group.records.length>0);
+  const boardUnlinkedRecords=operatingMonthDoneEntries.filter((entry:any)=>!kpiProjectId(entry)||!operatingProjectGoals.some((goal:any)=>goal.id===kpiProjectId(entry)));
+  const mindMapProject=selectedProject;
+  const mindMapWeeklyGoals=mindMapProject?allWeeklyEntries.filter((entry:any)=>kpiProjectId(entry)===mindMapProject.id).slice(0,6):[];
+  const mindMapDoneEntries=mindMapProject?dailyEntries
+    .filter((entry:any)=>entry.status==="done"&&kpiProjectId(entry)===mindMapProject.id)
+    .sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??"")))
+    .slice(0,80):[];
+  const mindMapMonthGroups=Array.from(mindMapDoneEntries.reduce((map:Map<string,Map<string,any[]>>,entry:any)=>{
+    const monthKey=String(entry.work_date??"").slice(0,7)||month;
+    const employeeKey=entry.employee_id??"team";
+    if(!map.has(monthKey)) map.set(monthKey,new Map());
+    const employeeMapForMonth=map.get(monthKey)!;
+    employeeMapForMonth.set(employeeKey,[...(employeeMapForMonth.get(employeeKey)??[]),entry]);
+    return map;
+  },new Map<string,Map<string,any[]>>()).entries()).map(([monthKey,employeeMapForMonth]:any)=>({monthKey,employeeGroups:Array.from(employeeMapForMonth.entries())}));
+  const mindMapDailyGroups=mindMapProject ? mindMapWeeklyGoals.map((weekly:any)=>({
+    weekly,
+    entries:dailyEntries
+      .filter((entry:any)=>entry.parent_id===weekly.id)
+      .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0))
+      .slice(0,5),
+  })) : [];
+  const mindMapUnlinkedDaily=mindMapProject ? dailyEntries
+    .filter((entry:any)=>kpiProjectId(entry)===mindMapProject.id&&!entry.parent_id)
+    .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0))
+    .slice(0,5) : [];
+  useEffect(()=>{
+    if(entries.length===0) return;
+    const openKpiFromHash=()=>{
+      const params=new URLSearchParams(window.location.hash.replace(/^#/,""));
+      const targetId=params.get("kpi");
+      if(!targetId||highlightKpiId===targetId) return;
+      const target=entries.find((entry:any)=>entry.id===targetId);
+      if(target) focusKpiEntry(target);
+    };
+    openKpiFromHash();
+    window.addEventListener("hashchange",openKpiFromHash);
+    return ()=>window.removeEventListener("hashchange",openKpiFromHash);
+  },[entries,highlightKpiId]);
   function setQuickTargets(ids:string[]) {
     const unique=Array.from(new Set(ids.filter(Boolean)));
     setQuickEmployeeIds(unique);
@@ -4898,6 +5234,30 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(targets.length===0) return "전체";
     if(targets.length<=2) return targets.map((employee:any)=>employee.name).join(", ");
     return `${targets[0].name} 외 ${targets.length-1}명`;
+  }
+  const periodMonthOptions=monthSelectOptions(today,12,6);
+  const periodYearOptions=Array.from(new Set([currentYear-1,currentYear,currentYear+1,Number(today.slice(0,4))])).sort((a,b)=>a-b);
+  function changeKpiPeriodDate(date:string) {
+    const value=String(date||today).slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(value)) return;
+    setQuickDailyDate(value);
+    setMonth(value.slice(0,7));
+  }
+  function changeKpiPeriodMonth(monthKey:string) {
+    if(!/^\d{4}-\d{2}$/.test(monthKey)) return;
+    setMonth(monthKey);
+    const date=`${monthKey}-${String(Math.min(Number(quickDailyDate.slice(8,10))||1,Number(monthEndIso(monthKey).slice(8,10)))).padStart(2,"0")}`;
+    setQuickDailyDate(date);
+  }
+  function changeKpiPeriodQuarter(quarter:number) {
+    const safeQuarter=Math.min(4,Math.max(1,quarter));
+    const firstMonth=(safeQuarter-1)*3+1;
+    changeKpiPeriodMonth(`${currentYear}-${String(firstMonth).padStart(2,"0")}`);
+  }
+  function changeKpiPeriodYear(year:number) {
+    if(!Number.isFinite(year)) return;
+    const monthNumber=kpiView==="quarterly" ? (currentQuarter-1)*3+1 : kpiView==="monthly" ? currentMonthNumber : 1;
+    changeKpiPeriodMonth(`${year}-${String(monthNumber).padStart(2,"0")}`);
   }
   function relevantRnrEntries() {
     const target=quickTargetEmployee()??currentEmployee;
@@ -4964,7 +5324,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       due_date:options.due_date??null,
       project_start:scope==="monthly" ? (options.project_start??(isAdminView?quickProjectPeriod.start:null)) : null,
       project_end:scope==="monthly" ? (options.project_end??(isAdminView?quickProjectPeriod.end:null)) : null,
-      admin_note:options.admin_note??(scope==="monthly"&&isAdminView?withKpiProjectPeriod("",quickProjectPeriod.start,quickProjectPeriod.end):null),
+      admin_note:options.admin_note??(scope==="monthly"&&isAdminView?withKpiProjectMeta("",quickProjectPeriod.start,quickProjectPeriod.end,quickProjectNotionUrl,quickEmployeeIds):null),
       status:"pending",
       sort_order:entries.filter((entry:any)=>entry.scope===scope).length+(titleIndex*targetRows.length)+rowIndex+1,
       is_public:true,
@@ -4983,6 +5343,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     try {
       await insertKpiRows(scope,titles);
       setQuickDrafts({...quickDrafts,[scope]:""});
+      if(scope==="monthly") setQuickProjectNotionUrl("");
       await load();
       setMessage(`${titles.length}개 KPI를 저장했습니다.`);
     } catch(e:any) {
@@ -5132,7 +5493,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!canManageKpi(entry)) return setMessage("본인 KPI만 수정할 수 있습니다.");
     const projectPeriod=kpiProjectPeriod(entry);
     setEditingKpi(entry);
-    setEditKpiDraft({title:entry.title??"",admin_note:stripKpiProjectPeriod(entry.admin_note??""),scope:entry.scope??"daily",parentId:entry.parent_id??"",employeeId:entry.employee_id??"",mentorEmployeeId:entry.mentor_employee_id??"",projectStart:projectPeriod?.start??"",projectEnd:projectPeriod?.end??""});
+    const connectedIds=entry.scope==="monthly"
+      ? Array.from(new Set([...(entry.mentor_employee_id?[entry.mentor_employee_id]:[]),...projectConnectedEmployeeIds(entry)]))
+      : [];
+    setEditKpiDraft({title:entry.title??"",admin_note:stripKpiAdminMeta(entry.admin_note??""),scope:entry.scope??"daily",parentId:entry.parent_id??"",employeeId:entry.employee_id??"",mentorEmployeeId:entry.mentor_employee_id??"",connectedEmployeeIds:connectedIds,projectStart:projectPeriod?.start??"",projectEnd:projectPeriod?.end??"",notionUrl:parseKpiNotionUrl(entry.admin_note??"")});
   }
   async function saveEditedKpi() {
     if(!editingKpi?.id) return;
@@ -5141,7 +5505,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(editKpiDraft.scope==="monthly"&&editKpiDraft.projectStart&&editKpiDraft.projectEnd&&editKpiDraft.projectEnd<editKpiDraft.projectStart) return setMessage("프로젝트 종료일은 시작일 이후로 입력해주세요.");
     const previousTitle=editingKpi.title;
     const newScope=editKpiDraft.scope;
-    const note=isAdminView?(newScope==="monthly"?withKpiProjectPeriod(editKpiDraft.admin_note.trim(),editKpiDraft.projectStart,editKpiDraft.projectEnd):editKpiDraft.admin_note.trim()):"";
+    const note=isAdminView?(newScope==="monthly"?withKpiProjectMeta(editKpiDraft.admin_note.trim(),editKpiDraft.projectStart,editKpiDraft.projectEnd,editKpiDraft.notionUrl,editKpiDraft.connectedEmployeeIds):editKpiDraft.admin_note.trim()):"";
     const historyEntry={at:new Date().toISOString(),by:currentEmployee.id,from:previousTitle,to:title,note};
     const changeLog=Array.isArray(editingKpi.change_log)?[...editingKpi.change_log,historyEntry]:[historyEntry];
     setSaving(true); setMessage("");
@@ -5156,7 +5520,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         work_date:newWorkDate,
         employee_id:editKpiDraft.employeeId||null,
         employee_name:assignedEmployee?.name??(editKpiDraft.employeeId?editingKpi.employee_name:null),
-        mentor_employee_id:editKpiDraft.mentorEmployeeId||null,
+        mentor_employee_id:newScope==="monthly" ? (editKpiDraft.connectedEmployeeIds[0]||editKpiDraft.mentorEmployeeId||null) : (editKpiDraft.mentorEmployeeId||null),
         project_start:newScope==="monthly" ? (editKpiDraft.projectStart||null) : null,
         project_end:newScope==="monthly" ? (editKpiDraft.projectEnd||null) : null,
         admin_note:isAdminView?note:null,
@@ -5219,6 +5583,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
           </select>
         )}
+        {scope==="monthly"&&isAdminView&&(
+          <input className="input" value={quickProjectNotionUrl} onChange={e=>setQuickProjectNotionUrl(e.target.value)} placeholder="노션 페이지 URL" />
+        )}
         {scope==="weekly"&&(
           <select className="select" value={quickMonthlyParentId} onChange={e=>setQuickMonthlyParentId(e.target.value)}>
             <option value="">연결 월별 KPI 선택</option>
@@ -5262,11 +5629,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         </button>
         {guideOpen&&(
           <div className="kpi-guide-panel">
-            <p><b>1. 월별 KPI</b>에서 이번 달 큰 목표를 먼저 내려줍니다.</p>
-            <p><b>2. 주간 KPI</b>를 만들 때 연결할 월별 KPI를 선택하면 아래 월별 지도에 이어집니다.</p>
-            <p><b>3. 데일리 KPI</b>는 출근한 직원이 오늘 할 일을 적고, 퇴근 전 완료/미완료를 체크합니다.</p>
-            <p><b>4. 입력 방식</b>은 각 데일리·주간·월별 칸 안의 한 줄 입력칸에서 Enter 또는 쉼표로 여러 KPI를 나눠 저장합니다.</p>
-            <p><b>5. 단계 추천</b>은 업무분장표 세부내역을 기준으로 실행 순서를 골라 데일리 또는 주간 KPI로 넣는 기능입니다.</p>
+            <p><b>1. 기간 집계</b>는 데일리, 주간, 월간, 분기, 연간 탭을 누르면 위 직원별 퍼센티지 자체가 선택 기간 기준으로 바뀝니다.</p>
+            <p><b>2. 내 보드</b>는 오늘 할 일, 내 프로젝트, 이번 달 완료 기록을 한 화면에 세로로 보여줍니다.</p>
+            <p><b>3. 데일리</b> 기본 체크리스트는 스케줄 정리, 웍스 피드백, 메일 확인, 연락 회신, 업무 마무리를 모두 체크해야 100%가 됩니다.</p>
+            <p><b>4. 프로젝트 흐름</b>은 프로젝트 기간, 주간 목표, 오늘 할 일을 연결해서 보고 드래그로 월간·주간·데일리 칸을 옮깁니다.</p>
+            <p><b>5. KPI 흐름</b>은 토글로 열어 기존 월·주·데일리 연결 지도와 칸 이동 기능을 그대로 사용합니다.</p>
+            <p><b>6. 업무 R&R 후보</b>는 완료 기록을 근거로 관리자 R&R 화면에서 직원별·부서별로 확인하고 AI 정리 초안을 만들 수 있습니다.</p>
           </div>
         )}
         {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
@@ -5308,17 +5676,60 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             </button>
           ))}
         </div>
+        <div className="kpi-period-controls" aria-label="KPI 집계 기간 선택">
+          {(kpiView==="daily"||kpiView==="weekly")&&(
+            <label>
+              <span>{kpiView==="daily"?"날짜":"주 기준일"}</span>
+              <input className="input" type="date" value={selectedDailyDate} onChange={event=>changeKpiPeriodDate(event.target.value)} />
+            </label>
+          )}
+          {kpiView==="monthly"&&(
+            <label>
+              <span>월 선택</span>
+              <select className="select" value={month} onChange={event=>changeKpiPeriodMonth(event.target.value)}>
+                {periodMonthOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+          )}
+          {kpiView==="quarterly"&&(
+            <>
+              <label>
+                <span>연도</span>
+                <select className="select" value={currentYear} onChange={event=>changeKpiPeriodYear(Number(event.target.value))}>
+                  {periodYearOptions.map(year=><option key={year} value={year}>{year}년</option>)}
+                </select>
+              </label>
+              <label>
+                <span>분기</span>
+                <select className="select" value={currentQuarter} onChange={event=>changeKpiPeriodQuarter(Number(event.target.value))}>
+                  {[1,2,3,4].map(quarter=><option key={quarter} value={quarter}>{quarter}분기</option>)}
+                </select>
+              </label>
+            </>
+          )}
+          {kpiView==="yearly"&&(
+            <label>
+              <span>연도</span>
+              <select className="select" value={currentYear} onChange={event=>changeKpiPeriodYear(Number(event.target.value))}>
+                {periodYearOptions.map(year=><option key={year} value={year}>{year}년</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+        <div className="kpi-period-summary-line">
+          <b>{kpiViewLabel} 집계</b>
+          <span>{kpiViewRangeLabel} · 완료율 {periodOverallRate}% · 데일리 기준 {periodScoreEntries.length}건</span>
+        </div>
         <div className="kpi-score-strip">
           <button
             type="button"
             className={`kpi-score-card kpi-score-all${focusEmployeeId==="all"?" active":""}`}
-            style={{"--employee-color":"#334155","--kpi-rate":`${kpiCompletionRate(selectedDayEntries)??0}%`} as React.CSSProperties}
+            style={{"--employee-color":"#334155","--kpi-rate":`${periodOverallRate}%`} as React.CSSProperties}
             onClick={()=>{setFocusEmployeeId("all"); if(isAdminView) setQuickTargets([]);}}
           >
-            <i aria-hidden="true"></i>
-            <b>전체 직원</b>
-            <strong>{kpiCompletionRate(selectedDayEntries)??0}<small>%</small></strong>
-            <span>직원 {scorePeople.length}명</span>
+            <span className="kpi-score-name"><b>전체 직원</b></span>
+            <strong>{periodOverallRate}<small>%</small></strong>
+            <span>{kpiViewLabel} · 직원 {scorePeople.length}명</span>
             <div className="kpi-progress-track"><em></em></div>
           </button>
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
@@ -5331,8 +5742,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 style={kpiCardStyle(employee.id,score.rate)}
                 onClick={()=>{const next=focusEmployeeId===employee.id?"all":employee.id; setFocusEmployeeId(next); if(isAdminView) setQuickTargets(next==="all"?[]:[next]);}}
               >
-                <i aria-hidden="true"></i>
-                <b>{employee.name}</b>
+                <span className="kpi-score-name"><b>{employee.name}</b></span>
                 <strong>{score.rate}<small>%</small></strong>
                 <span>완료 {score.done} / 전체 {score.total}</span>
                 <div className="kpi-progress-track"><em></em></div>
@@ -5340,46 +5750,653 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             );
           }) : <p className="body-text">이번 달 KPI 기록이 아직 없습니다.</p>}
         </div>
-        <div className="kpi-roadmap-band">
-          <button type="button" className={`kpi-roadmap-node year ${kpiView==="yearly"?"active":""}`} onClick={()=>setKpiView("yearly")}>
-            <span>연간</span>
-            <b>{currentYear}년</b>
-            <small>월간 목표 {yearMonthlyGoals.length}개</small>
-          </button>
-          <button type="button" className={`kpi-roadmap-node quarter ${kpiView==="quarterly"?"active":""}`} onClick={()=>setKpiView("quarterly")}>
-            <span>분기</span>
-            <b>{currentQuarter}분기</b>
-            <small>분기 목표 {quarterMonthlyGoals.length}개</small>
-          </button>
-          <div className="kpi-roadmap-months">
-            {roadmapMonths.map(item=>(
-              <button type="button" key={item.key} className={item.key===month&&kpiView==="monthly"?"active":""} onClick={()=>{setMonth(item.key);setKpiView("monthly");}}>
-                <span>{item.monthNumber}월</span>
-                <b>{item.goals.length}개</b>
-                <small>완료 {item.done}</small>
+        <div className="kpi-my-board-head">
+          <div>
+            <span>내 보드</span>
+            <b>오늘·프로젝트·회고</b>
+            <small>프로젝트별 오늘 할 일, 주간 KPI, 월간 목표, 완료 기록을 한 화면에서 확인합니다.</small>
+          </div>
+          <div className="kpi-board-side-tools">
+            <div className="kpi-board-counts">
+              <span>오늘 <b>{boardTotalCounts.today}</b></span>
+              <span>주간 <b>{boardTotalCounts.weekly}</b></span>
+              <span>월간 <b>{boardTotalCounts.monthly}</b></span>
+              <span>전체 <b>{boardTotalCounts.all}</b></span>
+            </div>
+          </div>
+        </div>
+        <div className="kpi-ppp-board">
+          <section className="plans">
+            <div><span>Plans</span><b>해야 할 일</b></div>
+            {operatingTodoEntries.slice(0,5).map((entry:any)=><button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>{entry.title}</button>)}
+            {operatingTodoEntries.length===0&&<small>남은 계획이 없습니다.</small>}
+          </section>
+          <section className="progress">
+            <div><span>Progress</span><b>완료/진행</b></div>
+            {operatingMonthDoneEntries.slice(0,5).map((entry:any)=><button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>{entry.work_date} · {entry.title}</button>)}
+            {operatingMonthDoneEntries.length===0&&<small>완료 기록이 쌓이면 여기에 보입니다.</small>}
+          </section>
+          <section className="problems">
+            <div><span>Problems</span><b>점검 필요 {kpiProblemCount>0&&<em>{kpiProblemCount}</em>}</b></div>
+            {kpiCommentProblems.slice(0,4).map((row:any)=><button type="button" key={`${row.entry.id}-${row.comment.id}`} onClick={()=>focusKpiEntry(row.entry)}>댓글 점검 · {row.entry.title}<small>{row.comment.text}</small></button>)}
+            {kpiUnlinkedProblems.slice(0,3).map((entry:any)=><button type="button" key={entry.id} onClick={()=>focusKpiEntry(entry)}>주간 KPI 연결 필요 · {entry.title}</button>)}
+            {kpiProblemCount===0&&<small>현재 점검 이슈가 없습니다.</small>}
+          </section>
+        </div>
+        <div className="kpi-design-showcase">
+          <div>
+            <span>안 1</span>
+            <b>Perdoo 전략맵형</b>
+            <small>전략 목표, KPI 지표, 체크인을 한 화면에서 연결해 봅니다.</small>
+          </div>
+          <div>
+            <span>안 2</span>
+            <b>Weekdone 주간체크형</b>
+            <small>OKR 트리와 Plans, Progress, Problems를 주간 운영 리듬으로 봅니다.</small>
+          </div>
+          <div>
+            <span>안 3</span>
+            <b>Atlassian 보드형</b>
+            <small>오늘 할 일, 프로젝트, 완료 기록을 상태 보드처럼 촘촘하게 봅니다.</small>
+          </div>
+          <div>
+            <span>안 4</span>
+            <b>Slack 워크스페이스형</b>
+            <small>프로젝트 채널을 고르고, 가운데 피드에서 오늘 할 일과 회고를 봅니다.</small>
+          </div>
+        </div>
+        <div className="kpi-option-label">
+          <span>안 1</span>
+          <div>
+            <b>Perdoo 전략맵형</b>
+            <small>연-분기-월 전략, KPI 지표, 주간 체크인을 하나의 실행 지도처럼 보는 화면</small>
+          </div>
+        </div>
+        <div className="kpi-perdoo-board">
+          <section className="kpi-perdoo-map">
+            <div className="kpi-perdoo-head">
+              <span>Strategy Map</span>
+              <b>{month} 실행 지도</b>
+              <small>월간 목표가 주간 KPI와 오늘 일로 내려오는 구조</small>
+            </div>
+            <div className="kpi-perdoo-flow">
+              {operatingProjectGoals.length===0&&<p className="kpi-perdoo-empty">월간 KPI를 만들면 전략맵 카드가 생깁니다.</p>}
+              {operatingProjectGoals.slice(0,4).map((goal:any)=>{
+                const summary=projectSummary(goal);
+                const period=kpiProjectPeriod(goal);
+                return (
+                  <button type="button" key={goal.id} className={`kpi-perdoo-node${focusProjectId===goal.id?" active":""}`} style={kpiLinkedStyle(goal)} onClick={()=>setFocusProjectId(focusProjectId===goal.id?"all":goal.id)}>
+                    <span>Objective</span>
+                    <b>{goal.title}</b>
+                    <small>{period?`${period.start} ~ ${period.end}`:String(goal.work_date??monthStart).slice(0,7)}</small>
+                    <i><em style={{width:`${Math.max(0,Math.min(100,summary.rate))}%`}}></em></i>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+          <section className="kpi-perdoo-metrics">
+            <div className="kpi-perdoo-metric hero">
+              <span>KPI Board</span>
+              <b>{kpiCompletionRate(selectedDayEntries)??0}%</b>
+              <small>오늘 팀 달성률</small>
+            </div>
+            <div className="kpi-perdoo-metric">
+              <span>Check-ins</span>
+              <b>{operatingDoneEntries.length}/{operatingDailyEntries.length}</b>
+              <small>오늘 완료/전체</small>
+            </div>
+            <div className="kpi-perdoo-metric">
+              <span>Monthly Evidence</span>
+              <b>{operatingMonthDoneEntries.length}건</b>
+              <small>월 회고 근거</small>
+            </div>
+            <div className="kpi-perdoo-checkins">
+              <b>주간 체크인</b>
+              {operatingTodoEntries.slice(0,4).map((entry:any)=>(
+                <button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>
+                  <span>{personName(entry.employee_id)}</span>
+                  <b>{entry.title}</b>
+                </button>
+              ))}
+              {operatingTodoEntries.length===0&&<small>남은 체크인이 없습니다.</small>}
+            </div>
+          </section>
+        </div>
+        <div className="kpi-option-label kpi-option-label-weekdone">
+          <span>안 2</span>
+          <div>
+            <b>Weekdone 주간체크형</b>
+            <small>목표 트리와 주간 Plans, Progress, Problems를 중심으로 운영하는 화면</small>
+          </div>
+        </div>
+        <div className="kpi-weekdone-board">
+          <section className="kpi-weekdone-tree">
+            <div className="kpi-weekdone-title">
+              <span>OKR Hierarchy</span>
+              <b>월 → 주 → 데일리 연결</b>
+            </div>
+            <div className="kpi-weekdone-tree-list">
+              {operatingProjectGoals.length===0&&<p className="kpi-weekdone-empty">월간 KPI를 만들면 계층 트리가 표시됩니다.</p>}
+              {operatingProjectGoals.slice(0,3).map((goal:any)=>(
+                <div className="kpi-weekdone-objective" key={goal.id} style={kpiLinkedStyle(goal)}>
+                  <button type="button" onClick={()=>setFocusProjectId(focusProjectId===goal.id?"all":goal.id)}>
+                    <span>O</span>
+                    <b>{goal.title}</b>
+                    <em>{projectSummary(goal).rate}%</em>
+                  </button>
+                  {allWeeklyEntries.filter((entry:any)=>kpiProjectId(entry)===goal.id).slice(0,2).map((weekly:any)=>(
+                    <div className="kpi-weekdone-kr" key={weekly.id}>
+                      <span>KR</span>
+                      <b>{weekly.title}</b>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className="kpi-weekdone-ppp">
+            <div className="kpi-weekdone-column plans">
+              <b>Plans</b>
+              <span>이번 주/오늘 할 일</span>
+              {operatingTodoEntries.slice(0,5).map((entry:any)=>(
+                <button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>{entry.title}</button>
+              ))}
+              {operatingTodoEntries.length===0&&<small>새 계획 없음</small>}
+            </div>
+            <div className="kpi-weekdone-column progress">
+              <b>Progress</b>
+              <span>완료한 일</span>
+              {operatingMonthDoneEntries.slice(0,5).map((entry:any)=>(
+                <button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>{entry.title}</button>
+              ))}
+              {operatingMonthDoneEntries.length===0&&<small>완료 기록 없음</small>}
+            </div>
+            <div className="kpi-weekdone-column problems">
+              <b>Problems</b>
+              <span>연결/반복 점검</span>
+              {operatingTodoEntries.filter((entry:any)=>!entry.parent_id).slice(0,3).map((entry:any)=>(
+                <button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>주간 KPI 연결 필요 · {entry.title}</button>
+              ))}
+              {isAdminView&&operatingRnrCandidates.slice(0,2).map((candidate:any)=>(
+                <button type="button" key={candidate.key}>R&R 후보 · {candidate.title}</button>
+              ))}
+              {operatingTodoEntries.filter((entry:any)=>!entry.parent_id).length===0&&(!isAdminView||operatingRnrCandidates.length===0)&&<small>점검 이슈 없음</small>}
+            </div>
+          </section>
+        </div>
+        <div className="kpi-option-label kpi-option-label-atlassian">
+          <span>안 3</span>
+          <div>
+            <b>Atlassian 보드형</b>
+            <small>업무를 카드로 처리하고, 프로젝트별 진행률을 빠르게 비교하는 화면</small>
+          </div>
+        </div>
+        <div className="kpi-operating-board">
+          <section className="kpi-ops-panel kpi-ops-today">
+            <div className="kpi-ops-head">
+              <div>
+                <span>오늘 할 일</span>
+                <b>오늘 할 일</b>
+              </div>
+              <em>{selectedDailyDate}</em>
+            </div>
+            <div className="kpi-ops-input">
+              <select className="select" value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
+                <option value="">연결 주간 KPI 선택</option>
+                {quickWeeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+              </select>
+              <input className="input" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={event=>handleQuickKpiKeyDown(event,"daily")} placeholder="오늘 할 일을 입력하고 Enter" />
+              <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("daily")}>추가</button>
+            </div>
+            <div className="kpi-ops-list">
+              {operatingDailyEntries.length===0&&<p className="kpi-ops-empty">오늘 할 일이 없습니다. 새 데일리 KPI를 추가하거나 프로젝트 진행만 확인하면 됩니다.</p>}
+              {operatingDailyEntries.map((entry:any)=>{
+                const routine=isDailyRoutineEntry(entry);
+                const checkedItems=routineCheckedItems(entry);
+                const percent=routinePercent(entry);
+                return (
+                  <div className={`kpi-ops-task${entry.status==="done"?" done":""}${routine?" routine":""}${highlightKpiId===entry.id?" kpi-focus-pulse":""}`} key={entry.id} data-operating-kpi-id={entry.id} style={routine?undefined:kpiLinkedStyle(entry)}>
+                    {routine ? (
+                      <>
+                        <div className="kpi-routine-title">
+                          <div>
+                            <span>매일</span>
+                            <b>데일리</b>
+                          </div>
+                          <strong>{percent}%</strong>
+                        </div>
+                        <div className="kpi-routine-track"><em style={{width:`${percent}%`}}></em></div>
+                        <div className="kpi-routine-checks">
+                          {DEFAULT_DAILY_KPI_ITEMS.map(item=>(
+                            <label key={item} className={checkedItems.includes(item)?"checked":""}>
+                              <input
+                                type="checkbox"
+                                checked={checkedItems.includes(item)}
+                                disabled={saving||!canManageKpi(entry)}
+                                onChange={event=>toggleRoutineItem(entry,item,event.target.checked)}
+                              />
+                              <span>{item}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <label>
+                          <input type="checkbox" checked={entry.status==="done"} disabled={saving||!canManageKpi(entry)} onChange={event=>updateKpiStatus(entry,event.target.checked?"done":"pending")} />
+                          <span>{entry.title}</span>
+                        </label>
+                        <small>{weeklyTitleForDaily(entry)}</small>
+                        {canManageKpi(entry)&&<button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>}
+                        <div className="kpi-task-comment-box">
+                          {(kpiTaskComments[entry.id]??[]).slice(-2).map((comment:any)=><p key={comment.id}><b>{comment.author||"댓글"}</b> {comment.text}</p>)}
+                          <div>
+                            <input className="input" value={kpiCommentDrafts[entry.id]??""} onChange={event=>setKpiCommentDrafts(prev=>({...prev,[entry.id]:event.target.value}))} onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();addKpiTaskComment(entry);}}} placeholder="댓글 입력" />
+                            <button className="button ghost compact" onClick={()=>addKpiTaskComment(entry)}>등록</button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+          <section className="kpi-ops-panel kpi-ops-projects">
+            <div className="kpi-ops-head">
+              <div>
+                <span>내 프로젝트</span>
+                <b>월 목표에서 오늘 일까지</b>
+              </div>
+              <em>{operatingProjectGoals.length}개</em>
+            </div>
+            <div className="kpi-ops-project-list">
+              {operatingProjectGoals.length===0&&<p className="kpi-ops-empty">연결된 월간 프로젝트가 없습니다. 월간 KPI를 만들면 여기서 진행 상황을 모아봅니다.</p>}
+              {operatingProjectGoals.length>0&&(
+                <button type="button" className={`kpi-ops-project${focusProjectId==="all"?" active":""}`} style={{"--employee-color":"#172b4d"} as React.CSSProperties} onClick={()=>setFocusProjectId("all")}>
+                  <div>
+                    <b>전체 프로젝트</b>
+                    <span>기간 {month}</span>
+                    <span>담당 {focusEmployeeId==="all"?"전체":personName(focusEmployeeId)}</span>
+                  </div>
+                  <strong>{kpiCompletionRate(selectedDayEntries)??0}%</strong>
+                  <small>오늘 {boardTotalCounts.today} · 주간 {boardTotalCounts.weekly} · 월간 {boardTotalCounts.monthly} · 전체 {boardTotalCounts.all}</small>
+                  <i><em style={{width:`${Math.max(0,Math.min(100,kpiCompletionRate(selectedDayEntries)??0))}%`}}></em></i>
+                </button>
+              )}
+              {operatingProjectGoals.map((goal:any)=>{
+                const summary=projectSummary(goal);
+                const participantIds=projectParticipantIds(goal);
+                const notionUrl=projectNotionUrl(goal);
+                return (
+                  <button type="button" className={`kpi-ops-project${focusProjectId===goal.id?" active":""}${highlightKpiId===goal.id?" kpi-focus-pulse":""}`} key={goal.id} data-operating-kpi-id={goal.id} style={kpiLinkedStyle(goal)} onClick={()=>{setFocusProjectId(focusProjectId===goal.id?"all":goal.id);setKpiView("monthly");}}>
+                    <div>
+                      <b>{goal.title}</b>
+                      <span>기간 {projectMonthPeriodLabel(goal)}</span>
+                      <span>담당 {personListLabel(participantIds,"담당자 미정")}</span>
+                    </div>
+                    <strong>{summary.rate}%</strong>
+                    <small className="kpi-project-stat-line">
+                      <span>오늘 {summary.todayCount} · 주간 {summary.weeklyCount} · 월간 {summary.monthlyCount} · 전체 {summary.allCount}</span>
+                      {notionUrl&&<span className="kpi-notion-link" role="link" tabIndex={0} onClick={event=>{event.stopPropagation();window.open(notionUrl,"_blank","noopener,noreferrer");}}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 바로가기</span>}
+                    </small>
+                    <i><em style={{width:`${Math.max(0,Math.min(100,summary.rate))}%`}}></em></i>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+          <section className="kpi-ops-panel kpi-ops-review">
+            <div className="kpi-ops-head">
+              <div>
+                <span>기록/회고</span>
+                <b>이번 달 한 일</b>
+              </div>
+              <em>{operatingMonthDoneEntries.length}건</em>
+            </div>
+            <div className="kpi-ops-records">
+              {operatingMonthDoneEntries.length===0&&<p className="kpi-ops-empty">완료된 데일리 KPI가 쌓이면 월 회고와 업무 근거로 표시됩니다.</p>}
+              {boardRecordGroups.map((group:any)=>(
+                <section className="kpi-record-group" key={group.goal.id} style={kpiLinkedStyle(group.goal)}>
+                  <div><b>{group.goal.title}</b><span>{group.records.length}건</span></div>
+                  {group.records.slice(0,4).map((entry:any)=>(
+                    <button type="button" key={entry.id} className={highlightKpiId===entry.id?"kpi-focus-pulse":""} data-operating-kpi-id={entry.id} onClick={()=>focusKpiEntry(entry)}>
+                      <span>{entry.work_date} · {personName(entry.employee_id)}</span>
+                      <b>{entry.title}</b>
+                    </button>
+                  ))}
+                </section>
+              ))}
+              {boardUnlinkedRecords.length>0&&(
+                <section className="kpi-record-group">
+                  <div><b>연결 없는 기록</b><span>{boardUnlinkedRecords.length}건</span></div>
+                  {boardUnlinkedRecords.slice(0,4).map((entry:any)=>(
+                    <button type="button" key={entry.id} className={highlightKpiId===entry.id?"kpi-focus-pulse":""} data-operating-kpi-id={entry.id} onClick={()=>focusKpiEntry(entry)}>
+                      <span>{entry.work_date} · {personName(entry.employee_id)}</span>
+                      <b>{entry.title}</b>
+                    </button>
+                  ))}
+                </section>
+              )}
+            </div>
+          </section>
+        </div>
+        <section className="kpi-bottom-mindmap">
+          <div className="kpi-bottom-mindmap-head">
+            <div>
+              <span>프로젝트 흐름</span>
+              <b>{mindMapProject ? mindMapProject.title : "프로젝트별 기간 흐름"}</b>
+              <small>프로젝트를 누르면 전체 기간, 주간 목표, 오늘 할 일이 한 흐름으로 보입니다.</small>
+            </div>
+            <em>{mindMapProject ? "집중 보기" : `${operatingProjectGoals.length}개 프로젝트`}</em>
+          </div>
+          <div className="kpi-bottom-project-tabs">
+            <button type="button" className={focusProjectId==="all"?"active":""} onClick={()=>setFocusProjectId("all")}>전체 프로젝트</button>
+            {operatingProjectGoals.map((goal:any)=>(
+              <button type="button" key={goal.id} className={focusProjectId===goal.id?"active":""} style={kpiLinkedStyle(goal)} onClick={()=>setFocusProjectId(goal.id)}>
+                {goal.title}
               </button>
             ))}
           </div>
-        </div>
-        {["yearly","quarterly","monthly"].includes(kpiView)&&(
-          <div className="kpi-project-list">
-            <div className="kpi-project-list-head">
-              <b>{kpiView==="yearly"?"연간":kpiView==="quarterly"?"분기":"월간"} 프로젝트</b>
-              <span>{projectListGoals.length}개</span>
+          {mindMapProject ? (
+            <div className="kpi-linked-mindmap" style={kpiLinkedStyle(mindMapProject)}>
+              <section className="kpi-flow-column monthly">
+                <div className="kpi-flow-label">프로젝트 기간</div>
+                <button
+                  type="button"
+                  className={`kpi-flow-node root${dropTargetId===mindMapProject.id?" drop-target":""}${highlightKpiId===mindMapProject.id?" kpi-focus-pulse":""}`}
+                  data-operating-kpi-id={mindMapProject.id}
+                  draggable={canMoveKpi(mindMapProject)}
+                  onDragStart={canMoveKpi(mindMapProject)?event=>{event.stopPropagation();setDraggingKpi({id:mindMapProject.id,scope:"monthly",sortOrder:mindMapProject.sort_order??0});}:undefined}
+                  onDragEnd={canMoveKpi(mindMapProject)?()=>{setDraggingKpi(null);setDropTargetId(null);setDropColTarget(null);}:undefined}
+                  onDragOver={draggingKpi?.scope==="weekly"?event=>{event.preventDefault();setDropTargetId(mindMapProject.id);}:undefined}
+                  onDragLeave={draggingKpi?.scope==="weekly"?()=>setDropTargetId(null):undefined}
+                  onDrop={draggingKpi?.scope==="weekly"?event=>{event.preventDefault();linkKpi(draggingKpi.id,mindMapProject.id);}:undefined}
+                  onClick={()=>focusKpiEntry(mindMapProject)}
+                >
+                  <b>{mindMapProject.title}</b>
+                  <span>기간 {projectMonthPeriodLabel(mindMapProject)}</span>
+                  <span>담당 {personListLabel(projectParticipantIds(mindMapProject),"담당자 미정")}</span>
+                  {projectNotionUrl(mindMapProject)&&<span className="kpi-notion-link" role="link" tabIndex={0} onClick={event=>{event.stopPropagation();window.open(projectNotionUrl(mindMapProject),"_blank","noopener,noreferrer");}}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</span>}
+                </button>
+              </section>
+              <section className="kpi-flow-column weekly">
+                <div className="kpi-flow-label">주간 목표</div>
+                {mindMapWeeklyGoals.length>0 ? mindMapWeeklyGoals.map((weekly:any)=>(
+                  <button
+                    type="button"
+                    className={`kpi-flow-node${dropTargetId===weekly.id?" drop-target":""}${draggingKpi?.id===weekly.id?" dragging":""}${highlightKpiId===weekly.id?" kpi-focus-pulse":""}`}
+                    key={weekly.id}
+                    data-operating-kpi-id={weekly.id}
+                    draggable={canMoveKpi(weekly)}
+                    onDragStart={canMoveKpi(weekly)?event=>{event.stopPropagation();setDraggingKpi({id:weekly.id,scope:"weekly",sortOrder:weekly.sort_order??0});}:undefined}
+                    onDragEnd={canMoveKpi(weekly)?()=>{setDraggingKpi(null);setDropTargetId(null);setDropColTarget(null);}:undefined}
+                    onDragOver={draggingKpi&&draggingKpi.id!==weekly.id?event=>{event.preventDefault();setDropTargetId(weekly.id);}:undefined}
+                    onDragLeave={()=>setDropTargetId(null)}
+                    onDrop={draggingKpi&&draggingKpi.id!==weekly.id?event=>{
+                      event.preventDefault();
+                      if(draggingKpi.scope==="weekly") reorderKpi(draggingKpi.id,draggingKpi.sortOrder,weekly.id,weekly.sort_order??0);
+                      else if(draggingKpi.scope==="daily") linkKpi(draggingKpi.id,weekly.id);
+                    }:undefined}
+                    onClick={()=>focusKpiEntry(weekly)}
+                  >
+                    <small>{mindMapProject.title}</small>
+                    <b>{weekly.title}</b>
+                    <span>{personName(weekly.employee_id)}</span>
+                  </button>
+                )) : <p className="kpi-ops-empty">연결된 주간 KPI가 없습니다.</p>}
+              </section>
+              <section className="kpi-flow-column daily">
+                <div className="kpi-flow-label">오늘 할 일</div>
+                {mindMapDailyGroups.some((group:any)=>group.entries.length>0)||mindMapUnlinkedDaily.length>0 ? (
+                  <>
+                    {mindMapDailyGroups.filter((group:any)=>group.entries.length>0).map((group:any)=>(
+                      <div className="kpi-flow-daily-group" key={group.weekly.id}>
+                        <em>{group.weekly.title}</em>
+                        {group.entries.map((entry:any)=>(
+                          <button
+                            type="button"
+                            className={`kpi-flow-node daily-node${dropTargetId===entry.id?" drop-target":""}${draggingKpi?.id===entry.id?" dragging":""}${highlightKpiId===entry.id?" kpi-focus-pulse":""}`}
+                            key={entry.id}
+                            data-operating-kpi-id={entry.id}
+                            draggable={canMoveKpi(entry)}
+                            onDragStart={canMoveKpi(entry)?event=>{event.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}:undefined}
+                            onDragEnd={canMoveKpi(entry)?()=>{setDraggingKpi(null);setDropTargetId(null);setDropColTarget(null);}:undefined}
+                            onDragOver={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?event=>{event.preventDefault();setDropTargetId(entry.id);}:undefined}
+                            onDragLeave={draggingKpi?.scope==="daily"?()=>setDropTargetId(null):undefined}
+                            onDrop={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?event=>{event.preventDefault();reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);}:undefined}
+                            onClick={()=>focusKpiEntry(entry)}
+                          >
+                            <b>{entry.title}</b>
+                            <span>{String(entry.work_date??"").slice(5)} · {personName(entry.employee_id)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                    {mindMapUnlinkedDaily.length>0&&(
+                      <div className="kpi-flow-daily-group unlinked">
+                        <em>주간 연결 없음</em>
+                        {mindMapUnlinkedDaily.map((entry:any)=>(
+                          <button
+                            type="button"
+                            className={`kpi-flow-node daily-node${dropTargetId===entry.id?" drop-target":""}${draggingKpi?.id===entry.id?" dragging":""}${highlightKpiId===entry.id?" kpi-focus-pulse":""}`}
+                            key={entry.id}
+                            data-operating-kpi-id={entry.id}
+                            draggable={canMoveKpi(entry)}
+                            onDragStart={canMoveKpi(entry)?event=>{event.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}:undefined}
+                            onDragEnd={canMoveKpi(entry)?()=>{setDraggingKpi(null);setDropTargetId(null);setDropColTarget(null);}:undefined}
+                            onDragOver={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?event=>{event.preventDefault();setDropTargetId(entry.id);}:undefined}
+                            onDragLeave={draggingKpi?.scope==="daily"?()=>setDropTargetId(null):undefined}
+                            onDrop={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?event=>{event.preventDefault();reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);}:undefined}
+                            onClick={()=>focusKpiEntry(entry)}
+                          >
+                            <b>{entry.title}</b>
+                            <span>{String(entry.work_date??"").slice(5)} · {personName(entry.employee_id)}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : <p className="kpi-ops-empty">연결된 오늘 할 일이 없습니다.</p>}
+              </section>
+              {draggingKpi&&(
+                <div className="kpi-flow-dropzones">
+                  {(["monthly","weekly","daily"] as const).map(scope=>draggingKpi.scope!==scope&&(
+                    <div
+                      key={scope}
+                      className={`kpi-scope-dropzone${dropColTarget===scope?" active":""}`}
+                      onDragOver={event=>{event.preventDefault();setDropColTarget(scope);}}
+                      onDragLeave={()=>setDropColTarget(null)}
+                      onDrop={event=>{event.preventDefault();changeScope(draggingKpi.id,scope);}}
+                    >
+                      여기 드롭 → {scope==="monthly"?"프로젝트 기간":scope==="weekly"?"주간 목표":"오늘 할 일"}로 이동
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            {projectListGoals.length>0 ? projectListGoals.map((goal:any)=>{
-              const pct=monthlyProgress(goal);
-              const period=kpiProjectPeriod(goal);
-              return (
-                <button type="button" key={goal.id} className="kpi-project-card" style={kpiLinkedStyle(goal)} onClick={()=>{setMonth(String(goal.work_date??monthStart).slice(0,7));setFocusProjectId(goal.id);}}>
+          ) : (
+            <div className="kpi-mindmap-overview">
+              {operatingProjectGoals.length===0&&<p className="kpi-ops-empty">월간 KPI를 만들면 프로젝트별 마인드맵이 여기에 표시됩니다.</p>}
+              {operatingProjectGoals.map((goal:any)=>(
+                <button type="button" key={goal.id} style={kpiLinkedStyle(goal)} onClick={()=>setFocusProjectId(goal.id)}>
+                  <span>{projectMonthPeriodLabel(goal)}</span>
                   <b>{goal.title}</b>
-                  <span>{period?`${period.start} ~ ${period.end}`:String(goal.work_date??"").slice(0,7)}</span>
-                  <em>{pct}%</em>
+                  <small>담당 {personListLabel(projectParticipantIds(goal),"담당자 미정")}</small>
+                  <small>완료 {projectSummary(goal).done}/{projectSummary(goal).total} · 진행 {projectSummary(goal).rate}%</small>
+                  {projectNotionUrl(goal)&&<span className="kpi-notion-link" role="link" tabIndex={0} onClick={event=>{event.stopPropagation();window.open(projectNotionUrl(goal),"_blank","noopener,noreferrer");}}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+        {isAdmin&&(
+          <section className="kpi-rnr-candidate-panel">
+            <div className="kpi-bottom-mindmap-head">
+              <div>
+                <span>관리자용 R&R 후보</span>
+                <b>KPI 완료 기록 → 업무분장표 후보</b>
+                <small>반복 완료된 데일리 KPI를 담당/백업/공유 대상 업무로 묶어, R&R 관리에서 확정할 후보로 봅니다.</small>
+              </div>
+              <em>{operatingRnrCandidates.length}개</em>
+            </div>
+            <div className="kpi-rnr-flow-note">
+              <span>1. 오늘 할 일 완료</span>
+              <i className="ti ti-arrow-right" aria-hidden="true"></i>
+              <span>2. 반복 업무 후보 묶기</span>
+              <i className="ti ti-arrow-right" aria-hidden="true"></i>
+              <span>3. 업무 R&R에서 담당/백업 확정</span>
+            </div>
+            <div className="kpi-rnr-candidate-grid">
+              {operatingRnrCandidates.length===0&&<p className="kpi-ops-empty">반복되는 완료 기록이 생기면 업무분장표 후보로 묶어 보여줍니다.</p>}
+              {operatingRnrCandidates.map((candidate:any)=>(
+                <article key={candidate.key}>
+                  <b>{candidate.title}</b>
+                  <span>{personListLabel(candidate.employeeIds,"담당 미정")} · 완료 {candidate.count}건 · {candidate.dateCount}일</span>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+        <div className="kpi-option-label kpi-option-label-slack">
+          <span>안 4</span>
+          <div>
+            <b>Slack 워크스페이스형</b>
+            <small>프로젝트 채널을 중심으로 오늘 할 일, 대화형 기록, 협업자를 한 번에 보는 화면</small>
+          </div>
+        </div>
+        <div className="kpi-slack-board">
+          <aside className="kpi-slack-sidebar" aria-label="KPI 프로젝트 채널">
+            <div className="kpi-slack-workspace">
+              <b>LUpl KPI</b>
+              <span>{selectedDailyDate}</span>
+            </div>
+            <button type="button" className={`kpi-slack-channel${focusProjectId==="all"?" active":""}`} onClick={()=>setFocusProjectId("all")}>
+              <i className="ti ti-hash" aria-hidden="true"></i>
+              <span>전체 프로젝트</span>
+              <em>{operatingTodoEntries.length}</em>
+            </button>
+            <div className="kpi-slack-section-title">프로젝트</div>
+            {operatingProjectGoals.slice(0,7).map((goal:any)=>{
+              const summary=projectSummary(goal);
+              return (
+                <button type="button" key={goal.id} className={`kpi-slack-channel${focusProjectId===goal.id?" active":""}`} onClick={()=>setFocusProjectId(focusProjectId===goal.id?"all":goal.id)}>
+                  <i className="ti ti-hash" aria-hidden="true"></i>
+                  <span>{goal.title}</span>
+                  <em>{summary.rate}%</em>
                 </button>
               );
-            }) : <p className="subtle" style={{margin:0}}>표시할 프로젝트 KPI가 없습니다.</p>}
-          </div>
-        )}
+            })}
+            {operatingProjectGoals.length===0&&<p className="kpi-slack-empty">월간 KPI를 만들면 프로젝트 채널이 생깁니다.</p>}
+          </aside>
+          <section className="kpi-slack-thread">
+            <div className="kpi-slack-thread-head">
+              <div>
+                <span># {selectedProject?.title??"전체 프로젝트"}</span>
+                <b>{operatingTodoEntries.length}개 남음 · {operatingMonthDoneEntries.length}개 완료 기록</b>
+              </div>
+              <button type="button" className="button ghost compact" onClick={()=>setShowDoneKpi(!showDoneKpi)}>{showDoneKpi?"완료 숨기기":"완료 보기"}</button>
+            </div>
+            <div className="kpi-slack-composer">
+              <select className="select" value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
+                <option value="">연결 주간 KPI</option>
+                {quickWeeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
+              </select>
+              <input className="input" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={event=>handleQuickKpiKeyDown(event,"daily")} placeholder="오늘 할 일을 메시지처럼 입력" />
+              <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("daily")}>전송</button>
+            </div>
+            <div className="kpi-slack-feed">
+              {operatingTodoEntries.length===0&&operatingDoneEntries.length===0&&<p className="kpi-slack-empty">오늘 할 일이 없습니다. 새 데일리 KPI를 메시지처럼 남겨보세요.</p>}
+              {operatingTodoEntries.slice(0,8).map((entry:any)=>(
+                <article className="kpi-slack-message pending" key={entry.id}>
+                  <button type="button" className="kpi-slack-check" disabled={saving||!canManageKpi(entry)} onClick={()=>updateKpiStatus(entry,"done")} title="완료 처리"><i className="ti ti-circle" aria-hidden="true"></i></button>
+                  <div>
+                    <header><b>{personName(entry.employee_id)}</b><span>{weeklyTitleForDaily(entry)}</span></header>
+                    <p>{entry.title}</p>
+                    {canManageKpi(entry)&&<button type="button" onClick={()=>beginEditKpi(entry)}>수정</button>}
+                  </div>
+                </article>
+              ))}
+              {operatingDoneEntries.slice(0,5).map((entry:any)=>(
+                <article className="kpi-slack-message done" key={entry.id}>
+                  <button type="button" className="kpi-slack-check" disabled={saving||!canManageKpi(entry)} onClick={()=>updateKpiStatus(entry,"pending")} title="완료 취소"><i className="ti ti-circle-check" aria-hidden="true"></i></button>
+                  <div>
+                    <header><b>{personName(entry.employee_id)}</b><span>오늘 완료</span></header>
+                    <p>{entry.title}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+          <aside className="kpi-slack-context">
+            <div className="kpi-slack-context-card">
+              <span>함께 하는 사람</span>
+              <b>{selectedProject ? personListLabel(projectParticipantIds(selectedProject),"담당자 미정") : focusEmployeeId==="all" ? "전체 팀원" : personName(focusEmployeeId)}</b>
+              <small>사수, 담당자, 연결된 사람을 여기에서 확인합니다.</small>
+            </div>
+            <div className="kpi-slack-context-card">
+              <span>이번 달 회고</span>
+              <b>{operatingMonthDoneEntries.length}건</b>
+              <small>완료된 데일리 KPI가 월 회고와 업무분장 근거로 쌓입니다.</small>
+            </div>
+            {isAdminView&&<div className="kpi-slack-context-card">
+              <span>R&R 후보</span>
+              {operatingRnrCandidates.length>0 ? operatingRnrCandidates.slice(0,3).map((candidate:any)=>(
+                <p key={candidate.key}>{candidate.title}</p>
+              )) : <small>반복되는 완료 기록이 생기면 자동 후보로 묶입니다.</small>}
+            </div>}
+          </aside>
+        </div>
+        <section className="kpi-roadmap-toggle-card">
+          <button type="button" className={`kpi-guide-toggle ${kpiRoadmapOpen?"open":""}`} onClick={()=>setKpiRoadmapOpen(open=>!open)}>
+            <span><i className="ti ti-timeline" aria-hidden="true"></i>연간·분기·월간 목표 요약</span>
+            <i className={`ti ${kpiRoadmapOpen?"ti-chevron-up":"ti-chevron-down"}`} aria-hidden="true"></i>
+          </button>
+          {kpiRoadmapOpen&&(
+            <>
+              <div className="kpi-roadmap-band">
+                <button type="button" className={`kpi-roadmap-node year ${kpiView==="yearly"?"active":""}`} onClick={()=>setKpiView("yearly")}>
+                  <span>연간</span>
+                  <b>{currentYear}년</b>
+                  <small>월간 목표 {yearMonthlyGoals.length}개</small>
+                </button>
+                <button type="button" className={`kpi-roadmap-node quarter ${kpiView==="quarterly"?"active":""}`} onClick={()=>setKpiView("quarterly")}>
+                  <span>분기</span>
+                  <b>{currentQuarter}분기</b>
+                  <small>분기 목표 {quarterMonthlyGoals.length}개</small>
+                </button>
+                <div className="kpi-roadmap-months">
+                  {roadmapMonths.map(item=>(
+                    <button type="button" key={item.key} className={item.key===month&&kpiView==="monthly"?"active":""} onClick={()=>{setMonth(item.key);setKpiView("monthly");}}>
+                      <span>{item.monthNumber}월</span>
+                      <b>{item.goals.length}개</b>
+                      <small>완료 {item.done}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {["yearly","quarterly","monthly"].includes(kpiView)&&(
+                <div className="kpi-project-list">
+                  <div className="kpi-project-list-head">
+                    <b>{kpiView==="yearly"?"연간":kpiView==="quarterly"?"분기":"월간"} 프로젝트</b>
+                    <span>{projectListGoals.length}개</span>
+                  </div>
+                  {projectListGoals.length>0 ? projectListGoals.map((goal:any)=>{
+                    const pct=monthlyProgress(goal);
+                    return (
+                      <button type="button" key={goal.id} className="kpi-project-card" style={kpiLinkedStyle(goal)} onClick={()=>{setMonth(String(goal.work_date??monthStart).slice(0,7));setFocusProjectId(goal.id);}}>
+                        <b>{goal.title}</b>
+                        <span>{projectMonthPeriodLabel(goal)}</span>
+                        <em>{pct}%</em>
+                      </button>
+                    );
+                  }) : <p className="subtle" style={{margin:0}}>표시할 프로젝트 KPI가 없습니다.</p>}
+                </div>
+              )}
+            </>
+          )}
+        </section>
       </section>
 
       {kpiTreeGoal&&(
@@ -5439,9 +6456,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               </select>
             </div>
             {isAdminView&&editKpiDraft.scope==="monthly"&&(
-              <div className="kpi-period-inputs">
-                <label><span>프로젝트 시작</span><input className="input" type="date" value={editKpiDraft.projectStart} onChange={e=>setEditKpiDraft({...editKpiDraft,projectStart:e.target.value})} /></label>
-                <label><span>프로젝트 종료</span><input className="input" type="date" value={editKpiDraft.projectEnd} onChange={e=>setEditKpiDraft({...editKpiDraft,projectEnd:e.target.value})} /></label>
+              <div className="kpi-project-meta-edit">
+                <div className="kpi-period-inputs">
+                  <label><span>프로젝트 시작</span><input className="input" type="date" value={editKpiDraft.projectStart} onChange={e=>setEditKpiDraft({...editKpiDraft,projectStart:e.target.value})} /></label>
+                  <label><span>프로젝트 종료</span><input className="input" type="date" value={editKpiDraft.projectEnd} onChange={e=>setEditKpiDraft({...editKpiDraft,projectEnd:e.target.value})} /></label>
+                </div>
+                <div className="form-row">
+                  <label className="label">노션 페이지 URL</label>
+                  <input className="input" value={editKpiDraft.notionUrl} onChange={e=>setEditKpiDraft({...editKpiDraft,notionUrl:e.target.value})} placeholder="https://www.notion.so/..." />
+                </div>
               </div>
             )}
             {editKpiDraft.scope==="weekly"&&(
@@ -5473,10 +6496,31 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 </div>
                 <div className="form-row">
                   <label className="label">사수/연결 직원</label>
-                  <select className="select" value={editKpiDraft.mentorEmployeeId} onChange={e=>setEditKpiDraft({...editKpiDraft,mentorEmployeeId:e.target.value})}>
-                    <option value="">미지정</option>
-                    {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
-                  </select>
+                  {editKpiDraft.scope==="monthly" ? (
+                    <div className="kpi-connected-employee-grid">
+                      {employees.filter((employee:any)=>employee.is_active!==false&&employee.employment_status!=="inactive").map((employee:any)=>(
+                        <label key={employee.id}>
+                          <input
+                            type="checkbox"
+                            checked={editKpiDraft.connectedEmployeeIds.includes(employee.id)}
+                            onChange={event=>{
+                              const checked=event.target.checked;
+                              const next=checked
+                                ? Array.from(new Set([...editKpiDraft.connectedEmployeeIds,employee.id]))
+                                : editKpiDraft.connectedEmployeeIds.filter(id=>id!==employee.id);
+                              setEditKpiDraft({...editKpiDraft,connectedEmployeeIds:next,mentorEmployeeId:next[0]??""});
+                            }}
+                          />
+                          <span>{employee.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <select className="select" value={editKpiDraft.mentorEmployeeId} onChange={e=>setEditKpiDraft({...editKpiDraft,mentorEmployeeId:e.target.value})}>
+                      <option value="">미지정</option>
+                      {employees.map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                    </select>
+                  )}
                 </div>
               </div>
             )}
@@ -5511,11 +6555,18 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         </section>
       )}
 
-      <section className="card kpi-section-card">
+      <section className="card kpi-section-card kpi-flow-section">
         <div className="section-head">
-          <h2 className="card-title">KPI 흐름</h2>
-          <span className="subtle">{weekOfMonthLabel(selectedDailyDate)} · 월 목표 → 주간 → 데일리</span>
+          <div>
+            <h2 className="card-title">KPI 흐름</h2>
+            <span className="subtle">{weekOfMonthLabel(selectedDailyDate)} · 월 목표 → 주간 → 데일리</span>
+          </div>
+          <button type="button" className="button ghost compact" onClick={()=>setKpiFlowOpen(open=>!open)}>
+            {kpiFlowOpen?"흐름 접기":"흐름 펼치기"}
+          </button>
         </div>
+        {kpiFlowOpen ? (
+          <>
         <div className="kpi-focus-toolbar">
           <label>
             <span>프로젝트</span>
@@ -5568,6 +6619,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       <label><span>시작</span><input type="date" value={quickProjectPeriod.start} onChange={e=>setQuickProjectPeriod({...quickProjectPeriod,start:e.target.value})} /></label>
                       <label><span>종료</span><input type="date" value={quickProjectPeriod.end} onChange={e=>setQuickProjectPeriod({...quickProjectPeriod,end:e.target.value})} /></label>
                     </div>
+                  )}
+                  {isAdminView&&(
+                    <input className="kpi-h-input-field" value={quickProjectNotionUrl} onChange={e=>setQuickProjectNotionUrl(e.target.value)} placeholder="노션 페이지 URL" />
                   )}
                   <div className="kpi-h-input-row">
                     <input className="kpi-h-input-field" value={quickDrafts.monthly} onChange={e=>setQuickDrafts({...quickDrafts,monthly:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"monthly")} placeholder="이번 달 큰 목표 입력 후 Enter" />
@@ -5838,6 +6892,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             </div>
           </div>
         </div>
+          </>
+        ) : (
+          <div className="kpi-flow-collapsed">
+            <b>월·주·데일리 칸 이동은 여기에서 계속 사용할 수 있습니다.</b>
+            <span>최종 화면에서는 평소엔 접어두고, 목표 연결을 정리할 때만 펼쳐서 봅니다.</span>
+          </div>
+        )}
       </section>
     </div>
   );
@@ -6559,9 +7620,9 @@ function WorkTimeChangePage({ employee }: { employee:any }) {
   }
   async function loadSelectableEmployees() {
     if(!isAdmin) return setSelectableEmployees([employee]);
-    const {data,error}=await supabase.from("employees").select("*").eq("employment_status","active").order("name");
+    const {data,error}=await supabase.from("employees").select("*").order("name");
     if(error||!data?.length) setSelectableEmployees([employee]);
-    else setSelectableEmployees(data);
+    else setSelectableEmployees(data.filter((row:any)=>isEmployeeActive(row)));
   }
   useEffect(()=>{loadSelectableEmployees();},[]);
   useEffect(()=>{load();},[selectedEmployee.id]);
@@ -7102,7 +8163,7 @@ function AdminCompGrantCard({currentEmployee,onChanged}:{currentEmployee:any;onC
   const [employees,setEmployees]=useState<any[]>([]);
   const [form,setForm]=useState({employee_id:"",work_date:todayIso(),start_time:"18:00",end_time:"20:00",hours:2,reason:""});
   const [message,setMessage]=useState("");
-  useEffect(()=>{supabase.from("employees").select("id,name,employee_no,employment_status").eq("employment_status","active").order("employee_no",{ascending:true}).then(({data})=>setEmployees(data??[]));},[]);
+  useEffect(()=>{supabase.from("employees").select("id,name,employee_no,is_active,employment_status").order("employee_no",{ascending:true}).then(({data})=>setEmployees((data??[]).filter((row:any)=>isEmployeeActive(row))));},[]);
   function empName(id:string){return employees.find(e=>e.id===id)?.name??"직원";}
   function updateTime(field:"start_time"|"end_time",value:string){
     const next={...form,[field]:value};
@@ -7679,6 +8740,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [rnrReviewRequests,setRnrReviewRequests]=useState<any[]>([]);
   const [dailyTasks,setDailyTasks]=useState<any[]>([]);
+  const [rnrKpiEntries,setRnrKpiEntries]=useState<any[]>([]);
   const [rnrInput,setRnrInput]=useState("");
   const [rnrAttachments,setRnrAttachments]=useState<any[]>([]);
   const [rnrSuggestion,setRnrSuggestion]=useState<any|null>(null);
@@ -7690,6 +8752,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [rnrTaskDate,setRnrTaskDate]=useState(todayIso());
   const [rnrTaskDueDate,setRnrTaskDueDate]=useState(todayIso());
   const [rnrDepartmentFilter,setRnrDepartmentFilter]=useState("all");
+  const [rnrSubView,setRnrSubView]=useState<"work"|"candidates">("work");
+  const [selectedRnrCandidateKeys,setSelectedRnrCandidateKeys]=useState<string[]>([]);
   const [rnrOrgDraft,setRnrOrgDraft]=useState<Record<string,{employeeId:string;position:string}>>({});
   const [rnrChecklistDone,setRnrChecklistDone]=useState<Record<string,boolean>>(()=>{try{return JSON.parse(localStorage.getItem("lupl_rnr_checklist_done")??"{}");}catch{return {};}});
   const [rnrBusy,setRnrBusy]=useState(false);
@@ -7724,7 +8788,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const list=emps??[]; const map:Record<string,any>={};
     list.forEach((e:any)=>{map[e.id]=e;});
     setEmployees(list); setEmpMap(map);
-    const [d,w,r,c,wt,ac,a,ov,ab,lg,rn,rr,dt]=await Promise.all([
+    const [d,w,r,c,wt,ac,a,ov,ab,lg,rn,rr,dt,kp]=await Promise.all([
       supabase.from("registered_devices").select("*").order("created_at",{ascending:false}),
       supabase.from("workplaces").select("*").order("created_at",{ascending:false}),
       supabase.from("attendance_requests").select("*").order("created_at",{ascending:false}),
@@ -7738,12 +8802,19 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
       supabase.from("rnr_review_requests").select("*").order("created_at",{ascending:false}).limit(100),
       supabase.from("daily_tasks").select("*").eq("is_active",true).order("task_date",{ascending:false}).order("created_at",{ascending:false}).limit(200),
+      supabase.from("kpi_entries").select("*").eq("is_active",true).eq("scope","daily").eq("status","done").order("work_date",{ascending:false}).limit(500),
     ]);
-    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setRnrReviewRequests(rr.error?[]:rr.data??[]); setDailyTasks(dt.data??[]);
+    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setRnrReviewRequests(rr.error?[]:rr.data??[]); setDailyTasks(dt.data??[]); setRnrKpiEntries(kp.error?[]:kp.data??[]);
     void syncMissingLeaveWorksNotificationsForRows(r.data??[]);
   }
   useEffect(()=>{load();},[]);
   const empName=(id?:string|null)=>id?(empMap[id]?.name??"-"):"-";
+  const rnrCandidatePeopleLabel=(ids:any[])=>{
+    const names=ids.map((id:any)=>empName(id)).filter((name:string)=>name&&name!=="-");
+    if(names.length===0) return "담당 미정";
+    if(names.length<=3) return names.join(", ");
+    return `${names.slice(0,3).join(", ")} 외 ${names.length-3}명`;
+  };
   const rnrAssigneeName=(entry:any)=>rnrTargetScope(entry)==="common"?"공통":rnrTargetScope(entry)==="department"?`${entry?.department||"부서"} 공동`:(entry?.assigned_person_name||(
     entry?.assigned_employee_id&&empMap[entry.assigned_employee_id]?.name
       ? empMap[entry.assigned_employee_id].name
@@ -7865,6 +8936,40 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   function localRnrSuggestion(text:string) {
     return localRnrSuggestionFromText(text);
+  }
+  function toggleRnrCandidateSelection(key:string,checked:boolean) {
+    setSelectedRnrCandidateKeys(current=>checked?Array.from(new Set([...current,key])):current.filter(item=>item!==key));
+  }
+  function prepareRnrCandidateAiDraft(candidate?:any) {
+    const targets=candidate?[candidate]:selectedRnrCandidates;
+    if(targets.length===0) return setRnrMsg("R&R 후보를 하나 이상 체크해주세요.");
+    const sourceText=targets.map((item:any,index:number)=>[
+      `${index+1}. ${item.title}`,
+      `부서: ${item.department}`,
+      `직원: ${rnrCandidatePeopleLabel(item.employeeIds)}`,
+      `업무 묶음: ${item.workGroup}`,
+      `완료 기록: ${item.count}건 / ${item.dateCount}일`,
+      ...item.entries.slice(0,4).map((entry:any)=>`- ${entry.work_date}: ${entry.title}`),
+    ].join("\n")).join("\n\n");
+    const suggestion=enrichRnrSuggestion(localRnrSuggestion(sourceText),sourceText);
+    const firstEmployeeId=targets.flatMap((item:any)=>item.employeeIds??[]).find(Boolean)??"";
+    const firstEmployee=firstEmployeeId?employees.find((employee:any)=>employee.id===firstEmployeeId):null;
+    setRnrInput(sourceText);
+    setRnrAssigneeId(firstEmployeeId);
+    setRnrSuggestion({
+      ...suggestion,
+      title:targets.length===1?targets[0].title:"KPI 완료 기록 기반 업무 정리",
+      display_title:targets.length===1?targets[0].title:"KPI 완료 기록 기반 업무 정리",
+      summary:targets.length===1?`${targets[0].title} 업무를 KPI 완료 기록 기준으로 R&R 후보화합니다.`:`선택한 ${targets.length}개 KPI 완료 기록을 업무분장표 후보로 정리합니다.`,
+      department:firstEmployee?.department||targets[0]?.department||suggestion.department,
+      position:firstEmployee?.position||targets[0]?.position||suggestion.position,
+      work_group:targets[0]?.workGroup||suggestion.work_group,
+      assigned_person_name:firstEmployee?.name||suggestion.assigned_person_name,
+      target_scope:firstEmployeeId?"employee":"department",
+      is_public:true,
+    });
+    setRnrSubView("work");
+    setRnrMsg("선택한 KPI 완료 기록을 AI 정리 초안으로 만들었습니다. 담당자와 공개 업무명을 확인한 뒤 저장해주세요.");
   }
   async function handleRnrPaste(event:any) {
     const files=Array.from(event.clipboardData?.files??[]).filter((file:any)=>String(file.type??"").startsWith("image/")) as File[];
@@ -8616,7 +9721,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     return name==="test"||no.startsWith("test");
   }
   const filtered=employees
-    .filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?e.employment_status!=="active":e.employment_status==="active")
+    .filter(e=>employeeFilter==="all"?true:employeeFilter==="inactive"?!isEmployeeActive(e):isEmployeeActive(e))
     .sort(sortEmployeesBySeniority);
   const selectedCopyEmployees=filtered.filter((employee:any)=>selectedEmployeeCopyIds.includes(employee.id));
   function toggleEmployeeCopySelection(employeeId:string, checked:boolean) {
@@ -8754,6 +9859,42 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     onChanged();
   }
   const activeEmployees=employees.filter(e=>isEmployeeActive(e)&&!isTestEmployee(e)).sort(sortEmployeesBySeniority);
+  const rnrKpiCandidateRoleGroups=(()=>{
+    const candidateMap=new Map<string,any>();
+    rnrKpiEntries.forEach((entry:any)=>{
+      const employee=entry.employee_id ? (empMap[entry.employee_id]??employees.find((row:any)=>row.id===entry.employee_id)) : null;
+      if(employee&&isTestEmployee(employee)) return;
+      const source=entry.source_rnr_entry_id ? rnrEntries.find((row:any)=>row.id===entry.source_rnr_entry_id) : null;
+      const title=String(source?rnrPublicTitle(source):(entry.title??"업무 기록")).trim();
+      if(!title) return;
+      const department=normalizeDepartmentName(source?.department||employee?.department||"공통")||"공통";
+      const position=String(source?.position||employee?.position||"직무 미정").trim()||"직무 미정";
+      const category=classifyRnrCategory(`${title} ${entry.description??""}`);
+      const workGroup=source?rnrWorkGroup(source):normalizeRnrWorkGroup("",`${title}\n${entry.description??""}`,category,department);
+      const employeeKey=employee?.id??"unassigned";
+      const key=`${department}|${employeeKey}|${position}|${workGroup}|${title.toLowerCase()}`;
+      const prev=candidateMap.get(key)??{key,title,department,position,workGroup,source,count:0,employees:new Set<string>(),employeeIds:[],employeeName:employee?.name??"담당 미정",dates:new Set<string>(),entries:[]};
+      prev.count+=1;
+      prev.entries.push(entry);
+      if(entry.employee_id) prev.employees.add(entry.employee_id);
+      if(entry.work_date) prev.dates.add(String(entry.work_date).slice(0,10));
+      candidateMap.set(key,prev);
+    });
+    const candidates=Array.from(candidateMap.values())
+      .map((candidate:any)=>({...candidate,employeeIds:Array.from(candidate.employees),dateCount:candidate.dates.size}))
+      .sort((a:any,b:any)=>b.count-a.count||String(a.title).localeCompare(String(b.title)));
+    const roleMap=new Map<string,any>();
+    candidates.forEach((candidate:any)=>{
+      const employeeId=candidate.employeeIds[0]??"unassigned";
+      const roleKey=`${candidate.department}|${employeeId}`;
+      const prev=roleMap.get(roleKey)??{key:roleKey,department:candidate.department,employeeId,employeeName:candidate.employeeName,position:candidate.position,candidates:[]};
+      prev.candidates.push(candidate);
+      roleMap.set(roleKey,prev);
+    });
+    return Array.from(roleMap.values()).sort((a:any,b:any)=>String(a.department).localeCompare(String(b.department))||String(a.employeeName).localeCompare(String(b.employeeName)));
+  })();
+  const rnrKpiCandidateList=rnrKpiCandidateRoleGroups.flatMap((group:any)=>group.candidates);
+  const selectedRnrCandidates=rnrKpiCandidateList.filter((candidate:any)=>selectedRnrCandidateKeys.includes(candidate.key));
   useEffect(()=>{
     if(activeEmployees.length===0) { if(selectedDetailEmployeeId) setSelectedDetailEmployeeId(""); return; }
     if(!selectedDetailEmployeeId || !activeEmployees.some((employee:any)=>employee.id===selectedDetailEmployeeId)) {
@@ -8925,6 +10066,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     ...rnrEntries.map((entry:any)=>rnrPublicDepartment(entry)).filter(Boolean),
     ...(rnrEntries.some((entry:any)=>!String(entry.department??"").trim())||activeEmployees.some((employee:any)=>!String(employee.department??"").trim())?["공통"]:[]),
   ])).sort((a:string,b:string)=>{
+    if(a==="경영지원부서"&&b!=="경영지원부서"&&b!=="공통") return 1;
+    if(b==="경영지원부서"&&a!=="경영지원부서"&&a!=="공통") return -1;
     const ai=baseRnrDepartments.indexOf(a);
     const bi=baseRnrDepartments.indexOf(b);
     if(ai>=0&&bi>=0) return ai-bi;
@@ -9516,10 +10659,49 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         </div>
       </section>}
 
-      {view==="rnr"&&<section className="card rnr-card">
+      {view==="rnr"&&<section className={`card rnr-card rnr-view-${rnrSubView}`}>
         <h2 className="card-title"><i className="ti ti-sitemap" aria-hidden="true"></i>업무 R&R 정리</h2>
         <p className="subtle" style={{marginBottom:12}}>업무를 편하게 적으면 부서/직책/업무명으로 정리해서 누적합니다. 다음 직원이 같은 역할을 맡을 때 기준 업무로 볼 수 있습니다.</p>
         {rnrMsg&&<div className={`alert ${rnrMsg.includes("저장")?"success":""}`}>{rnrMsg}</div>}
+        <div className="rnr-candidate-area">
+          <div className="rnr-section-title">
+            <b>R&R 후보</b>
+            <span>완료된 데일리 KPI를 부서별·직원별로 모아보고, 체크한 항목을 AI 정리 초안으로 넘깁니다.</span>
+          </div>
+          <div className="rnr-candidate-toolbar">
+            <div><b>{selectedRnrCandidates.length}개 선택</b><span>업무 R&R에 저장하기 전 담당/백업/공개 여부를 다시 확인합니다.</span></div>
+            <div className="actions">
+              <button className="button ghost compact" type="button" onClick={()=>setSelectedRnrCandidateKeys([])}>선택 초기화</button>
+              <button className="button compact" type="button" onClick={()=>prepareRnrCandidateAiDraft()}><i className="ti ti-sparkles" aria-hidden="true"></i>AI로 R&R 정리</button>
+            </div>
+          </div>
+          <div className="rnr-kpi-candidate-board">
+            {rnrKpiCandidateRoleGroups.length===0&&<p className="rnr-empty-work">완료된 데일리 KPI 기록이 생기면 R&R 후보로 표시됩니다.</p>}
+            {rnrKpiCandidateRoleGroups.map((group:any)=>(
+              <section className="rnr-kpi-candidate-role" key={group.key}>
+                <div className="rnr-kpi-candidate-role-head">
+                  <div><b>{group.department}</b><span>{group.employeeName} · {group.position}</span></div>
+                  <em>{group.candidates.length}개 후보</em>
+                </div>
+                <div className="rnr-kpi-candidate-list">
+                  {group.candidates.slice(0,8).map((candidate:any)=>(
+                    <label key={candidate.key} className={selectedRnrCandidateKeys.includes(candidate.key)?"selected":""}>
+                      <input type="checkbox" checked={selectedRnrCandidateKeys.includes(candidate.key)} onChange={event=>toggleRnrCandidateSelection(candidate.key,event.target.checked)} />
+                      <span>
+                        <b>{candidate.title}</b>
+                        <small>{candidate.workGroup} · 완료 {candidate.count}건 · {candidate.dateCount}일 · {rnrCandidatePeopleLabel(candidate.employeeIds)}</small>
+                      </span>
+                      <button type="button" className="button ghost compact" onClick={event=>{event.preventDefault();prepareRnrCandidateAiDraft(candidate);}}>
+                        AI 정리
+                      </button>
+                    </label>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        </div>
+        <div className="rnr-work-area">
         <div className="rnr-review-panel">
           <div className="rnr-section-title rnr-panel-title">
             <b>직원 제출 검토 {pendingRnrReviewRequests.length>0&&<span className="count-badge">{pendingRnrReviewRequests.length}</span>}</b>
@@ -9662,7 +10844,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         </div>
         <div className="rnr-section-title"><b>공개 업무 분장표 미리보기</b><span>직원들에게 보이는 부서별 업무 흐름입니다.</span></div>
         <WorkMapBoard entries={rnrEntries} employees={activeEmployees} onOpen={openRnr} />
-        <div className="rnr-section-title"><b>조직도와 부서별 업무</b><span>직원을 바로 배치하고, 부서 안에서 업무 묶음별 R&R을 확인합니다.</span></div>
+        <div className="rnr-section-title"><b>조직도</b><span>직원을 부서와 직책 기준으로 배치합니다. 업무 후보와 세부 R&R은 위 후보/업무 정리 영역에서 관리합니다.</span></div>
         <div className="rnr-department-tabs">
           <button className={rnrDepartmentFilter==="all"?"active":""} onClick={()=>setRnrDepartmentFilter("all")}>전체</button>
           {rnrDepartmentNames.map((department:string)=><button key={department} className={rnrDepartmentFilter===department?"active":""} onClick={()=>setRnrDepartmentFilter(department)}>{department}</button>)}
@@ -9674,24 +10856,15 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           </div>
           <div className="rnr-hierarchy-branches">
             {visibleRnrDepartmentCards.map((card:any)=>(
-              <div className="rnr-hierarchy-dept" key={`hierarchy-${card.department}`}>
+              <div className={`rnr-hierarchy-dept ${card.department==="경영지원부서"?"rnr-support-dept":""}`} key={`hierarchy-${card.department}`}>
                 <div className="rnr-hierarchy-dept-head">
                   <b>{card.department}</b>
-                  <span>{card.members.length}명 · 업무 {card.entries.length}건</span>
+                  <span>{card.members.length}명</span>
                 </div>
                 <div className="rnr-hierarchy-members">
                   {card.members.slice(0,4).map((member:any)=><span key={member.id}>{member.name}<small>{member.position||"역할 미지정"}</small></span>)}
                   {card.members.length>4&&<span>외 {card.members.length-4}명</span>}
                   {card.members.length===0&&<span>배치 대기</span>}
-                </div>
-                <div className="rnr-hierarchy-tasks">
-                  {card.entries.slice(0,3).map((entry:any)=>(
-                    <button key={entry.id} type="button" onClick={()=>openRnr(entry)}>
-                      <b>{rnrPublicTitle(entry)}</b>
-                      {rnrIsSensitive(entry)&&<em>민감 권한 확인</em>}
-                    </button>
-                  ))}
-                  {card.entries.length===0&&<p>업무 등록 대기</p>}
                 </div>
               </div>
             ))}
@@ -9701,9 +10874,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           {visibleRnrDepartmentCards.map((card:any)=>{
             const draft=rnrOrgDraftFor(card.department);
             return (
-            <div className="rnr-org-card" key={card.department}>
+            <div className={`rnr-org-card ${card.department==="경영지원부서"?"rnr-support-dept":""}`} key={card.department}>
               <div className="rnr-org-head">
-                <div><b>{card.department}</b><span>{card.members.length}명 · 업무 {card.entries.length}건</span></div>
+                <div><b>{card.department}</b><span>{card.members.length}명</span></div>
                 <i className="ti ti-sitemap" aria-hidden="true"></i>
               </div>
               <div className="rnr-member-list">
@@ -9731,27 +10904,9 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 </select>
                 <button className="button secondary compact" onClick={()=>assignRnrOrgEmployee(card.department)}><i className="ti ti-user-plus" aria-hidden="true"></i>넣기</button>
               </div>
-              <div className="rnr-department-workgroups">
-                {card.workGroups.length===0&&<p className="rnr-empty-work">등록된 업무 R&R이 없습니다.</p>}
-                {card.workGroups.map((group:any)=>(
-                  <div className="rnr-work-category" key={group.key}>
-                    <div className="rnr-work-category-head"><b>{group.category}</b><span>{group.entries.length}건</span></div>
-                    <div className="rnr-work-list">
-                      {group.entries.slice(0,6).map((entry:any)=>(
-                        <div className="rnr-work-item" key={entry.id}>
-                          <button className="rnr-person-task" onClick={()=>openRnr(entry)}>
-                            <b>{rnrPublicTitle(entry)}</b>
-                          </button>
-                          <button className="icon-button rnr-task-send" title="데일리 KPI로 보내기" onClick={()=>sendRnrToTodayTask(entry)}><i className="ti ti-target-arrow" aria-hidden="true"></i></button>
-                        </div>
-                      ))}
-                    </div>
-                    {group.entries.length>6&&<small className="subtle">외 {group.entries.length-6}건</small>}
-                  </div>
-                ))}
-              </div>
             </div>
           )})}
+        </div>
         </div>
       </section>}
 
@@ -11874,7 +13029,7 @@ function ConsentReportPage() {
   workTimeConsents.filter(consent=>consent.consent_version===ATTENDANCE_RULE_CONSENT_VERSION).forEach(consent=>{if(!latestAttendancePolicyByEmployee[consent.employee_id]) latestAttendancePolicyByEmployee[consent.employee_id]=consent;});
   const employeeMap:Record<string,any>={};
   employees.forEach(employee=>{employeeMap[employee.id]=employee;});
-  const visibleConsentEmployees=employees.filter(employee=>employee.employment_status==="active"&&employee.is_active!==false);
+  const visibleConsentEmployees=employees.filter(employee=>isEmployeeActive(employee));
   const visibleConsentEmployeeIds=new Set(visibleConsentEmployees.map(employee=>employee.id));
   const deletedWorkTimeRequestIdSet=new Set(deletedWorkTimeRequestIds);
   const visibleWorkTimeRequests=workTimeRequests.filter(request=>visibleConsentEmployeeIds.has(request.employee_id)&&!deletedWorkTimeRequestIdSet.has(request.id));
