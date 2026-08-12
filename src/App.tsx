@@ -1278,11 +1278,27 @@ function isAfterBusinessClose(date=new Date()) {
   return date.getHours()>=18;
 }
 function kpiLinesFromText(text:string) {
-  return text
+  return uniqueKpiLines(text
     .split(/\r?\n|[,，]/)
     .map(line=>line.replace(/^\s*(?:[-*]|\d+[.)])\s*/,"").trim())
-    .filter(Boolean)
+    .filter(Boolean))
     .slice(0,20);
+}
+function normalizeKpiLineKey(line:string) {
+  return String(line??"")
+    .replace(/^\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}[./-]\d{1,2})(?:\s*주차)?\s*(?:[·:)\-]\s*)?/,"")
+    .replace(/\s+/g," ")
+    .trim()
+    .toLowerCase();
+}
+function uniqueKpiLines(lines:string[]) {
+  const seen=new Set<string>();
+  return lines.filter(line=>{
+    const key=normalizeKpiLineKey(line)||line.trim().toLowerCase();
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 function kpiStatusLabel(status?:string|null) {
   if(status==="done") return "완료";
@@ -4895,8 +4911,6 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const canvasRef=useRef<HTMLCanvasElement>(null);
   const kpiWrapRef=useRef<HTMLDivElement>(null);
   const today=todayIso();
-  const weekStart=weekStartIso(today);
-  const weekEnd=weekEndIso(today);
   const monthStart=monthStartIso(month);
   const monthEnd=monthEndIso(month);
   const yearStart=`${month.slice(0,4)}-01-01`;
@@ -4906,6 +4920,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     : today>=monthStart&&today<=monthEnd
       ? today
       : monthStart;
+  const weekStart=weekStartIso(selectedDailyDate);
+  const weekEnd=weekEndIso(selectedDailyDate);
   async function insertKpiEntryRows(rows:any[]) {
     let result=await supabase.from("kpi_entries").insert(rows);
     if(result.error&&optionalKpiColumnError(result.error)){
@@ -5089,13 +5105,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(b.id===currentEmployee.id) return 1;
       return String(a.employee_no??a.name).localeCompare(String(b.employee_no??b.name));
     });
+  const kpiColorPeople=activeKpiEmployees();
   function employeeSortValue(id:string) {
     const employee=employeeMap.get(id);
     return String(employee?.employee_no??employee?.name??id);
   }
   function kpiEmployeeColor(employeeId?:string|null) {
     if(!employeeId||employeeId==="team") return EMPLOYEE_COLORS[0];
-    return employeeColorFromList(scorePeople,employeeId);
+    return kpiColorPeople.some((employee:any)=>employee.id===employeeId)
+      ? employeeColorFromList(kpiColorPeople,employeeId)
+      : employeeColorFromList(scorePeople,employeeId);
   }
   function kpiCardStyle(employeeId?:string|null, rate=0) {
     const safeRate=Math.max(0,Math.min(100,Number(rate)||0));
@@ -5209,9 +5228,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   function kpiProjectColor(entry:any) {
     const rootId=kpiRootId(entry);
-    const projectIndex=rootId?monthlyGoals.findIndex((goal:any)=>goal.id===rootId):-1;
-    if(projectIndex>=0) return EMPLOYEE_COLORS[projectIndex%EMPLOYEE_COLORS.length];
-    return kpiEmployeeColor(kpiRootEmployeeId(entry));
+    const root=rootId?monthlyGoals.find((goal:any)=>goal.id===rootId):null;
+    return kpiEmployeeColor(root?.employee_id??entry?.employee_id??root?.mentor_employee_id??entry?.mentor_employee_id??kpiRootEmployeeId(entry));
   }
   function weeklyProgress(goal:any) {
     const dl=weekDailyEntries.filter((entry:any)=>entry.parent_id===goal.id);
@@ -5711,6 +5729,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function activeKpiEmployees() {
     return employees.filter((employee:any)=>isKpiVisibleEmployee(employee));
   }
+  function assignableKpiEmployees(start=projectEditorDraft.projectStart||monthStart,end=projectEditorDraft.projectEnd||monthEnd) {
+    const base=employees
+      .filter((employee:any)=>isEmployeeActive(employee)&&!isTestEmployee(employee))
+      .sort(sortEmployeesByEmployeeNo);
+    const scoped=base.filter((employee:any)=>employeeWorksInDateRange(employee,start,end));
+    return scoped.length>0 ? scoped : base;
+  }
   function isKpiVisibleEmployee(employee:any) {
     return isEmployeeActive(employee)&&employeeWorksOnDate(employee,today)&&!isTestEmployee(employee);
   }
@@ -5736,10 +5761,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       adminNote:project?stripKpiAdminMeta(project.admin_note??""):"",
     });
     const plan=project
-      ? allWeeklyEntries
+      ? uniqueKpiLines(allWeeklyEntries
           .filter((entry:any)=>entry.parent_id===project.id)
           .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0))
-          .map((entry:any)=>entry.title)
+          .map((entry:any)=>entry.title))
           .join("\n")
       : "";
     setProjectEditorWeeklyPlan(plan);
@@ -5832,6 +5857,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       const targets=assigneeIds.length>0 ? assigneeIds.map(id=>employeeMap.get(id)).filter(Boolean) : [];
       const primaryTarget=targets[0]??owner??null;
       const existingWeekly=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.parent_id===savedProjectId);
+      const existingWeeklyKeys=new Set(existingWeekly.map((entry:any)=>normalizeKpiLineKey(entry.title)));
       const weeklyRows=weeklyLines.map((line,index)=>{
         const workDate=weekStartIso(addIsoDays(start,index*7));
         return {
@@ -5851,7 +5877,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           created_by:currentEmployee.id,
           updated_by:currentEmployee.id,
         };
-      }).filter((row:any)=>!existingWeekly.some((entry:any)=>String(entry.title??"").trim()===row.title));
+      }).filter((row:any)=>!existingWeeklyKeys.has(normalizeKpiLineKey(row.title)));
       if(weeklyRows.length>0) {
         const weeklyResult=await insertKpiEntryRows(weeklyRows);
         if(weeklyResult.error) throw weeklyResult.error;
@@ -5860,7 +5886,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setFocusProjectId(savedProjectId||"all");
       await load();
       setProjectEditorId(savedProjectId||"");
-      setMessage(`프로젝트를 저장했고 주간 업무 ${weeklyRows.length}건을 연결 직원에게 배정했습니다.`);
+      setMessage(weeklyRows.length>0 ? `프로젝트를 저장했고 주간 업무 ${weeklyRows.length}건을 연결 직원에게 배정했습니다.` : "프로젝트 정보를 저장했습니다.");
     } catch(e:any) {
       setMessage(e.message);
     } finally {
@@ -6328,7 +6354,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <b>{quickTargetLabel()}</b>
             </div>
             <button type="button" className={quickEmployeeIds.length===0?"active":""} onClick={()=>setQuickTargets([])}>전체</button>
-            {activeKpiEmployees().map((employee:any)=>(
+            {assignableKpiEmployees(monthStart,monthEnd).map((employee:any)=>(
               <button
                 type="button"
                 key={employee.id}
@@ -6504,7 +6530,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   <span className="label">담당자</span>
                   <select className="select" value={projectEditorDraft.ownerId} onChange={event=>setProjectEditorDraft({...projectEditorDraft,ownerId:event.target.value})}>
                     <option value="">담당자 미정</option>
-                    {activeKpiEmployees().map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                    {assignableKpiEmployees().map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
                   </select>
                 </label>
                 <label className="form-row">
@@ -6515,7 +6541,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <div className="form-row">
                 <span className="label">연결 직원</span>
                 <div className="kpi-connected-employee-grid">
-                  {activeKpiEmployees().map((employee:any)=>(
+                  {assignableKpiEmployees().map((employee:any)=>(
                     <label key={employee.id}>
                       <input type="checkbox" checked={projectEditorDraft.connectedEmployeeIds.includes(employee.id)} onChange={()=>toggleProjectEditorEmployee(employee.id)} />
                       <span>{employee.name}</span>
@@ -6527,12 +6553,21 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 <span className="label">프로젝트 세부 내용</span>
                 <textarea className="textarea compact-textarea" value={projectEditorDraft.adminNote} onChange={event=>setProjectEditorDraft({...projectEditorDraft,adminNote:event.target.value})} placeholder="운영 목적, 산출물, 주의할 점, 직원에게 전달할 내용을 적어주세요." />
               </label>
+              <div className="kpi-project-editor-savebar">
+                <div>
+                  <b>프로젝트 정보 저장</b>
+                  <span>기간, 담당자, 연결 직원, 노션 페이지가 월간 프로젝트 카드에 반영됩니다.</span>
+                </div>
+                <button className="button compact" disabled={saving} onClick={saveProjectEditor}>
+                  저장
+                </button>
+              </div>
             </section>
             <section className="kpi-project-editor-plan">
               <div className="kpi-project-editor-title">
-                <span>AI 주간 업무 기획</span>
+                <span>주간 업무 직접 추가 / AI 초안</span>
                 <b>월간 → 주간 나누기</b>
-                <small>초안을 만든 뒤 줄별로 수정하고 완료를 누르면 연결 직원에게 주간 KPI로 배정됩니다.</small>
+                <small>AI를 쓰지 않아도 줄마다 직접 적고 완료를 누르면 연결 직원에게 주간 KPI로 배정됩니다.</small>
               </div>
               <div className="kpi-project-plan-toolbar">
                 <button className="button ghost compact" disabled={saving} onClick={suggestProjectWeeklyPlan}>
@@ -7373,14 +7408,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   <label className="label">담당자</label>
                   <select className="select" value={editKpiDraft.employeeId} onChange={e=>setEditKpiDraft({...editKpiDraft,employeeId:e.target.value})}>
                     <option value="">전체/미지정</option>
-                    {activeKpiEmployees().map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                    {assignableKpiEmployees(editKpiDraft.projectStart||monthStart,editKpiDraft.projectEnd||monthEnd).map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
                   </select>
                 </div>
                 <div className="form-row">
                   <label className="label">사수/연결 직원</label>
                   {editKpiDraft.scope==="monthly"||editKpiDraft.scope==="weekly" ? (
                     <div className="kpi-connected-employee-grid">
-                      {activeKpiEmployees().map((employee:any)=>(
+                      {assignableKpiEmployees(editKpiDraft.projectStart||monthStart,editKpiDraft.projectEnd||monthEnd).map((employee:any)=>(
                         <label key={employee.id}>
                           <input
                             type="checkbox"
@@ -7400,7 +7435,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   ) : (
                     <select className="select" value={editKpiDraft.mentorEmployeeId} onChange={e=>setEditKpiDraft({...editKpiDraft,mentorEmployeeId:e.target.value})}>
                       <option value="">미지정</option>
-                      {activeKpiEmployees().map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                      {assignableKpiEmployees(editKpiDraft.projectStart||monthStart,editKpiDraft.projectEnd||monthEnd).map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
                     </select>
                   )}
                 </div>
