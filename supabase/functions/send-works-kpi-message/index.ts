@@ -397,17 +397,22 @@ Deno.serve(async (req) => {
     const isoDate = `20${workDate.slice(0, 2)}-${workDate.slice(2, 4)}-${workDate.slice(4, 6)}`;
     const { data: kpis } = await userClient
       .from("kpi_entries")
-      .select("id, title, status, sort_order")
+      .select("id, title, status, sort_order, admin_note")
       .or(`employee_id.eq.${employee.id},employee_id.is.null`)
       .eq("work_date", isoDate)
       .eq("scope", "daily")
       .eq("is_active", true)
       .order("sort_order", { ascending: true });
 
-    const message = buildMessage(eventType, employee.name, log, kpis ?? []);
+    const visibleKpis = (kpis ?? []).filter((item: any) =>
+      String(item.title ?? "").trim() !== "기본 데일리 업무"
+      && !String(item.admin_note ?? "").includes("[next-kpi-draft]")
+      && !String(item.admin_note ?? "").includes("[next-kpi-deferred]")
+    );
+    const message = buildMessage(eventType, employee.name, log, visibleKpis);
     const channelId = worksChannelIdFor(eventType);
     const botId = env("NAVER_WORKS_BOT_ID");
-    const entryIds = (kpis ?? []).map((item: any) => item.id);
+    const entryIds = visibleKpis.map((item: any) => item.id);
 
     async function record(status: string, response: unknown = null, error: string | null = null) {
       await serviceClient.from("kpi_works_notifications").insert({
