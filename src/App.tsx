@@ -2602,6 +2602,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   const [aiBusy,setAiBusy]=useState(false);
   const [aiSummary,setAiSummary]=useState<any|null>(null);
   const [githubBusy,setGithubBusy]=useState(false);
+  const [imageBackfillBusy,setImageBackfillBusy]=useState(false);
   const [githubIssue,setGithubIssue]=useState<any|null>(null);
   const [githubIssues,setGithubIssues]=useState<any[]>([]);
   const [expandedGithubIssue,setExpandedGithubIssue]=useState<string|null>(null);
@@ -2868,6 +2869,41 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       setAiBusy(false);
     }
   }
+  async function backfillImageSummaries() {
+    if(!isAdmin) return;
+    if(!window.confirm("기존 개선함 이미지 첨부를 AI가 다시 읽어서 요약 저장하고, 연결된 GitHub 이슈에는 댓글로 남길까요?")) return;
+    setMsg(""); setImageBackfillBusy(true);
+    try {
+      const {data:sessionData}=await supabase.auth.getSession();
+      const token=sessionData.session?.access_token;
+      if(!token) throw new Error("로그인이 필요합니다.");
+      let updatedTotal=0;
+      let failedTotal=0;
+      let commentTotal=0;
+      let githubSkipped=false;
+      for(let batch=0;batch<8;batch+=1) {
+        const response=await fetch("/api/improvement-backfill-images",{
+          method:"POST",
+          headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+          body:JSON.stringify({limit:5,scan_limit:300}),
+        });
+        const data=await response.json();
+        if(!response.ok) throw new Error(data?.error||"이미지 재분석 실패");
+        updatedTotal+=Number(data.updated_count??0);
+        failedTotal+=Number(data.failed_count??0);
+        commentTotal+=Array.isArray(data.github?.comments)?data.github.comments.length:0;
+        githubSkipped=githubSkipped||Boolean(data.github?.skipped);
+        if(Number(data.candidate_count??0)===0||Number(data.updated_count??0)===0) break;
+      }
+      const githubNote=githubSkipped?"GitHub 토큰이 없어 댓글은 생략":"GitHub 댓글 "+commentTotal+"개";
+      setMsg(`이미지 재분석 완료: ${updatedTotal}건 저장 · 실패 ${failedTotal}건 · ${githubNote}`);
+      await load();
+    } catch(error:any) {
+      setMsg(error.message||String(error));
+    } finally {
+      setImageBackfillBusy(false);
+    }
+  }
   async function createGithubIssue() {
     if(!isAdmin) return setMsg("GitHub Issue 전송은 관리자 승인이 필요합니다.");
     const target=visible.filter(row=>!["done","dismissed"].includes(row.status));
@@ -2947,9 +2983,9 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     <section className="card improvement-page">
       <div className="section-head">
         <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>{isAdmin?"앱에서 바로 남긴 개선 메모가 쌓입니다. 처리한 항목은 개선완료로 정리합니다.":"내가 남긴 개선 요청과 처리 상태를 확인합니다."}</p></div>
-        <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.length===0||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button>{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={scopedRows.filter(row=>!isGithubSentRequest(row)).every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
+        <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.length===0||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button>{isAdmin&&<button className="button ghost" onClick={backfillImageSummaries} disabled={imageBackfillBusy}><i className="ti ti-photo-scan" aria-hidden="true"></i>{imageBackfillBusy?"재분석 중":"기존 이미지 재분석"}</button>}{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={scopedRows.filter(row=>!isGithubSentRequest(row)).every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
       </div>
-      {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("관리자 승인")||msg.includes("수정했습니다")?"success":"error"}`}>{msg}</div>}
+      {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("재분석 완료")||msg.includes("관리자 승인")||msg.includes("수정했습니다")?"success":"error"}`}>{msg}</div>}
       {githubIssues.length>0&&<div className="alert success github-created-links">{githubIssues.map(issue=><a key={issue.number} href={issue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{issue.number} 열기</a>)}</div>}
       {githubIssues.length===0&&githubIssue?.html_url&&<div className="alert success"><a href={githubIssue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{githubIssue.number} 열기</a></div>}
       <div className="improvement-summary-line">대기 {openCount}건 · GitHub 이슈 {githubIssueCount}개 / 전송 {githubCount}건 · 완료 {doneCount}건 · 삭제 {hiddenCount}건</div>
