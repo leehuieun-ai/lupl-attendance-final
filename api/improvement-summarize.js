@@ -1,6 +1,12 @@
 import { parseJsonText, readJsonBody, requireAdmin, send } from "./_shared.js";
+import {
+  enrichRequestsWithImageSummaries,
+  safeRequestsForPrompt,
+  summarizeImprovementImages,
+} from "./_improvement-images.js";
 
 const OPENAI_MODEL = "gpt-5.5";
+const OPENAI_VISION_MODEL = process.env.LUPL_OPENAI_VISION_MODEL || process.env.OPENAI_VISION_MODEL || OPENAI_MODEL;
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return send(res, 405, { error: "POST만 지원합니다." });
@@ -13,6 +19,13 @@ export default async function handler(req, res) {
     const requests = Array.isArray(body.requests) ? body.requests.slice(0, 100) : [];
     if (requests.length === 0) return send(res, 400, { error: "정리할 개선 요청이 없습니다." });
 
+    const imageSummaries = await summarizeImprovementImages({
+      requests,
+      apiKey,
+      model: OPENAI_VISION_MODEL,
+    });
+    const enrichedRequests = enrichRequestsWithImageSummaries(requests, imageSummaries);
+
     const prompt = [
       "너는 근태관리 웹앱 개선 요청을 개발 작업 단위로 정리하는 한국어 PM이다.",
       "관리자가 나중에 Codex에게 '최종으로 수정해줘'라고 말하면 바로 개발할 수 있도록 정리한다.",
@@ -21,8 +34,9 @@ export default async function handler(req, res) {
       "priority_items는 배열이며 각 항목은 title, menu, submenu, reason, severity 필드를 가진다.",
       "action_items는 배열이며 각 항목은 task, scope, acceptance_criteria 필드를 가진다.",
       "중복 요청은 합치고, 긴급/오류/많이 반복되는 요청을 우선순위로 둔다.",
+      "image_summary가 있으면 스크린샷에서 확인된 UI/오류 근거로 보고 action_items에 반영한다.",
       "",
-      `개선 요청 목록: ${JSON.stringify(requests)}`,
+      `개선 요청 목록: ${JSON.stringify(safeRequestsForPrompt(enrichedRequests))}`,
     ].join("\n");
 
     const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -43,7 +57,11 @@ export default async function handler(req, res) {
     const data = await openaiRes.json();
     if (!openaiRes.ok) return send(res, openaiRes.status, { error: data?.error?.message || "OpenAI 호출 실패" });
     const content = data?.choices?.[0]?.message?.content || "{}";
-    return send(res, 200, { summary: parseJsonText(content) });
+    return send(res, 200, {
+      summary: parseJsonText(content),
+      image_summaries: imageSummaries,
+      requests: safeRequestsForPrompt(enrichedRequests),
+    });
   } catch (error) {
     return send(res, error.statusCode || 500, { error: error.message || String(error) });
   }

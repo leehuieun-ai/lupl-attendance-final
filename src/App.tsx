@@ -2699,6 +2699,63 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     const first=group.rows[0];
     return `[개선함 · ${group.label}] ${improvementRequestTitle(first)}${group.rows.length>1?` 외 ${group.rows.length-1}건`:""}`;
   }
+  const maxVisionRequestCount=20;
+  const maxVisionImageChars=4_500_000;
+  function hasImprovementImageAttachment(attachments:any[]) {
+    return (Array.isArray(attachments)?attachments:[]).some((attachment:any)=>String(attachment?.data_url??"").startsWith("data:image/"));
+  }
+  function compactImprovementAttachments(attachments:any[], includeDataUrl=true) {
+    return (Array.isArray(attachments)?attachments:[])
+      .filter((attachment:any)=>String(attachment?.data_url??"").startsWith("data:image/"))
+      .slice(0,4)
+      .map((attachment:any,index:number)=>{
+        const dataUrl=String(attachment.data_url??"");
+        const payload:any={
+          id:attachment.id??`attachment-${index+1}`,
+          name:attachment.name??`첨부 이미지 ${index+1}`,
+          type:attachment.type??"image/png",
+          has_image_data:includeDataUrl&&dataUrl.length<=maxVisionImageChars,
+          size_chars:dataUrl.length,
+        };
+        if(payload.has_image_data) payload.data_url=dataUrl;
+        return payload;
+      });
+  }
+  function storedImageSummary(row:any) {
+    const payloadSummary=String(row.ai_payload?.image_summary||"").trim();
+    if(payloadSummary) return payloadSummary;
+    return row.ai_payload?.source==="improvement_image_vision"?String(row.ai_summary||"").trim():"";
+  }
+  function renderImageSummary(row:any) {
+    const summary=storedImageSummary(row);
+    if(!summary) return null;
+    return <div className="improvement-image-summary"><b>이미지 인식 요약</b><span>{summary}</span></div>;
+  }
+  function imageSummaryItems(payload:any) {
+    const source=payload?.image_summaries;
+    if(Array.isArray(source)) return source;
+    if(source&&typeof source==="object") return Object.values(source);
+    if(Array.isArray(payload?.requests)) return payload.requests.filter((request:any)=>request?.image_summary);
+    return [];
+  }
+  async function persistImageSummaries(payload:any) {
+    const items=imageSummaryItems(payload).filter((item:any)=>item?.id&&String(item?.image_summary??"").trim());
+    if(items.length===0) return;
+    const analyzedAt=new Date().toISOString();
+    const results=await Promise.all(items.map((item:any)=>supabase.from("improvement_requests").update({
+      ai_summary:String(item.image_summary).trim(),
+      ai_payload:{
+        source:"improvement_image_vision",
+        image_summary:String(item.image_summary).trim(),
+        image_attachments:item.attachments||item.image_attachments||[],
+        image_skipped_count:item.skipped_count??item.image_skipped_count??0,
+        analyzed_at:analyzedAt,
+      },
+      updated_at:analyzedAt,
+    }).eq("id",item.id)));
+    const failed=results.find((result:any)=>result.error);
+    if(failed?.error) throw failed.error;
+  }
   function improvementRequestGroups(items:any[]) {
     const groups=items.reduce((acc:any,row:any)=>{
       const key=[row.menu_id||row.menu_label||"none",row.submenu_label||""].join("|");
@@ -2726,7 +2783,8 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       .map((group:any)=>({...group,rows:group.rows.sort((a:any,b:any)=>String(b.created_at||"").localeCompare(String(a.created_at||"")))}))
       .sort((a:any,b:any)=>b.rows.length-a.rows.length||String(a.label).localeCompare(String(b.label),"ko"));
   }
-  function githubIssueRequestPayload(row:any) {
+  function githubIssueRequestPayload(row:any, options:any={}) {
+    const includeAttachmentData=options.includeAttachmentData!==false;
     return {
       id:row.id,
       type:row.request_type_label||row.request_type,
@@ -2737,7 +2795,18 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       status:row.status,
       created_at:row.created_at,
       requester:row.employees?.name,
+      attachments:compactImprovementAttachments(row.attachments,includeAttachmentData),
+      ai_summary:storedImageSummary(row),
+      ai_payload:row.ai_payload||{},
     };
+  }
+  function improvementRequestPayloads(rows:any[], limit:number) {
+    let visionRequests=0;
+    return rows.slice(0,limit).map((row:any)=>{
+      const includeAttachmentData=visionRequests<maxVisionRequestCount&&hasImprovementImageAttachment(row.attachments);
+      if(includeAttachmentData) visionRequests+=1;
+      return githubIssueRequestPayload(row,{includeAttachmentData});
+    });
   }
   async function updateStatus(id:string,status:string) {
     const {error}=await supabase.from("improvement_requests").update({status,updated_at:new Date().toISOString()}).eq("id",id);
@@ -2786,21 +2855,13 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       const response=await fetch("/api/improvement-summarize",{
         method:"POST",
         headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
-        body:JSON.stringify({requests:visible.slice(0,80).map(row=>({
-          id:row.id,
-          type:row.request_type_label||row.request_type,
-          menu:row.menu_label,
-          submenu:row.submenu_label,
-          note:row.note,
-          title:improvementRequestTitle(row),
-          status:row.status,
-          created_at:row.created_at,
-          requester:row.employees?.name,
-        }))}),
+        body:JSON.stringify({requests:improvementRequestPayloads(visible,80)}),
       });
       const data=await response.json();
       if(!response.ok) throw new Error(data?.error||"AI 정리 실패");
+      await persistImageSummaries(data);
       setAiSummary(data.summary);
+      await load();
     } catch(error:any) {
       setMsg(error.message||String(error));
     } finally {
@@ -2824,11 +2885,12 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
           headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
           body:JSON.stringify({
             title:githubIssueTitle(group),
-            requests:group.rows.slice(0,100).map(githubIssueRequestPayload),
+            requests:improvementRequestPayloads(group.rows,100),
           }),
         });
         const data=await response.json();
         if(!response.ok) throw new Error(data?.error||"GitHub Issue 생성 실패");
+        await persistImageSummaries(data);
         createdIssues.push(data.issue);
         const ids=group.rows.map((row:any)=>row.id);
         const patch={
@@ -2922,6 +2984,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                   <div className="improvement-request-body">
                     <p>{row.note}</p>
                     {Array.isArray(row.attachments)&&row.attachments.length>0&&<div className="improvement-attachments readonly">{row.attachments.map((attachment:any,index:number)=>String(attachment?.data_url??"").startsWith("data:image/")?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+                    {renderImageSummary(row)}
                     {(row.github_issue_url||row.github_issue_number)&&<a className="github-issue-chip" href={row.github_issue_url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{row.github_issue_number??"-"} · {row.github_issue_title||"전송된 이슈"}</a>}
                     {renderImprovementActions(row)}
                   </div>
@@ -2958,6 +3021,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                   <div className="improvement-request-body">
                     <p>{row.note}</p>
                     {Array.isArray(row.attachments)&&row.attachments.length>0&&<div className="improvement-attachments readonly">{row.attachments.map((attachment:any,index:number)=>String(attachment?.data_url??"").startsWith("data:image/")?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+                    {renderImageSummary(row)}
                     {(row.github_issue_url||row.github_issue_number)&&<a className="github-issue-chip" href={row.github_issue_url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{row.github_issue_number??"-"} · {row.github_issue_title||"전송된 이슈"}</a>}
                     <small>{row.page_title??"-"} · {row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""}</small>
                     {renderImprovementActions(row)}
@@ -2991,6 +3055,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                   <div className="improvement-group-item" key={row.id}>
                     <b>{improvementRequestTitle(row)}</b>
                     <p>{row.note}</p>
+                    {renderImageSummary(row)}
                     <small>{row.employees?.name??"작성자"} · {formatDateTime(row.updated_at||row.created_at)}</small>
                   </div>
                 ))}
@@ -3039,6 +3104,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                       <div className="improvement-group-item" key={row.id}>
                         <b>{improvementRequestTitle(row)}</b>
                         <p>{row.note}</p>
+                        {renderImageSummary(row)}
                         <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)}</small>
                       </div>
                     ))}
@@ -3064,6 +3130,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
               </div>
               <p>{row.note}</p>
               {Array.isArray(row.attachments)&&row.attachments.length>0&&<div className="improvement-attachments readonly">{row.attachments.map((attachment:any,index:number)=>String(attachment?.data_url??"").startsWith("data:image/")?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+              {renderImageSummary(row)}
               {(row.github_issue_url||row.github_issue_number)&&<a className="github-issue-chip" href={row.github_issue_url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{row.github_issue_number??"-"} · {row.github_issue_title||"전송된 이슈"}</a>}
               <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)} · {row.page_title??"-"}</small>
               {renderImprovementActions(row)}
