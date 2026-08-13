@@ -9453,7 +9453,7 @@ function WorkMapBoard({ entries, employees=[], onOpen, currentEmployee }: { entr
       <article className={`work-map-card ${card.department==="운영 총괄"?"ops":card.department==="공통"?"common":card.department==="경영지원부서"?"support":""}`} key={card.department} style={{"--dept-accent":WORK_MAP_ACCENTS[index%WORK_MAP_ACCENTS.length]} as any}>
         <div className="work-map-card-head">
           <div>
-            <span>Department</span>
+            <span>부서</span>
             <b>{card.department}</b>
             <small className="work-map-card-members">
               담당자 {

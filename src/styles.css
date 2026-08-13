@@ -2742,6 +2742,345 @@ body { overflow-x: hidden; }
 .rnr-org-head i { display: none; }
 .rnr-hierarchy-tasks,
 .rnr-department-workgroups { display: none !important; }
+
+/* R&R calm redesign */
+.rnr-suggestion-box {
+  border-color: #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: none;
+}
+.rnr-role-guide-row,
+.rnr-today-panel,
+.rnr-review-panel,
+.rnr-review-write,
+.rnr-review-preview,
+.rnr-review-edit,
+.rnr-assignment-box,
+.rnr-employee-submit,
+.rnr-stack-column,
+.rnr-kpi-candidate-role,
+.rnr-candidate-toolbar {
+  border-color: #e5e7eb;
+  background: #fff;
+  box-shadow: none;
+}
+.rnr-ai-empty {
+  border-radius: 8px;
+  background: #fff;
+  color: #64748b;
+}
+.rnr-workgroup-chip {
+  min-height: 32px;
+  border-color: #d8dee8;
+  border-radius: 8px;
+  color: #475569;
+  font-weight: 700;
+  box-shadow: none;
+}
+.rnr-workgroup-chip:hover {
+  border-color: #b8c1cf;
+  background: #f8fafc;
+}
+.rnr-workgroup-chip.active {
+  border-color: #94a3b8;
+  background: #f8fafc;
+  color: #172033;
+  box-shadow: inset 0 0 0 1px #cbd5e1;
+}
+.rnr-common-check,
+.rnr-review-owner,
+.rnr-review-history span {
+  border-color: #e5e7eb;
+  background: #fff;
+}
+.rnr-subnav span,
+.rnr-work-category-head span,
+.rnr-kpi-candidate-role-head em {
+  background: #f1f5f9;
+  color: #475569;
+}
+.rnr-task-send {
+  border-color: #d8dee8;
+  background: #fff;
+  color: #475569;
+}
+.rnr-task-send:hover {
+  border-color: #b8c1cf;
+  background: #f8fafc;
+}
+.work-map-page {
+  gap: 14px;
+  background: #fff;
+}
+.work-map-hero {
+  align-items: flex-start;
+  border-color: #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  padding: 16px 18px;
+  box-shadow: none;
+}
+.work-map-hero span {
+  margin-bottom: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.work-map-hero h2 {
+  gap: 7px;
+  color: #111827;
+  font-size: 21px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+.work-map-hero > i {
+  display: none;
+}
+.work-map-overview {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.work-map-overview div {
+  border-color: #e5e7eb;
+  background: #fff;
+  padding: 11px 12px;
+  text-align: left;
+}
+.work-map-overview span {
+  color: #64748b;
+  font-weight: 650;
+}
+.work-map-overview b {
+  margin-top: 2px;
+  color: #111827;
+  font-size: 20px;
+  font-weight: 750;
+}
+.work-map-help {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+  color: #4b5563;
+  font-weight: 600;
+}
+.work-map-board {
+  grid-template-columns: repeat(auto-fit,minmax(min(100%,340px),1fr));
+  gap: 12px;
+}
+.work-map-card {
+  --dept-accent: #64748b !important;
+  border: 1px solid #e5e7eb;
+  border-top: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: none;
+}
+.work-map-card.ops,
+.work-map-card.common {
+  grid-column: auto;
+}
+.work-map-card.support {
+  grid-column: 1 / -1;
+}
+.work-map-card.support .work-map-groups {
+  grid-template-columns: repeat(auto-fit,minmax(min(100%,320px),1fr));
+  gap: 10px 18px;
+}
+.work-map-card-head {
+  border-bottom: 1px solid #edf2f7;
+  background: #fff;
+  padding: 13px 14px 12px;
+}
+.work-map-card-head b {
+  color: #111827;
+  font-size: 18px;
+  font-weight: 750;
+}
+.work-map-card-head span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.work-map-card-members {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+.work-map-card-head em {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  padding: 5px 8px;
+  font-weight: 700;
+}
+.work-map-groups {
+  gap: 0;
+  padding: 6px 14px 14px;
+}
+.work-map-group {
+  border: 0;
+  border-top: 1px solid #f1f5f9;
+  border-radius: 0;
+  background: transparent;
+  padding: 11px 0;
+  gap: 8px;
+}
+.work-map-group:first-child {
+  border-top: 0;
+}
+.work-map-group-title b {
+  color: #172033;
+  font-size: 14px;
+  font-weight: 700;
+}
+.work-map-group-title span {
+  min-width: 32px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-weight: 700;
+}
+.work-map-task {
+  border-color: #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 11px;
+  box-shadow: none;
+  transition: border-color .15s ease, background .15s ease;
+}
+.work-map-task-button:hover .work-map-task {
+  border-color: #cbd5e1;
+  background: #f9fafb;
+  box-shadow: none;
+  transform: none;
+}
+.work-map-task strong {
+  min-height: 38px;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.38;
+}
+.work-map-detail-meta span,
+.work-map-task small {
+  border-color: #e5e7eb;
+  background: #f8fafc;
+  color: #64748b;
+}
+.rnr-department-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 4px;
+}
+.rnr-department-tabs button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  padding: 6px 11px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.rnr-department-tabs button.active {
+  border: 0;
+  background: #fff;
+  color: #172033;
+  box-shadow: 0 1px 2px rgba(15,23,42,.08);
+}
+.rnr-hierarchy-chart {
+  margin: 8px 0 14px;
+  overflow: visible;
+  padding: 0;
+}
+.rnr-hierarchy-root {
+  width: min(100%,220px);
+  margin: 0 0 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #172033;
+  padding: 10px 12px;
+  text-align: left;
+  box-shadow: none;
+}
+.rnr-hierarchy-root::after,
+.rnr-hierarchy-branches::before,
+.rnr-hierarchy-dept::before {
+  display: none;
+}
+.rnr-hierarchy-root span {
+  color: #64748b;
+  opacity: 1;
+}
+.rnr-hierarchy-branches {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(min(100%,260px),1fr));
+  gap: 10px;
+  min-width: 0;
+  padding-top: 0;
+}
+.rnr-hierarchy-dept,
+.rnr-hierarchy-dept.rnr-support-dept {
+  width: auto;
+  border-color: #e5e7eb;
+  background: #fff;
+  box-shadow: none;
+}
+.rnr-hierarchy-dept.rnr-support-dept {
+  grid-column: 1 / -1;
+  order: 90;
+}
+.rnr-hierarchy-dept-head {
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  background: #f9fafb;
+  text-align: left;
+}
+.rnr-hierarchy-members span {
+  border-color: #e5e7eb;
+  background: #fff;
+  font-weight: 700;
+}
+.rnr-org-board {
+  grid-template-columns: repeat(auto-fit,minmax(min(100%,320px),1fr));
+  gap: 12px;
+}
+.rnr-org-card,
+.rnr-org-card.rnr-support-dept {
+  border-color: #e5e7eb;
+  background: #fff;
+  box-shadow: none;
+}
+.rnr-org-card.rnr-support-dept {
+  grid-column: span 2;
+}
+.rnr-org-head {
+  justify-content: space-between;
+  border-bottom-color: #edf2f7;
+  text-align: left;
+}
+.rnr-org-head b {
+  color: #111827;
+  font-size: 17px;
+}
+.rnr-member-row {
+  border-color: #e5e7eb;
+  background: #fff;
+}
+.rnr-org-add {
+  border-top: 1px solid #f1f5f9;
+  padding-top: 10px;
+}
 .table-link-button { border: 0; background: transparent; color: inherit; padding: 0; font: inherit; text-align: left; cursor: pointer; }
 .table-link-button:hover { color: #0c66e4; }
 .leave-usage-summary-row { cursor: pointer; }
