@@ -217,6 +217,15 @@ const RNR_DEPARTMENT_WORK_GROUPS:Record<string,string[]> = {
   AI부서:["AI 교육 콘텐츠","AI 수업 운영","AI 자동화 기획","데이터 정리·분석","AI 서비스 기획·운영"],
   디자인부서:["콘텐츠 디자인","브랜드 디자인","홍보물 제작","UI·화면 디자인","디자인 자료 관리"],
 };
+const PUBLIC_ORG_CHILD_DEPARTMENT_ORDER = ["개발부서","기획부서","디자인부서","AI부서","홍보마케팅부서"];
+const PUBLIC_ORG_ROLE_SUMMARIES:Record<string,string> = {
+  경영지원부서:"운영, 문서, 세무, 온보딩, 지원사업 관리",
+  개발부서:"서비스 기능 개발, 이슈 대응, 기술 운영",
+  기획부서:"교육, 행사, 전시, 프로그램 기획",
+  디자인부서:"홈페이지, 콘텐츠, 프로젝트 디자인",
+  AI부서:"AI 교육 콘텐츠, 자동화, 수업 운영 지원",
+  홍보마케팅부서:"SNS, 블로그, 언론보도, 홍보 콘텐츠",
+};
 const WORK_TIME_CHANGE_MODE_LABELS:Record<string,string> = {
   work_time:"근무 일정 확인",
   date_change:"근무일 변경",
@@ -9493,6 +9502,100 @@ function WorkMapBoard({ entries, employees=[], onOpen, currentEmployee }: { entr
   </>;
 }
 
+function PublicOrgChart({ employees=[], departmentCards, representativeName="이희은", showIntro=true, showSummary=true }: { employees?:any[]; departmentCards?:any[]; representativeName?:string; showIntro?:boolean; showSummary?:boolean }) {
+  const orgEmployees=employees.filter((employee:any)=>isEmployeeActive(employee)&&!isTestEmployee(employee));
+  const representative=orgEmployees.find((employee:any)=>String(employee.position??"").includes("대표")||normalizeDepartmentName(employee.department)==="운영 총괄")
+    ?? orgEmployees.find((employee:any)=>String(employee.name??"").includes("이희은"));
+  const displayRepresentative=representative?.name||representativeName||"이희은";
+  const departmentOrder=(department:string)=>{
+    if(department==="경영지원부서") return 0;
+    const index=PUBLIC_ORG_CHILD_DEPARTMENT_ORDER.indexOf(department);
+    if(index>=0) return index+1;
+    return 50;
+  };
+  const cards:any[]=departmentCards?.length
+    ? departmentCards
+    : Array.from(new Set([
+      ...PUBLIC_ORG_CHILD_DEPARTMENT_ORDER,
+      "경영지원부서",
+      ...orgEmployees.map((employee:any)=>normalizeDepartmentName(employee.department)).filter(Boolean),
+    ]))
+      .filter((department:string)=>department&&department!=="공통"&&department!=="운영 총괄")
+      .map((department:string)=>({
+        department,
+        members:orgEmployees
+          .filter((employee:any)=>normalizeDepartmentName(employee.department)===department)
+          .sort((a:any,b:any)=>String(a.name??"").localeCompare(String(b.name??""))),
+      }));
+  const sortedCards=cards
+    .filter((card:any)=>card.department&&card.department!=="공통"&&card.department!=="운영 총괄")
+    .sort((a:any,b:any)=>departmentOrder(a.department)-departmentOrder(b.department)||String(a.department).localeCompare(String(b.department)));
+  const supportCards=sortedCards.filter((card:any)=>card.department==="경영지원부서");
+  const childCards=sortedCards.filter((card:any)=>card.department!=="경영지원부서");
+  function renderOrgCard(card:any) {
+    const members=card.members??[];
+    return (
+      <div className={`public-org-card ${card.department==="경영지원부서"?"support":""}`} key={`public-org-${card.department}`}>
+        <div className="public-org-card-head">
+          <span>부서</span>
+          <b>{card.department}</b>
+          <small>{members.length}명</small>
+        </div>
+        <div className="public-org-members">
+          {members.slice(0,4).map((member:any)=>(
+            <span className="public-org-member" key={member.id??`${card.department}-${member.name}`}>
+              <b>{member.name}</b>
+              <small>{member.position||"역할 미지정"}</small>
+            </span>
+          ))}
+          {members.length>4&&<span className="public-org-member muted"><b>외 {members.length-4}명</b><small>담당자</small></span>}
+          {members.length===0&&<span className="public-org-member muted"><b>배치 대기</b><small>담당자 준비 중</small></span>}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <section className="public-org-chart">
+      {showIntro&&(
+        <div className="public-org-intro">
+          <span>Organization</span>
+          <h3>러플 조직도</h3>
+          <p>각 부서의 역할과 담당 흐름을 한눈에 볼 수 있도록 정리했습니다.</p>
+        </div>
+      )}
+      <div className="public-org-canvas">
+        <div className="public-org-root">
+          <span>대표</span>
+          <b>{displayRepresentative}</b>
+        </div>
+        {supportCards.length>0&&(
+          <div className={`public-org-support-row ${childCards.length>0?"has-children":""}`}>
+            {supportCards.map(renderOrgCard)}
+          </div>
+        )}
+        {childCards.length>0&&(
+          <div className={`public-org-children ${supportCards.length>0?"below-support":""}`}>
+            {childCards.map(renderOrgCard)}
+          </div>
+        )}
+      </div>
+      {showSummary&&(
+        <div className="public-org-summary">
+          <b>부서별 역할</b>
+          <div className="public-org-summary-grid">
+            {[...supportCards,...childCards].map((card:any)=>(
+              <span key={`public-org-summary-${card.department}`}>
+                <strong>{card.department}</strong>
+                <small>{PUBLIC_ORG_ROLE_SUMMARIES[card.department]||"부서 업무 및 담당 흐름 관리"}</small>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
   const [entries,setEntries]=useState<any[]>([]);
   const [employees,setEmployees]=useState<any[]>([]);
@@ -9555,7 +9658,7 @@ function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
     if(error) setMessage(error.message);
     setEntries(data??[]);
     const [empResult,reviewResult]=await Promise.all([
-      supabase.from("employees").select("id,name,department,is_active,employment_status").eq("is_active",true).order("created_at",{ascending:false}),
+      supabase.from("employees").select("id,name,department,position,is_active,employment_status").eq("is_active",true).order("created_at",{ascending:false}),
       supabase.from("rnr_review_requests").select("*").eq("requester_id",currentEmployee.id).order("created_at",{ascending:false}).limit(10),
     ]);
     setEmployees(empResult.data??[]);
@@ -9635,6 +9738,7 @@ function PublicWorkMapPage({ currentEmployee }: { currentEmployee:any }) {
       <i className="ti ti-route-square-2" aria-hidden="true"></i>
     </div>
     {message&&<div className={`alert ${message.includes("보냈")?"success":"error"}`}>{message}</div>}
+    {!loading&&<PublicOrgChart employees={employees} representativeName="이희은" />}
     <div className="rnr-employee-submit">
       <div className="rnr-section-title rnr-panel-title">
         <b>내 업무 제안</b>
@@ -11161,23 +11265,6 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     : rnrDepartmentCards.filter((card:any)=>card.department===rnrDepartmentFilter);
   const rnrOrgDepartmentNames=rnrDepartmentNames.filter((department:string)=>department!=="공통"&&department!=="운영 총괄");
   const visibleRnrOrgDepartmentCards=visibleRnrDepartmentCards.filter((card:any)=>card.department!=="공통"&&card.department!=="운영 총괄");
-  const supportRnrOrgDepartmentCards=visibleRnrOrgDepartmentCards.filter((card:any)=>card.department==="경영지원부서");
-  const childRnrOrgDepartmentCards=visibleRnrOrgDepartmentCards.filter((card:any)=>card.department!=="경영지원부서");
-  function renderRnrHierarchyDepartmentCard(card:any) {
-    return (
-      <div className={`rnr-hierarchy-dept ${card.department==="경영지원부서"?"rnr-support-dept":""}`} key={`hierarchy-${card.department}`}>
-        <div className="rnr-hierarchy-dept-head">
-          <b>{card.department}</b>
-          <span>{card.members.length}명</span>
-        </div>
-        <div className="rnr-hierarchy-members">
-          {card.members.slice(0,4).map((member:any)=><span key={member.id}>{member.name}<small>{member.position||"역할 미지정"}</small></span>)}
-          {card.members.length>4&&<span>외 {card.members.length-4}명</span>}
-          {card.members.length===0&&<span>배치 대기</span>}
-        </div>
-      </div>
-    );
-  }
   const selectedDetailEmployee=activeEmployees.find((employee:any)=>employee.id===selectedDetailEmployeeId)??activeEmployees[0]??null;
   const selectedBreakStart=selectedDetailEmployee?.break_start??"12:00";
   const selectedBreakEnd=selectedDetailEmployee?.break_end??"13:00";
@@ -11987,22 +12074,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           <button className={rnrDepartmentFilter==="all"?"active":""} onClick={()=>setRnrDepartmentFilter("all")}>전체</button>
           {rnrOrgDepartmentNames.map((department:string)=><button key={department} className={rnrDepartmentFilter===department?"active":""} onClick={()=>setRnrDepartmentFilter(department)}>{department}</button>)}
         </div>
-        <div className="rnr-hierarchy-chart">
-          <div className="rnr-hierarchy-root">
-            <b>대표</b>
-            <span>{currentEmployee.name}</span>
-          </div>
-          {supportRnrOrgDepartmentCards.length>0&&(
-            <div className={`rnr-hierarchy-support-row ${childRnrOrgDepartmentCards.length>0?"has-children":""}`}>
-              {supportRnrOrgDepartmentCards.map(renderRnrHierarchyDepartmentCard)}
-            </div>
-          )}
-          {childRnrOrgDepartmentCards.length>0&&(
-            <div className={`rnr-hierarchy-branches ${supportRnrOrgDepartmentCards.length>0?"below-support":""}`}>
-              {childRnrOrgDepartmentCards.map(renderRnrHierarchyDepartmentCard)}
-            </div>
-          )}
-        </div>
+        <PublicOrgChart employees={activeEmployees} departmentCards={visibleRnrOrgDepartmentCards} representativeName={currentEmployee.name||"이희은"} showIntro={false} showSummary={false} />
         <div className="rnr-org-board">
           {visibleRnrOrgDepartmentCards.map((card:any)=>{
             const draft=rnrOrgDraftFor(card.department);
