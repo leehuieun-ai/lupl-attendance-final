@@ -9935,6 +9935,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       return Array.from(currentSet);
     });
   }
+  function rnrCandidatesForKeys(keys:string[]) {
+    const keySet=new Set(keys);
+    return rnrKpiCandidateList.filter((candidate:any)=>keySet.has(candidate.key));
+  }
   function selectRnrCandidateWeek(weekStart:string) {
     setRnrCandidateWeekStart(weekStart);
     setSelectedRnrCandidateKeys([]);
@@ -9946,18 +9950,25 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const nextIndex=Math.max(0,Math.min(options.length-1,currentIndex+offset));
     selectRnrCandidateWeek(options[nextIndex]);
   }
-  function deleteSelectedRnrCandidates() {
-    const keys=selectedRnrCandidates.map((candidate:any)=>candidate.key).filter(Boolean);
-    if(keys.length===0) return setRnrMsg("삭제할 R&R 후보를 하나 이상 체크해주세요.");
-    if(!window.confirm(`선택한 ${keys.length}개 후보를 R&R 후보 목록에서 삭제할까요? KPI 완료 기록 자체는 유지됩니다.`)) return;
-    const next=Array.from(new Set([...dismissedRnrCandidateKeys,...keys]));
+  function deleteRnrCandidateKeys(keys:string[]) {
+    const uniqueKeys=Array.from(new Set(keys)).filter(Boolean);
+    if(uniqueKeys.length===0) return setRnrMsg("삭제할 R&R 후보를 하나 이상 체크해주세요.");
+    if(!window.confirm(`선택한 ${uniqueKeys.length}개 후보를 R&R 후보 목록에서 삭제할까요? KPI 완료 기록 자체는 유지됩니다.`)) return;
+    const next=Array.from(new Set([...dismissedRnrCandidateKeys,...uniqueKeys]));
     setDismissedRnrCandidateKeys(next);
     localStorage.setItem("lupl_dismissed_rnr_candidate_keys",JSON.stringify(next));
-    setSelectedRnrCandidateKeys([]);
-    setRnrMsg(`선택한 ${keys.length}개 R&R 후보를 목록에서 삭제했습니다. KPI 완료 기록은 그대로 유지됩니다.`);
+    setSelectedRnrCandidateKeys(current=>current.filter(key=>!uniqueKeys.includes(key)));
+    setRnrMsg(`선택한 ${uniqueKeys.length}개 R&R 후보를 목록에서 삭제했습니다. KPI 완료 기록은 그대로 유지됩니다.`);
   }
-  function prepareRnrCandidateAiDraft(candidate?:any) {
-    const targets=candidate?[candidate]:selectedRnrCandidates;
+  function deleteSelectedRnrCandidates() {
+    deleteRnrCandidateKeys(selectedRnrCandidateKeys);
+  }
+  function prepareRnrCandidateAiDraft(candidateOrCandidates?:any) {
+    const targets=Array.isArray(candidateOrCandidates)
+      ? candidateOrCandidates
+      : candidateOrCandidates
+        ? [candidateOrCandidates]
+        : selectedRnrCandidates;
     if(targets.length===0) return setRnrMsg("R&R 후보를 하나 이상 체크해주세요.");
     const sourceText=targets.map((item:any,index:number)=>[
       `${index+1}. ${item.title}`,
@@ -11150,6 +11161,23 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     : rnrDepartmentCards.filter((card:any)=>card.department===rnrDepartmentFilter);
   const rnrOrgDepartmentNames=rnrDepartmentNames.filter((department:string)=>department!=="공통"&&department!=="운영 총괄");
   const visibleRnrOrgDepartmentCards=visibleRnrDepartmentCards.filter((card:any)=>card.department!=="공통"&&card.department!=="운영 총괄");
+  const supportRnrOrgDepartmentCards=visibleRnrOrgDepartmentCards.filter((card:any)=>card.department==="경영지원부서");
+  const childRnrOrgDepartmentCards=visibleRnrOrgDepartmentCards.filter((card:any)=>card.department!=="경영지원부서");
+  function renderRnrHierarchyDepartmentCard(card:any) {
+    return (
+      <div className={`rnr-hierarchy-dept ${card.department==="경영지원부서"?"rnr-support-dept":""}`} key={`hierarchy-${card.department}`}>
+        <div className="rnr-hierarchy-dept-head">
+          <b>{card.department}</b>
+          <span>{card.members.length}명</span>
+        </div>
+        <div className="rnr-hierarchy-members">
+          {card.members.slice(0,4).map((member:any)=><span key={member.id}>{member.name}<small>{member.position||"역할 미지정"}</small></span>)}
+          {card.members.length>4&&<span>외 {card.members.length-4}명</span>}
+          {card.members.length===0&&<span>배치 대기</span>}
+        </div>
+      </div>
+    );
+  }
   const selectedDetailEmployee=activeEmployees.find((employee:any)=>employee.id===selectedDetailEmployeeId)??activeEmployees[0]??null;
   const selectedBreakStart=selectedDetailEmployee?.break_start??"12:00";
   const selectedBreakEnd=selectedDetailEmployee?.break_end??"13:00";
@@ -11747,11 +11775,11 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
               </button>
             </div>
           )}
-          {selectedRnrCandidates.length>0&&(
+          {selectedRnrCandidateKeys.length>0&&(
             <div className="rnr-selection-inline">
-              <span>{selectedRnrCandidates.length}개 선택</span>
+              <span>{selectedRnrCandidateKeys.length}개 선택</span>
               <button className="button danger ghost compact" type="button" onClick={deleteSelectedRnrCandidates}>선택 삭제</button>
-              <button className="button compact" type="button" onClick={()=>prepareRnrCandidateAiDraft()}><i className="ti ti-sparkles" aria-hidden="true"></i>AI 정리</button>
+              <button className="button compact" type="button" disabled={selectedRnrCandidates.length===0} onClick={()=>prepareRnrCandidateAiDraft()}><i className="ti ti-sparkles" aria-hidden="true"></i>AI 정리</button>
               <button className="button ghost compact" type="button" onClick={()=>setSelectedRnrCandidateKeys([])}>해제</button>
             </div>
           )}
@@ -11770,6 +11798,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                   {rnrCurrentCandidateWeek.departments.map((group:any)=>{
                     const departmentKeys=rnrCandidateDepartmentKeys(group);
                     const selectedCount=selectedRnrCandidateDepartmentCount(group);
+                    const selectedKeys=departmentKeys.filter((key:string)=>selectedRnrCandidateKeys.includes(key));
+                    const selectedGroupCandidates=rnrCandidatesForKeys(selectedKeys);
                     const allSelected=departmentKeys.length>0&&selectedCount===departmentKeys.length;
                     return (
                     <section className={`rnr-kpi-candidate-role ${selectedCount>0?"has-selection":""}`} key={group.key}>
@@ -11778,6 +11808,14 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                           <input type="checkbox" checked={allSelected} aria-checked={selectedCount>0&&!allSelected?"mixed":allSelected} onChange={event=>toggleRnrCandidateDepartmentSelection(group,event.target.checked)} />
                           <span><b>{group.department}</b><small>{selectedCount>0?`${selectedCount}/${group.candidates.length}개 선택`:`${group.candidates.length}개 업무 후보`}</small></span>
                         </label>
+                        {selectedCount>0&&(
+                          <div className="rnr-dept-actions">
+                            <button className="button danger ghost compact" type="button" onClick={()=>deleteRnrCandidateKeys(selectedKeys)}>삭제</button>
+                            <button className="button compact" type="button" disabled={selectedGroupCandidates.length===0} onClick={()=>prepareRnrCandidateAiDraft(selectedGroupCandidates)}>
+                              AI 정리
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <div className="rnr-kpi-candidate-list">
                         {group.candidates.map((candidate:any)=>(
@@ -11954,21 +11992,16 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             <b>대표</b>
             <span>{currentEmployee.name}</span>
           </div>
-          <div className="rnr-hierarchy-branches">
-            {visibleRnrOrgDepartmentCards.map((card:any)=>(
-              <div className={`rnr-hierarchy-dept ${card.department==="경영지원부서"?"rnr-support-dept":""}`} key={`hierarchy-${card.department}`}>
-                <div className="rnr-hierarchy-dept-head">
-                  <b>{card.department}</b>
-                  <span>{card.members.length}명</span>
-                </div>
-                <div className="rnr-hierarchy-members">
-                  {card.members.slice(0,4).map((member:any)=><span key={member.id}>{member.name}<small>{member.position||"역할 미지정"}</small></span>)}
-                  {card.members.length>4&&<span>외 {card.members.length-4}명</span>}
-                  {card.members.length===0&&<span>배치 대기</span>}
-                </div>
-              </div>
-            ))}
-          </div>
+          {supportRnrOrgDepartmentCards.length>0&&(
+            <div className={`rnr-hierarchy-support-row ${childRnrOrgDepartmentCards.length>0?"has-children":""}`}>
+              {supportRnrOrgDepartmentCards.map(renderRnrHierarchyDepartmentCard)}
+            </div>
+          )}
+          {childRnrOrgDepartmentCards.length>0&&(
+            <div className={`rnr-hierarchy-branches ${supportRnrOrgDepartmentCards.length>0?"below-support":""}`}>
+              {childRnrOrgDepartmentCards.map(renderRnrHierarchyDepartmentCard)}
+            </div>
+          )}
         </div>
         <div className="rnr-org-board">
           {visibleRnrOrgDepartmentCards.map((card:any)=>{
