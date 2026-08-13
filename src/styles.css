@@ -2765,12 +2765,38 @@ body { overflow-x: hidden; }
   color: var(--dept-accent);
 }
 .work-map-card.support .work-map-groups {
-  grid-template-columns: minmax(0,420px);
+  grid-template-columns: minmax(0,1fr);
   justify-content: start;
   align-items: start;
 }
 .work-map-card.support .work-map-group {
   align-content: start;
+}
+.work-map-task-list {
+  display: grid;
+  gap: 7px;
+}
+.work-map-group.split .work-map-task-list {
+  grid-template-columns: repeat(2,minmax(0,1fr));
+}
+.work-map-group {
+  padding: 9px;
+  gap: 7px;
+}
+.work-map-group-title b {
+  font-size: 14px;
+}
+.work-map-task {
+  padding: 9px 10px;
+}
+.work-map-task strong {
+  min-height: 34px;
+  font-size: 14px;
+  line-height: 1.34;
+}
+.work-map-groups {
+  gap: 10px;
+  padding: 11px;
 }
 .work-map-task-button:hover .work-map-task {
   border-color: #cbd5e1;
@@ -2875,6 +2901,55 @@ body { overflow-x: hidden; }
   display: block;
   color: #2563eb;
 }
+.rnr-candidate-toolbar {
+  align-items: center;
+}
+.rnr-candidate-week-nav {
+  display: grid;
+  grid-template-columns: 36px minmax(0,1fr) 36px;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #dfe1e6;
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px;
+}
+.rnr-candidate-week-nav > div {
+  min-width: 0;
+  text-align: center;
+}
+.rnr-candidate-week-nav b,
+.rnr-candidate-week-nav span {
+  display: block;
+}
+.rnr-candidate-week-nav b {
+  color: #172b4d;
+  font-size: 15px;
+  font-weight: 700;
+}
+.rnr-candidate-week-nav span {
+  margin-top: 2px;
+  color: #626f86;
+  font-size: 12px;
+  font-weight: 450;
+}
+.rnr-selection-inline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 8px 10px;
+}
+.rnr-selection-inline span {
+  margin-right: auto;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 750;
+}
 .rnr-kpi-candidate-board {
   display: grid;
   grid-template-columns: minmax(0,1fr);
@@ -2939,6 +3014,10 @@ body { overflow-x: hidden; }
   gap: 9px;
   align-content: start;
 }
+.rnr-kpi-candidate-role.has-selection {
+  border-color: #85b8ff;
+  background: #f7fbff;
+}
 .rnr-kpi-candidate-role-head {
   display: flex;
   justify-content: space-between;
@@ -2946,6 +3025,32 @@ body { overflow-x: hidden; }
   align-items: flex-start;
   border-bottom: 1px solid #e8edf5;
   padding-bottom: 8px;
+}
+.rnr-dept-check {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0,1fr);
+  gap: 8px;
+  align-items: start;
+  cursor: pointer;
+}
+.rnr-dept-check input {
+  margin-top: 2px;
+  accent-color: #0c66e4;
+}
+.rnr-dept-check span {
+  min-width: 0;
+}
+.rnr-dept-check small {
+  display: block;
+  margin-top: 3px;
+  color: #626f86;
+  font-size: 12px;
+  font-weight: 420;
+}
+.rnr-dept-check.partial input {
+  outline: 2px solid rgba(12,102,228,.18);
+  outline-offset: 2px;
 }
 .rnr-kpi-candidate-role-head b,
 .rnr-kpi-candidate-role-head span {
@@ -3030,4 +3135,7 @@ body { overflow-x: hidden; }
   .rnr-org-card.rnr-support-dept { grid-column: auto; }
   .rnr-kpi-candidate-list label { grid-template-columns: auto minmax(0,1fr); }
   .rnr-kpi-candidate-list label .button { grid-column: 1 / -1; }
+  .work-map-group.split .work-map-task-list { grid-template-columns: minmax(0,1fr); }
+  .rnr-selection-inline { justify-content: flex-start; }
+  .rnr-selection-inline span { width: 100%; margin-right: 0; }
 }

@@ -9472,16 +9472,18 @@ function WorkMapBoard({ entries, employees=[], onOpen, currentEmployee }: { entr
         </div>
         <div className="work-map-groups">
           {Array.from(card.groups.values()).map((group:any)=>(
-            <div className="work-map-group" key={`${card.department}-${group.name}`}>
+            <div className={`work-map-group ${group.entries.length>=7?"split":""}`} key={`${card.department}-${group.name}`}>
               <div className="work-map-group-title"><b>{group.name}</b><span>{group.entries.length}건</span></div>
-              {group.entries.map((entry:any)=> {
-                const task=<div className="work-map-task">
-                  <strong>{rnrPublicTitle(entry)}</strong>
-                </div>;
-                return onOpen
-                  ? <button type="button" className="work-map-task-button" key={entry.id} onClick={()=>onOpen(entry)}>{task}</button>
-                  : <div key={entry.id}>{task}</div>;
-              })}
+              <div className="work-map-task-list">
+                {group.entries.map((entry:any)=> {
+                  const task=<div className="work-map-task">
+                    <strong>{rnrPublicTitle(entry)}</strong>
+                  </div>;
+                  return onOpen
+                    ? <button type="button" className="work-map-task-button" key={entry.id} onClick={()=>onOpen(entry)}>{task}</button>
+                    : <div key={entry.id}>{task}</div>;
+                })}
+              </div>
             </div>
           ))}
         </div>
@@ -9725,6 +9727,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [rnrDepartmentFilter,setRnrDepartmentFilter]=useState("all");
   const [rnrSubView,setRnrSubView]=useState<"work"|"candidates">("work");
   const [selectedRnrCandidateKeys,setSelectedRnrCandidateKeys]=useState<string[]>([]);
+  const [rnrCandidateWeekStart,setRnrCandidateWeekStart]=useState(weekStartIso(todayIso()));
   const [dismissedRnrCandidateKeys,setDismissedRnrCandidateKeys]=useState<string[]>(()=>{
     try { return JSON.parse(localStorage.getItem("lupl_dismissed_rnr_candidate_keys")??"[]"); }
     catch { return []; }
@@ -9916,6 +9919,32 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   function toggleRnrCandidateSelection(key:string,checked:boolean) {
     setSelectedRnrCandidateKeys(current=>checked?Array.from(new Set([...current,key])):current.filter(item=>item!==key));
+  }
+  function rnrCandidateDepartmentKeys(group:any) {
+    return (group?.candidates??[]).map((candidate:any)=>candidate.key).filter(Boolean);
+  }
+  function selectedRnrCandidateDepartmentCount(group:any) {
+    const keys=new Set(rnrCandidateDepartmentKeys(group));
+    return selectedRnrCandidateKeys.filter(key=>keys.has(key)).length;
+  }
+  function toggleRnrCandidateDepartmentSelection(group:any,checked:boolean) {
+    const keys=rnrCandidateDepartmentKeys(group);
+    setSelectedRnrCandidateKeys(current=>{
+      const currentSet=new Set(current);
+      keys.forEach((key:string)=>checked?currentSet.add(key):currentSet.delete(key));
+      return Array.from(currentSet);
+    });
+  }
+  function selectRnrCandidateWeek(weekStart:string) {
+    setRnrCandidateWeekStart(weekStart);
+    setSelectedRnrCandidateKeys([]);
+  }
+  function moveRnrCandidateWeek(offset:number) {
+    const options=rnrKpiCandidateWeekGroups.map((week:any)=>week.weekStart);
+    if(options.length===0) return;
+    const currentIndex=Math.max(0,options.indexOf((rnrCurrentCandidateWeek??rnrKpiCandidateWeekGroups[0])?.weekStart));
+    const nextIndex=Math.max(0,Math.min(options.length-1,currentIndex+offset));
+    selectRnrCandidateWeek(options[nextIndex]);
   }
   function deleteSelectedRnrCandidates() {
     const keys=selectedRnrCandidates.map((candidate:any)=>candidate.key).filter(Boolean);
@@ -10908,6 +10937,16 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   })();
   const rnrKpiCandidateList=rnrKpiCandidateWeekGroups.flatMap((week:any)=>week.departments.flatMap((department:any)=>department.candidates));
   const selectedRnrCandidates=rnrKpiCandidateList.filter((candidate:any)=>selectedRnrCandidateKeys.includes(candidate.key));
+  const rnrCandidateWeekKey=rnrKpiCandidateWeekGroups.map((week:any)=>week.weekStart).join("|");
+  const rnrCurrentCandidateWeek=rnrKpiCandidateWeekGroups.find((week:any)=>week.weekStart===rnrCandidateWeekStart)??rnrKpiCandidateWeekGroups[0]??null;
+  const rnrCurrentCandidateWeekIndex=rnrCurrentCandidateWeek?rnrKpiCandidateWeekGroups.findIndex((week:any)=>week.weekStart===rnrCurrentCandidateWeek.weekStart):-1;
+  useEffect(()=>{
+    if(rnrKpiCandidateWeekGroups.length===0) return;
+    if(!rnrKpiCandidateWeekGroups.some((week:any)=>week.weekStart===rnrCandidateWeekStart)) {
+      setRnrCandidateWeekStart(rnrKpiCandidateWeekGroups[0].weekStart);
+      setSelectedRnrCandidateKeys([]);
+    }
+  },[rnrCandidateWeekKey,rnrCandidateWeekStart]);
   useEffect(()=>{
     if(activeEmployees.length===0) { if(selectedDetailEmployeeId) setSelectedDetailEmployeeId(""); return; }
     if(!selectedDetailEmployeeId || !activeEmployees.some((employee:any)=>employee.id===selectedDetailEmployeeId)) {
@@ -11692,29 +11731,53 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
             <span>완료된 데일리 KPI를 주차별로 크게 나누고, 그 안에서 부서별 후보로 확인합니다.</span>
           </div>
           <div className="rnr-candidate-toolbar">
-            <div><b>{selectedRnrCandidates.length}개 선택</b><span>업무 R&R에 저장하기 전 담당/백업/공개 여부를 다시 확인합니다.</span></div>
-            <div className="actions">
-              <button className="button ghost compact" type="button" onClick={()=>setSelectedRnrCandidateKeys([])}>선택 초기화</button>
-              <button className="button danger ghost compact" type="button" onClick={deleteSelectedRnrCandidates}>선택 삭제</button>
-              <button className="button compact" type="button" onClick={()=>prepareRnrCandidateAiDraft()}><i className="ti ti-sparkles" aria-hidden="true"></i>AI로 R&R 정리</button>
-            </div>
+            <div><b>주차별 후보 검토</b><span>삭제하지 않은 후보는 각 주차로 이동해서 모두 확인할 수 있습니다.</span></div>
           </div>
+          {rnrKpiCandidateWeekGroups.length>0&&rnrCurrentCandidateWeek&&(
+            <div className="rnr-candidate-week-nav">
+              <button className="icon-button" type="button" disabled={rnrCurrentCandidateWeekIndex>=rnrKpiCandidateWeekGroups.length-1} onClick={()=>moveRnrCandidateWeek(1)} title="이전 주차">
+                <i className="ti ti-chevron-left" aria-hidden="true"></i>
+              </button>
+              <div>
+                <b>{rnrCurrentCandidateWeek.weekLabel}</b>
+                <span>{rnrCurrentCandidateWeek.weekStart} ~ {rnrCurrentCandidateWeek.weekEnd}</span>
+              </div>
+              <button className="icon-button" type="button" disabled={rnrCurrentCandidateWeekIndex<=0} onClick={()=>moveRnrCandidateWeek(-1)} title="다음 주차">
+                <i className="ti ti-chevron-right" aria-hidden="true"></i>
+              </button>
+            </div>
+          )}
+          {selectedRnrCandidates.length>0&&(
+            <div className="rnr-selection-inline">
+              <span>{selectedRnrCandidates.length}개 선택</span>
+              <button className="button danger ghost compact" type="button" onClick={deleteSelectedRnrCandidates}>선택 삭제</button>
+              <button className="button compact" type="button" onClick={()=>prepareRnrCandidateAiDraft()}><i className="ti ti-sparkles" aria-hidden="true"></i>AI 정리</button>
+              <button className="button ghost compact" type="button" onClick={()=>setSelectedRnrCandidateKeys([])}>해제</button>
+            </div>
+          )}
           <div className="rnr-kpi-candidate-board">
             {rnrKpiCandidateWeekGroups.length===0&&<p className="rnr-empty-work">완료된 데일리 KPI 기록이 생기면 기본 데일리 업무를 제외하고 R&R 후보로 표시됩니다.</p>}
-            {rnrKpiCandidateWeekGroups.map((week:any)=>(
-              <section className="rnr-kpi-candidate-week" key={week.key}>
+            {rnrCurrentCandidateWeek&&(
+              <section className="rnr-kpi-candidate-week" key={rnrCurrentCandidateWeek.key}>
                 <div className="rnr-kpi-candidate-week-head">
                   <div>
-                    <b>{week.weekLabel}</b>
-                    <span>{week.weekStart} ~ {week.weekEnd}</span>
+                    <b>{rnrCurrentCandidateWeek.weekLabel}</b>
+                    <span>{rnrCurrentCandidateWeek.weekStart} ~ {rnrCurrentCandidateWeek.weekEnd}</span>
                   </div>
-                  <em>{week.candidates.length}개 후보</em>
+                  <em>{rnrCurrentCandidateWeek.candidates.length}개 후보</em>
                 </div>
                 <div className="rnr-kpi-candidate-dept-grid">
-                  {week.departments.map((group:any)=>(
-                    <section className="rnr-kpi-candidate-role" key={group.key}>
+                  {rnrCurrentCandidateWeek.departments.map((group:any)=>{
+                    const departmentKeys=rnrCandidateDepartmentKeys(group);
+                    const selectedCount=selectedRnrCandidateDepartmentCount(group);
+                    const allSelected=departmentKeys.length>0&&selectedCount===departmentKeys.length;
+                    return (
+                    <section className={`rnr-kpi-candidate-role ${selectedCount>0?"has-selection":""}`} key={group.key}>
                       <div className="rnr-kpi-candidate-role-head">
-                        <div><b>{group.department}</b><span>{group.candidates.length}개 업무 후보</span></div>
+                        <label className={`rnr-dept-check ${selectedCount>0&&!allSelected?"partial":""}`}>
+                          <input type="checkbox" checked={allSelected} aria-checked={selectedCount>0&&!allSelected?"mixed":allSelected} onChange={event=>toggleRnrCandidateDepartmentSelection(group,event.target.checked)} />
+                          <span><b>{group.department}</b><small>{selectedCount>0?`${selectedCount}/${group.candidates.length}개 선택`:`${group.candidates.length}개 업무 후보`}</small></span>
+                        </label>
                       </div>
                       <div className="rnr-kpi-candidate-list">
                         {group.candidates.map((candidate:any)=>(
@@ -11732,10 +11795,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                         ))}
                       </div>
                     </section>
-                  ))}
+                  )})}
                 </div>
               </section>
-            ))}
+            )}
           </div>
         </div>
         <div className="rnr-work-area">
