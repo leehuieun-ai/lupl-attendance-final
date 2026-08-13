@@ -1627,7 +1627,7 @@ export default function App() {
         setWorkTimeConsent(workTimeConsentResult.data??null);
         setAdminPledgeConsent(adminPledgeResult.data??null);
         if (r.employee.role === "admin") {
-          const [emps, rq, c, lg, wt, ov, ac] = await Promise.all([
+          const [emps, rq, c, lg, wt, ov, ac, se, ab] = await Promise.all([
             supabase.from("employees").select("id,name,employee_no,is_active,employment_status,work_days,work_start,work_end,work_start_date").order("employee_no",{ascending:true}),
             supabase.from("attendance_requests").select("*"),
             supabase.from("comp_time_requests").select("*"),
@@ -1635,6 +1635,8 @@ export default function App() {
             supabase.from("work_time_change_requests").select("*"),
             supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(50),
             supabase.from("attendance_correction_requests").select("*").order("created_at",{ascending:false}).limit(300),
+            supabase.from("employee_schedule_events").select("*").lte("start_date",todayIso()).gte("end_date",todayIso()).limit(200),
+            supabase.from("employee_absences").select("*").lte("start_date",todayIso()).gte("end_date",todayIso()).limit(200),
           ]);
           if(seq!==loadSeqRef.current) return;
           let settledCompIdsForBadge=new Set<string>();
@@ -1662,7 +1664,10 @@ export default function App() {
             .forEach((log:any)=>{ if(!todayLogByEmployee[log.employee_id]) todayLogByEmployee[log.employee_id]=log; });
           const activeEmployeesForBadge=(emps.data??[]).filter((employee:any)=>isEmployeeActive(employee)&&employeeWorksOnDate(employee,todayIso())&&!isTestEmployee(employee));
           const approvedWorkTimeChanges=(wt.data??[]).filter((x:any)=>x.status==="approved");
+          const scheduleEventsForBadge=se.error?[]:se.data??[];
+          const absencesForBadge=ab.error?[]:ab.data??[];
           const hasPendingCorrectionForBadge=(employeeId:string)=>correctionRows.some((x:any)=>x.employee_id===employeeId&&x.status==="pending");
+          const hasAbsenceForBadge=(employeeId:string,date:string)=>absencesForBadge.some((x:any)=>x.employee_id===employeeId&&date>=x.start_date&&date<=x.end_date);
           const attendanceCorrectionCandidateCount=[
             ...badgeLogs
               .filter((log:any)=>log?.check_in_time&&!log.check_out_time&&!pendingCorrectionLogIds.has(log.id))
@@ -1675,8 +1680,10 @@ export default function App() {
             ...activeEmployeesForBadge.filter((employee:any)=>{
               if(todayLogByEmployee[employee.id]||hasPendingCorrectionForBadge(employee.id)) return false;
               const workDate=todayIso();
-              const schedule=getScheduleForDate(employee,workDate,ov.data??[],approvedWorkTimeChanges);
-              const workday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(workDate)));
+              if(hasAbsenceForBadge(employee.id,workDate)) return false;
+              const info=scheduleInfoForDateWithEvents(employee,workDate,scheduleEventsForBadge,ov.data??[],approvedWorkTimeChanges);
+              const schedule={...info.schedule,work_start:info.start,work_end:info.end,work_days:info.workday?[dayKeyFromDate(dateFromIso(workDate))]:[]};
+              const workday=info.workday;
               const employeeLeaveRows=(rq.data??[]).filter((request:any)=>request.employee_id===employee.id);
               const requiresAttendance=hasRequiredAttendanceForDate(workDate,schedule,employeeLeaveRows);
               const requiredRanges=requiredWorkRangesForDate(workDate,schedule,attendanceLeaveRowsForDate(workDate,employeeLeaveRows));
@@ -4900,6 +4907,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [openDailyRoutine,setOpenDailyRoutine]=useState(false);
   const [openDailyEmployeeGroups,setOpenDailyEmployeeGroups]=useState<Record<string,boolean>>({});
   const [openReviewFlowGroups,setOpenReviewFlowGroups]=useState<Record<string,boolean>>({});
+  const [openRecordProjectGroups,setOpenRecordProjectGroups]=useState<Record<string,boolean>>({});
   const [kpiTaskComments,setKpiTaskComments]=useState<Record<string,any[]>>(()=>{try{return JSON.parse(localStorage.getItem("lupl_kpi_task_comments")??"{}");}catch{return {};}});
   const [kpiSuggestion,setKpiSuggestion]=useState<any|null>(null);
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
@@ -5503,10 +5511,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const operatingActionDailyEntries=operatingDailyEntries.filter((entry:any)=>!isDailyRoutineEntry(entry));
   const operatingTodoEntries=operatingActionDailyEntries.filter((entry:any)=>entry.status!=="done");
   const operatingDoneEntries=operatingActionDailyEntries.filter((entry:any)=>entry.status==="done");
+  function kpiDateDistanceFromSelected(entry:any) {
+    const date=String(entry?.work_date??"").slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return Number.MAX_SAFE_INTEGER;
+    return Math.abs(dateFromIso(date).getTime()-dateFromIso(selectedDailyDate).getTime());
+  }
   const operatingProgressEntries=[
     ...allWeeklyEntries.filter((entry:any)=>entry.status!=="done"&&entry.work_date>=monthStart&&entry.work_date<=monthEnd&&entryMatchesOperatingScope(entry)),
     ...monthDailyEntries.filter((entry:any)=>entry.status!=="done"&&entry.parent_id&&entryMatchesOperatingScope(entry)&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry)),
-  ].sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0));
+  ].sort((a:any,b:any)=>kpiDateDistanceFromSelected(a)-kpiDateDistanceFromSelected(b)||String(b.work_date??"").localeCompare(String(a.work_date??""))||(a.sort_order??0)-(b.sort_order??0));
   const operatingMonthDoneEntries=monthDailyEntries
     .filter((entry:any)=>entry.status==="done"&&entryMatchesOperatingScope(entry)&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry))
     .sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??""))||(b.sort_order??0)-(a.sort_order??0));
@@ -6185,7 +6198,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     }
   }
   function handleQuickKpiKeyDown(event:React.KeyboardEvent<HTMLInputElement>, scope:string) {
-    if(event.key==="Enter") {
+    if(event.key==="Enter" || (scope==="daily"&&event.key===",")) {
       event.preventDefault();
       saveQuickKpi(scope);
     }
@@ -6354,8 +6367,6 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             <p><b>2. 내 보드</b>는 오늘 할 일, 내 프로젝트, 이번 달 완료 기록을 한 화면에 세로로 보여줍니다.</p>
             <p><b>3. 데일리</b> 기본 체크리스트는 스케줄 정리, 웍스 피드백, 메일 확인, 연락 회신, 업무 마무리를 모두 체크해야 100%가 됩니다.</p>
             <p><b>4. 프로젝트 흐름</b>은 프로젝트, 월간, 주간, 데일리, 완료 요약 5칸으로 나뉘며 월간에서 주간, 주간에서 데일리로 연결해 봅니다.</p>
-            <p><b>5. KPI 흐름</b>은 토글로 열어 기존 월·주·데일리 연결 지도와 칸 이동 기능을 그대로 사용합니다.</p>
-            <p><b>6. 업무 R&R 후보</b>는 완료 기록을 근거로 관리자 R&R 화면에서 직원별·부서별로 확인하고 AI 정리 초안을 만들 수 있습니다.</p>
           </div>
         )}
         {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
@@ -6887,6 +6898,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <input className="input" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={event=>handleQuickKpiKeyDown(event,"daily")} placeholder="오늘 할 일을 입력하고 Enter" />
               <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("daily")}>추가</button>
             </div>
+            <p className="kpi-input-help">연결 주간 KPI를 비워두면 프로젝트와 무관한 데일리 일정으로 저장됩니다.</p>
             <div className="kpi-ops-list">
               {operatingDailyEntries.length===0&&<p className="kpi-ops-empty">오늘 할 일이 없습니다. 새 데일리 KPI를 추가하거나 프로젝트 진행만 확인하면 됩니다.</p>}
               {operatingDailyEntries.map((entry:any)=>{
@@ -7005,22 +7017,31 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             </div>
             <div className="kpi-ops-records">
               {operatingMonthDoneEntries.length===0&&<p className="kpi-ops-empty">완료된 데일리 KPI가 쌓이면 월 회고와 업무 근거로 표시됩니다.</p>}
-              {boardRecordGroups.slice(0,3).map((group:any)=>(
+              {boardRecordGroups.map((group:any)=>{
+                const isOpen=openRecordProjectGroups[group.goal.id]===true;
+                return (
                 <section className="kpi-record-group" key={group.goal.id} style={kpiLinkedStyle(group.goal)}>
-                  <div><b>{group.goal.title}</b><span>{group.records.length}건</span></div>
-                  {group.records.slice(0,3).map((entry:any)=>(
+                  <button type="button" className="kpi-record-group-toggle" onClick={()=>setOpenRecordProjectGroups(prev=>({...prev,[group.goal.id]:!isOpen}))}>
+                    <b>{group.goal.title}</b>
+                    <span>{group.records.length}건</span>
+                    <i className={`ti ${isOpen?"ti-chevron-up":"ti-chevron-down"}`} aria-hidden="true"></i>
+                  </button>
+                  {isOpen&&group.records.map((entry:any)=>(
                     <button type="button" key={entry.id} className={highlightKpiId===entry.id?"kpi-focus-pulse":""} data-operating-kpi-id={entry.id} onClick={()=>focusKpiEntry(entry)}>
                       <span>{entry.work_date} · {personName(entry.employee_id)}</span>
                       <b>{entry.title}</b>
                     </button>
                   ))}
                 </section>
-              ))}
-              {boardRecordGroups.length>3&&<p className="kpi-ops-empty compact">외 {boardRecordGroups.length-3}개 프로젝트는 요약에 포함되어 있습니다.</p>}
+              )})}
               {boardUnlinkedRecords.length>0&&(
                 <section className="kpi-record-group">
-                  <div><b>연결 없는 기록</b><span>{boardUnlinkedRecords.length}건</span></div>
-                  {boardUnlinkedRecords.slice(0,3).map((entry:any)=>(
+                  <button type="button" className="kpi-record-group-toggle" onClick={()=>setOpenRecordProjectGroups(prev=>({...prev,__unlinked:!prev.__unlinked}))}>
+                    <b>연결 없는 기록</b>
+                    <span>{boardUnlinkedRecords.length}건</span>
+                    <i className={`ti ${openRecordProjectGroups.__unlinked?"ti-chevron-up":"ti-chevron-down"}`} aria-hidden="true"></i>
+                  </button>
+                  {openRecordProjectGroups.__unlinked&&boardUnlinkedRecords.map((entry:any)=>(
                     <button type="button" key={entry.id} className={highlightKpiId===entry.id?"kpi-focus-pulse":""} data-operating-kpi-id={entry.id} onClick={()=>focusKpiEntry(entry)}>
                       <span>{entry.work_date} · {personName(entry.employee_id)}</span>
                       <b>{entry.title}</b>
@@ -7735,6 +7756,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     <input className="kpi-h-input-field" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={ev=>handleQuickKpiKeyDown(ev,"daily")} placeholder="해당 날짜 할 일 입력 후 Enter" />
                     <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("daily")}>추가</button>
                   </div>
+                  <p className="kpi-input-help">쉼표 또는 Enter로 추가합니다. 주간 연결을 비워두면 개인 데일리 일정입니다.</p>
                   <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("daily")}>단계 추천</button>
                 </div>
                 {visibleDailyEntries.length>0 ? (()=>{
@@ -9406,8 +9428,16 @@ function WorkMapBoard({ entries, employees=[], onOpen, currentEmployee }: { entr
     dept.groups.get(groupName).entries.push(entry);
     return deptMap;
   },new Map<string,any>()).values()).sort((a:any,b:any)=>{
-    if(a.department==="공통") return -1;
-    if(b.department==="공통") return 1;
+    const order=(department:string)=>{
+      if(department==="운영 총괄") return 0;
+      if(department==="공통") return 1;
+      if(department==="개발부서") return 2;
+      if(department==="기획부서") return 3;
+      if(department==="경영지원부서") return 99;
+      return 50;
+    };
+    const diff=order(a.department)-order(b.department);
+    if(diff!==0) return diff;
     return String(a.department).localeCompare(String(b.department));
   });
   if(cards.length===0) return <p className="rnr-empty-work">{currentEmployee?"아직 내 담당 또는 부서 기준으로 볼 수 있는 업무 분장표가 없습니다.":"아직 공개된 업무 분장표가 없습니다. 관리자 업무 R&R에서 공개 항목을 저장하면 이곳에 표시됩니다."}</p>;
@@ -9420,7 +9450,7 @@ function WorkMapBoard({ entries, employees=[], onOpen, currentEmployee }: { entr
     </div>
     <div className="work-map-board">
     {cards.map((card:any,index:number)=>(
-      <article className="work-map-card" key={card.department} style={{"--dept-accent":WORK_MAP_ACCENTS[index%WORK_MAP_ACCENTS.length]} as any}>
+      <article className={`work-map-card ${card.department==="운영 총괄"?"ops":card.department==="공통"?"common":card.department==="경영지원부서"?"support":""}`} key={card.department} style={{"--dept-accent":WORK_MAP_ACCENTS[index%WORK_MAP_ACCENTS.length]} as any}>
         <div className="work-map-card-head">
           <div>
             <span>Department</span>
@@ -9676,6 +9706,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [adjustments,setAdjustments]=useState<any[]>([]);
   const [overrides,setOverrides]=useState<any[]>([]);
   const [absences,setAbsences]=useState<any[]>([]);
+  const [scheduleEvents,setScheduleEvents]=useState<any[]>([]);
   const [allLogs,setAllLogs]=useState<any[]>([]);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [rnrReviewRequests,setRnrReviewRequests]=useState<any[]>([]);
@@ -9729,7 +9760,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     const list=emps??[]; const map:Record<string,any>={};
     list.forEach((e:any)=>{map[e.id]=e;});
     setEmployees(list); setEmpMap(map);
-    const [d,w,r,c,wt,ac,a,ov,ab,lg,rn,rr,dt,kp]=await Promise.all([
+    const [d,w,r,c,wt,ac,a,ov,ab,se,lg,rn,rr,dt,kp]=await Promise.all([
       supabase.from("registered_devices").select("*").order("created_at",{ascending:false}),
       supabase.from("workplaces").select("*").order("created_at",{ascending:false}),
       supabase.from("attendance_requests").select("*").order("created_at",{ascending:false}),
@@ -9739,13 +9770,14 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       supabase.from("leave_adjustments").select("*").order("created_at",{ascending:false}),
       supabase.from("weekly_schedule_overrides").select("*").order("week_start",{ascending:false}).limit(50),
       supabase.from("employee_absences").select("*").order("start_date",{ascending:false}),
+      supabase.from("employee_schedule_events").select("*").order("start_date",{ascending:false}).limit(500),
       supabase.from("attendance_logs").select("id, employee_id, workplace_id, check_in_time, check_out_time, original_check_out_time, scheduled_check_out_time, overtime_review_status, status, workplaces(name,type)").order("check_in_time",{ascending:false}).limit(300),
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
       supabase.from("rnr_review_requests").select("*").order("created_at",{ascending:false}).limit(100),
       supabase.from("daily_tasks").select("*").eq("is_active",true).order("task_date",{ascending:false}).order("created_at",{ascending:false}).limit(200),
       supabase.from("kpi_entries").select("*").eq("is_active",true).eq("scope","daily").eq("status","done").order("work_date",{ascending:false}).limit(500),
     ]);
-    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setRnrReviewRequests(rr.error?[]:rr.data??[]); setDailyTasks(dt.data??[]); setRnrKpiEntries(kp.error?[]:kp.data??[]);
+    setDevices(d.data??[]); setWorkplaces(w.data??[]); setRequests(r.data??[]); setCompRequests(c.data??[]); setWorkTimeRequests(wt.data??[]); setAttendanceCorrectionRequests(ac.error?[]:ac.data??[]); setAdjustments(a.data??[]); setOverrides(ov.data??[]); setAbsences(ab.data??[]); setScheduleEvents(se.error?[]:se.data??[]); setAllLogs(lg.data??[]); setRnrEntries(rn.data??[]); setRnrReviewRequests(rr.error?[]:rr.data??[]); setDailyTasks(dt.data??[]); setRnrKpiEntries(kp.error?[]:kp.data??[]);
     void syncMissingLeaveWorksNotificationsForRows(r.data??[]);
   }
   useEffect(()=>{load();},[]);
@@ -10910,8 +10942,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       .filter((employee:any)=>!todayLogByEmployee[employee.id]&&!hasPendingAttendanceCorrection(employee.id))
       .map((employee:any)=>{
         const workDate=todayIso();
-        const schedule=getScheduleForDate(employee,workDate,overrides,approvedWorkTimeChanges);
-        const workday=(schedule.work_days??[]).includes(dayKeyFromDate(dateFromIso(workDate)));
+        if(absences.some((absence:any)=>absence.employee_id===employee.id&&workDate>=absence.start_date&&workDate<=absence.end_date)) return null;
+        const info=scheduleInfoForDateWithEvents(employee,workDate,scheduleEvents,overrides,approvedWorkTimeChanges);
+        const schedule={...info.schedule,work_start:info.start,work_end:info.end,work_days:info.workday?[dayKeyFromDate(dateFromIso(workDate))]:[]};
+        const workday=info.workday;
         const employeeLeaveRows=requests.filter((request:any)=>request.employee_id===employee.id);
         const requiresAttendance=hasRequiredAttendanceForDate(workDate,schedule,employeeLeaveRows);
         const requiredRanges=requiredWorkRangesForDate(workDate,schedule,attendanceLeaveRowsForDate(workDate,employeeLeaveRows));
