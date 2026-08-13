@@ -2624,12 +2624,12 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
   const [expandedGithubIssue,setExpandedGithubIssue]=useState<string|null>(null);
   const [showIndividualList,setShowIndividualList]=useState(false);
   const isAdmin=currentEmployee?.role==="admin";
-  async function load() {
+  async function load(options:any={}) {
     let query=supabase.from("improvement_requests").select("*, employees(name, employee_no)").order("created_at",{ascending:false}).limit(300);
     if(!isAdmin) query=query.eq("created_by",currentEmployee.id);
     const {data,error}=await query;
     if(error) setMsg(error.message.includes("improvement_requests")?"개선 요청 저장 테이블이 아직 DB에 없습니다. 새 SQL 패치를 먼저 실행해주세요.":error.message);
-    else { setRows(data??[]); setMsg(""); }
+    else { setRows(data??[]); if(!options.preserveMsg) setMsg(""); }
   }
   useEffect(()=>{load();},[]);
   const scopedRows=isAdmin?rows:rows.filter(row=>row.created_by===currentEmployee.id&&row.visibility!=="admin_only");
@@ -2747,6 +2747,11 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     const summary=storedImageSummary(row);
     if(!summary) return null;
     return <div className="improvement-image-summary"><b>이미지 인식 요약</b><span>{summary}</span></div>;
+  }
+  function renderImprovementAttachments(row:any) {
+    const imageAttachments=(Array.isArray(row.attachments)?row.attachments:[]).filter((attachment:any)=>String(attachment?.data_url??"").startsWith("data:image/"));
+    if(imageAttachments.length===0) return null;
+    return <div className="improvement-attachments readonly">{imageAttachments.map((attachment:any,index:number)=><a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>)}</div>;
   }
   function imageSummaryItems(payload:any) {
     const source=payload?.image_summaries;
@@ -2912,8 +2917,10 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
         if(Number(data.candidate_count??0)===0||Number(data.updated_count??0)===0) break;
       }
       const githubNote=githubSkipped?"GitHub 토큰이 없어 댓글은 생략":"GitHub 댓글 "+commentTotal+"개";
-      setMsg(`이미지 재분석 완료: ${updatedTotal}건 저장 · 실패 ${failedTotal}건 · ${githubNote}`);
-      await load();
+      const doneMessage=`이미지 재분석 완료: ${updatedTotal}건 저장 · 실패 ${failedTotal}건 · ${githubNote}`;
+      setMsg(doneMessage);
+      await load({preserveMsg:true});
+      window.setTimeout(()=>setMsg(current=>current===doneMessage?"":current),30000);
     } catch(error:any) {
       setMsg(error.message||String(error));
     } finally {
@@ -3035,7 +3042,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                   <summary><div><b>{improvementRequestTitle(row)}</b><small>{formatDateTime(row.created_at)} · {row.employees?.name??"작성자"}</small></div><i className="ti ti-chevron-down" aria-hidden="true"></i></summary>
                   <div className="improvement-request-body">
                     <p>{row.note}</p>
-                    {Array.isArray(row.attachments)&&row.attachments.length>0&&<div className="improvement-attachments readonly">{row.attachments.map((attachment:any,index:number)=>String(attachment?.data_url??"").startsWith("data:image/")?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+                    {renderImprovementAttachments(row)}
                     {renderImageSummary(row)}
                     {(row.github_issue_url||row.github_issue_number)&&<a className="github-issue-chip" href={row.github_issue_url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{row.github_issue_number??"-"} · {row.github_issue_title||"전송된 이슈"}</a>}
                     {renderImprovementActions(row)}
@@ -3072,7 +3079,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                   </summary>
                   <div className="improvement-request-body">
                     <p>{row.note}</p>
-                    {Array.isArray(row.attachments)&&row.attachments.length>0&&<div className="improvement-attachments readonly">{row.attachments.map((attachment:any,index:number)=>String(attachment?.data_url??"").startsWith("data:image/")?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+                    {renderImprovementAttachments(row)}
                     {renderImageSummary(row)}
                     {(row.github_issue_url||row.github_issue_number)&&<a className="github-issue-chip" href={row.github_issue_url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{row.github_issue_number??"-"} · {row.github_issue_title||"전송된 이슈"}</a>}
                     <small>{row.page_title??"-"} · {row.menu_label}{row.submenu_label?` · ${row.submenu_label}`:""}</small>
@@ -3107,6 +3114,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                   <div className="improvement-group-item" key={row.id}>
                     <b>{improvementRequestTitle(row)}</b>
                     <p>{row.note}</p>
+                    {renderImprovementAttachments(row)}
                     {renderImageSummary(row)}
                     <small>{row.employees?.name??"작성자"} · {formatDateTime(row.updated_at||row.created_at)}</small>
                   </div>
@@ -3156,6 +3164,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                       <div className="improvement-group-item" key={row.id}>
                         <b>{improvementRequestTitle(row)}</b>
                         <p>{row.note}</p>
+                        {renderImprovementAttachments(row)}
                         {renderImageSummary(row)}
                         <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)}</small>
                       </div>
@@ -3181,7 +3190,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
                 <em>{IMPROVEMENT_STATUS_LABELS[row.status]??row.status}</em>
               </div>
               <p>{row.note}</p>
-              {Array.isArray(row.attachments)&&row.attachments.length>0&&<div className="improvement-attachments readonly">{row.attachments.map((attachment:any,index:number)=>String(attachment?.data_url??"").startsWith("data:image/")?<a key={attachment.id??index} href={attachment.data_url} target="_blank" rel="noreferrer"><img src={attachment.data_url} alt={attachment.name??"첨부 이미지"} /></a>:null)}</div>}
+              {renderImprovementAttachments(row)}
               {renderImageSummary(row)}
               {(row.github_issue_url||row.github_issue_number)&&<a className="github-issue-chip" href={row.github_issue_url??"#"} target="_blank" rel="noreferrer"><i className="ti ti-brand-github" aria-hidden="true"></i>GitHub #{row.github_issue_number??"-"} · {row.github_issue_title||"전송된 이슈"}</a>}
               <small>{row.employees?.name??"작성자"} · {formatDateTime(row.created_at)} · {row.page_title??"-"}</small>
@@ -4339,8 +4348,11 @@ function HomePage({ employee }: { employee: any }) {
     const approved=workplaces.filter(w=>w.approval_status==="approved"&&w.lat!=null&&w.lng!=null);
     const withDist=approved.map(w=>({...w,distance:distanceMeters(lat,lng,w.lat,w.lng)}));
     const gps=withDist.sort((a,b)=>a.distance-b.distance).find(w=>w.distance<=(w.radius_m??100));
-    if(gps) return gps;
-    if(ip) return approved.find(w=>w.ip_hint&&w.ip_hint===ip)||null;
+    if(gps) return {...gps,matchType:"gps"};
+    if(ip) {
+      const ipMatch=withDist.find(w=>w.ip_hint&&w.ip_hint===ip);
+      if(ipMatch) return {...ipMatch,matchType:"ip_only"};
+    }
     return null;
   }
   async function submitCheckIn(workplaceId:string, place:any, isRecheck:boolean) {
@@ -4363,12 +4375,16 @@ function HomePage({ employee }: { employee: any }) {
     setBusy(true); setMessage("현재 위치를 확인하는 중입니다."); setDetectedPlace(null);
     try {
       const p=await getCurrentPositionFast(); const ip=await getPublicIp(); const d=detectPlace(p.lat,p.lng,ip);
-      if(d){
+      if(d?.matchType==="gps"){
         const place={...d,currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip};
         setDetectedPlace(place);setSelectedWorkplaceId(d.id);setMessage(`${d.name} GPS가 확인되어 ${isRecheck?"재출근":"출근"} 처리 중입니다.`);
         const data=await submitCheckIn(d.id,place,isRecheck);
         setMessage(`${d.name} ${isRecheck?"재출근":"출근"} 완료: ${data?.attendance_status??"처리 완료"}`);
         setDetectedPlace(null); setUnknownPlaceName(""); setRecheckMode(false); await handlePostCheckIn(data?.attendance_log_id);
+      } else if(d?.matchType==="ip_only") {
+        setDetectedPlace({currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip,matchType:"ip_only",ipMatchedPlaceName:d.name,ipMatchedDistance:d.distance});
+        setSelectedWorkplaceId(d.id);
+        setMessage(`${d.name} 등록 IP는 확인됐지만 GPS 반경 밖입니다. 출근하면 관리자 위치 확인 필요로 기록됩니다.`);
       }
       else{setDetectedPlace({currentLat:p.lat,currentLng:p.lng,accuracy:p.accuracy,ip});setSelectedWorkplaceId("");setMessage("등록된 근무지 반경 안이 아닙니다. 현재 장소명을 입력하면 관리자 승인 대기 근무지로 저장됩니다.");}
     } catch(e:any){setMessage(e.message);setRecheckMode(false);} finally{setBusy(false);}
@@ -4740,10 +4756,12 @@ function HomePage({ employee }: { employee: any }) {
 
         {detectedPlace&&(
           <div className="card" style={{marginTop:14,boxShadow:"none",background:"#f6f8fb"}}>
-            {detectedPlace.id
+            {detectedPlace.matchType==="ip_only"
+              ?(<><h3 style={{marginTop:0}}>등록 IP만 확인되었습니다</h3><p className="subtle">{detectedPlace.ipMatchedPlaceName??"등록 근무지"} IP와 일치하지만 GPS 반경 밖입니다. 계속하면 정상출근이 아니라 관리자 위치 확인 필요 기록으로 저장됩니다.</p></>)
+              : detectedPlace.id
               ?(<><h3 style={{marginTop:0}}>{detectedPlace.name} 맞나요?</h3><p className="subtle">GPS/IP 기준으로 가장 가까운 근무지를 찾았습니다.</p></>)
               :(<><h3 style={{marginTop:0}}>현재 장소를 입력해주세요</h3><p className="subtle">입력한 장소는 관리자 승인 대기 근무지로 저장됩니다.</p><input className="input" style={{marginTop:8}} value={unknownPlaceName} onChange={e=>setUnknownPlaceName(e.target.value)} placeholder="예: 대구○○학교, ○○교육장" /></>)}
-            <div className="actions" style={{marginTop:10}}><button className="button" disabled={busy} onClick={confirmCheckIn}>{recheckMode?"재출근 확정":"출근 확정"}</button><button className="button ghost" onClick={cancelDetectedPlace}>취소</button></div>
+            <div className="actions" style={{marginTop:10}}><button className="button" disabled={busy} onClick={confirmCheckIn}>{recheckMode?"재출근 확정":detectedPlace.matchType==="ip_only"?"관리자 확인으로 출근 기록":"출근 확정"}</button><button className="button ghost" onClick={cancelDetectedPlace}>취소</button></div>
           </div>
         )}
 
