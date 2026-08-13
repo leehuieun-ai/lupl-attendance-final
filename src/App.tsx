@@ -3729,7 +3729,7 @@ function HomePage({ employee }: { employee: any }) {
   const [kpiReview,setKpiReview] = useState<Record<string,string>>({});
   const [kpiNotice,setKpiNotice] = useState("");
   const [tomorrowKpiDraftText,setTomorrowKpiDraftText] = useState("");
-  const [tomorrowKpiChoice,setTomorrowKpiChoice] = useState<"manual"|"carryover"|"weekly"|"defer">("manual");
+  const [tomorrowKpiChoice,setTomorrowKpiChoice] = useState<"manual"|"carryover"|"weekly"|"defer"|"skip">("skip");
   const [tomorrowKpiReason,setTomorrowKpiReason] = useState("");
   const [notificationPermission,setNotificationPermission] = useState<NotificationPermission|"unsupported">("unsupported");
   const [lastReminderMessage,setLastReminderMessage] = useState("");
@@ -4119,7 +4119,7 @@ function HomePage({ employee }: { employee: any }) {
   }
   function openCheckoutKpiModal() {
     setKpiNotice("");
-    setTomorrowKpiChoice("manual");
+    setTomorrowKpiChoice("skip");
     setTomorrowKpiDraftText("");
     setTomorrowKpiReason("");
     const kpis=operationalHomeKpis();
@@ -4129,20 +4129,37 @@ function HomePage({ employee }: { employee: any }) {
       setKpiModal({mode:"checkout_create",attendanceLogId:todayLog?.id});
       return;
     }
-    setKpiReview(kpis.reduce((map:Record<string,string>,entry:any)=>{
-      map[entry.id]=["done","missed"].includes(entry.status)?entry.status:"";
+    const reviewMap=kpis.reduce((map:Record<string,string>,entry:any)=>{
+      map[entry.id]=entry.status==="done"?"done":"missed";
       return map;
-    },{}));
+    },{});
+    const carryoverLines=unresolvedCheckoutKpisForDraft(reviewMap,kpis).map((entry:any)=>entry.title).slice(0,3);
+    if(carryoverLines.length>0) {
+      setTomorrowKpiChoice("carryover");
+      setTomorrowKpiDraftText(carryoverLines.join("\n"));
+    }
+    setKpiReview(reviewMap);
     setKpiModal({mode:"checkout_review",attendanceLogId:todayLog?.id});
   }
   function checkoutKpiReady() {
     const kpis=operationalHomeKpis();
     return kpis.length>0 && kpis.every((entry:any)=>["done","missed"].includes(entry.status));
   }
-  function tomorrowKpiLinesForChoice() {
+  function unresolvedCheckoutKpisForDraft(reviewMap:Record<string,string>=kpiReview, list:any[]=operationalHomeKpis()) {
+    return list.filter((entry:any)=>(reviewMap[entry.id]||entry.status)!=="done");
+  }
+  function setCheckoutKpiStatus(entryId:string,status:"done"|"missed") {
+    const nextReview={...kpiReview,[entryId]:status};
+    setKpiReview(nextReview);
     if(tomorrowKpiChoice==="carryover") {
-      return operationalHomeKpis()
-        .filter((entry:any)=>entry.status!=="done")
+      const lines=unresolvedCheckoutKpisForDraft(nextReview).map((entry:any)=>entry.title).slice(0,3);
+      setTomorrowKpiDraftText(lines.join("\n"));
+      if(lines.length===0) setTomorrowKpiChoice("skip");
+    }
+  }
+  function tomorrowKpiLinesForChoice(reviewMap:Record<string,string>=kpiReview) {
+    if(tomorrowKpiChoice==="carryover") {
+      return unresolvedCheckoutKpisForDraft(reviewMap)
         .map((entry:any)=>entry.title)
         .slice(0,3);
     }
@@ -4154,14 +4171,16 @@ function HomePage({ employee }: { employee: any }) {
     }
     return kpiLinesFromText(tomorrowKpiDraftText).slice(0,3);
   }
-  function applyTomorrowKpiChoice(choice:"manual"|"carryover"|"weekly"|"defer") {
+  function applyTomorrowKpiChoice(choice:"manual"|"carryover"|"weekly"|"defer"|"skip") {
     setTomorrowKpiChoice(choice);
     setTomorrowKpiReason("");
-    if(choice==="carryover") setTomorrowKpiDraftText(operationalHomeKpis().filter((entry:any)=>entry.status!=="done").map((entry:any)=>entry.title).slice(0,3).join("\n"));
+    if(choice==="carryover") setTomorrowKpiDraftText(unresolvedCheckoutKpisForDraft().map((entry:any)=>entry.title).slice(0,3).join("\n"));
     else if(choice==="weekly") setTomorrowKpiDraftText(weeklyKpiOptions.filter((entry:any)=>entry.status!=="done").map((entry:any)=>entry.title).slice(0,3).join("\n"));
-    else if(choice==="defer") setTomorrowKpiDraftText("");
+    else if(choice==="manual") setTomorrowKpiDraftText("");
+    else if(choice==="defer"||choice==="skip") setTomorrowKpiDraftText("");
   }
-  async function saveTomorrowKpiDraftBeforeCheckout() {
+  async function saveTomorrowKpiDraftBeforeCheckout(reviewMap:Record<string,string>=kpiReview) {
+    if(tomorrowKpiChoice==="skip") return;
     const tomorrow=addIsoDays(todayIso(),1);
     const nowIso=new Date().toISOString();
     const {data:existing,error:existingError}=await supabase.from("kpi_entries")
@@ -4209,7 +4228,7 @@ function HomePage({ employee }: { employee: any }) {
       if(result.error) throw result.error;
       return;
     }
-    const lines=tomorrowKpiLinesForChoice();
+    const lines=tomorrowKpiLinesForChoice(reviewMap);
     if(lines.length===0) throw new Error("내일 할 KPI가 비어 있습니다. 1~3개를 적거나 예외 사유를 남겨주세요.");
     const parentId=kpiParentId||weeklyKpiOptions.find((entry:any)=>!entry.employee_id||entry.employee_id===employee.id)?.id||null;
     const rows=lines.slice(0,3).map((title,index)=>({
@@ -4336,22 +4355,21 @@ function HomePage({ employee }: { employee: any }) {
   }
   async function saveCheckoutKpiReview() {
     const reviewKpis=operationalHomeKpis();
-    const unresolved=reviewKpis.filter((entry:any)=>!["done","missed"].includes(kpiReview[entry.id]||""));
-    if(unresolved.length>0) {
-      setKpiNotice("퇴근 전 모든 KPI에 완료 또는 미완료를 선택해야 합니다.");
-      return;
-    }
+    const resolvedReview=reviewKpis.reduce((map:Record<string,string>,entry:any)=>{
+      map[entry.id]=["done","missed"].includes(kpiReview[entry.id]) ? kpiReview[entry.id] : entry.status==="done" ? "done" : "missed";
+      return map;
+    },{});
     setBusy(true);
     setKpiNotice("");
     try {
       const updates=await Promise.all(reviewKpis.map((entry:any)=>supabase.from("kpi_entries").update({
-        status:kpiReview[entry.id],
+        status:resolvedReview[entry.id],
         updated_at:new Date().toISOString(),
       }).eq("id",entry.id)));
       const failed=updates.find(result=>result.error);
       if(failed?.error) throw failed.error;
-      await saveTomorrowKpiDraftBeforeCheckout();
-      setTodayKpis(todayKpis.map((entry:any)=>kpiReview[entry.id]?{...entry,status:kpiReview[entry.id]}:entry));
+      await saveTomorrowKpiDraftBeforeCheckout(resolvedReview);
+      setTodayKpis(todayKpis.map((entry:any)=>resolvedReview[entry.id]?{...entry,status:resolvedReview[entry.id]}:entry));
       setKpiModal(null);
       await continueCheckoutAfterKpi();
     } catch(e:any) {
@@ -4567,6 +4585,7 @@ function HomePage({ employee }: { employee: any }) {
     const h=cinKst.getUTCHours(), m=cinKst.getUTCMinutes();
     if(h>=9&&(h<10||(h===10&&m===0))) flexNote=`시차출근 적용 중 · 퇴근 기준 ${timeOnly(reminderTarget.toISOString())}`;
   }
+  const checkoutUnfinishedKpiCount=kpiModal?.mode==="checkout_review"?unresolvedCheckoutKpisForDraft(kpiReview).length:0;
 
   return (
     <div className="home-layout">
@@ -4579,19 +4598,19 @@ function HomePage({ employee }: { employee: any }) {
         <div className="modal-backdrop" onClick={()=>setKpiModal(null)}>
           <div className="modal-box kpi-modal" onClick={e=>e.stopPropagation()}>
             <div className="modal-header">
-              <h2 className="card-title" style={{margin:0}}>{kpiModal.mode==="check_in"?"오늘 KPI 입력":"퇴근 전 KPI 마감"}</h2>
+              <h2 className="card-title" style={{margin:0}}>{kpiModal.mode==="check_in"?"오늘 KPI 입력":kpiModal.mode==="checkout_review"?"퇴근 전 KPI 확인":"퇴근 전 KPI 입력"}</h2>
               <button className="modal-close" onClick={()=>setKpiModal(null)}>✕</button>
             </div>
             {kpiModal.mode==="checkout_review" ? (
               <>
-                <p className="body-text">퇴근 전 오늘 KPI마다 완료 또는 미완료를 선택해야 퇴근할 수 있습니다.</p>
+                <p className="body-text">완료한 항목만 체크해 주세요. 남은 항목은 오늘 미완료로 마감하고, 필요하면 내일 데일리 KPI 초안으로 넘길 수 있습니다.</p>
                 <div className="kpi-review-list">
                   {operationalHomeKpis().map((entry:any)=>(
                     <div className="kpi-review-row" key={entry.id}>
                       <span>{entry.title}</span>
                       <div>
-                        <button className={`button compact ${kpiReview[entry.id]==="done"?"success":"ghost"}`} disabled={busy} onClick={()=>setKpiReview({...kpiReview,[entry.id]:"done"})}>완료</button>
-                        <button className={`button compact ${kpiReview[entry.id]==="missed"?"danger":"ghost"}`} disabled={busy} onClick={()=>setKpiReview({...kpiReview,[entry.id]:"missed"})}>미완료</button>
+                        <button className={`button compact ${kpiReview[entry.id]==="done"?"success":"ghost"}`} disabled={busy} onClick={()=>setCheckoutKpiStatus(entry.id,"done")}>완료</button>
+                        <button className={`button compact ${kpiReview[entry.id]==="missed"?"danger":"ghost"}`} disabled={busy} onClick={()=>setCheckoutKpiStatus(entry.id,"missed")}>미완료</button>
                       </div>
                     </div>
                   ))}
@@ -4599,30 +4618,35 @@ function HomePage({ employee }: { employee: any }) {
                 <div className="kpi-next-draft-box">
                   <div className="kpi-next-draft-head">
                     <div>
-                      <b>퇴근 전 내일 KPI 초안</b>
-                      <span>내일 출근하는 순간 오늘 KPI로 확정되고 웍스 알림이 전송됩니다.</span>
+                      <b>미완료 KPI 내일로 넘기기</b>
+                      <span>현재 미완료 {checkoutUnfinishedKpiCount}건입니다. 넘기면 내일 출근 시 데일리 KPI로 확정됩니다.</span>
                     </div>
                     <em>{addIsoDays(todayIso(),1)}</em>
                   </div>
                   <div className="kpi-next-choice-grid">
                     {[
+                      ["carryover","미완료 이월"],
                       ["manual","직접 작성"],
-                      ["carryover","오늘 미완료 이월"],
                       ["weekly","주간 KPI에서 추천"],
-                      ["defer","내일 출근 후 작성"],
+                      ["skip","이월하지 않음"],
                     ].map(([key,label])=>(
                       <button
                         type="button"
                         key={key}
                         className={tomorrowKpiChoice===key?"active":""}
                         disabled={busy}
-                        onClick={()=>applyTomorrowKpiChoice(key as "manual"|"carryover"|"weekly"|"defer")}
+                        onClick={()=>applyTomorrowKpiChoice(key as "manual"|"carryover"|"weekly"|"defer"|"skip")}
                       >
                         {label}
                       </button>
                     ))}
                   </div>
-                  {tomorrowKpiChoice==="defer" ? (
+                  {tomorrowKpiChoice==="skip" ? (
+                    <div className="kpi-next-skip-note">
+                      <b>오늘 미완료로만 마감합니다.</b>
+                      <span>내일 KPI 초안은 만들지 않고 퇴근 처리만 진행합니다.</span>
+                    </div>
+                  ) : tomorrowKpiChoice==="defer" ? (
                     <div className="form-row" style={{marginTop:10}}>
                       <label className="label">내일 출근 후 작성 사유</label>
                       <input className="input" value={tomorrowKpiReason} onChange={e=>setTomorrowKpiReason(e.target.value)} placeholder="예: 외근 준비로 출근 직후 확정 필요" />
@@ -4636,7 +4660,7 @@ function HomePage({ employee }: { employee: any }) {
                         onChange={e=>setTomorrowKpiDraftText(e.target.value)}
                         placeholder={"예:\n영산대학교 캡스톤 자료 정리\n멘토링 일정 확인\n담당자 연락 회신"}
                       />
-                      <p className="subtle" style={{marginTop:6}}>한 줄에 하나씩 적어주세요. 최대 3개만 저장됩니다.</p>
+                      <p className="subtle" style={{marginTop:6}}>한 줄 또는 쉼표로 나눠 적어주세요. 최대 3개만 내일 초안으로 저장됩니다.</p>
                     </div>
                   )}
                 </div>
@@ -5325,6 +5349,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const kpiViewRangeLabel=kpiViewStart===kpiViewEnd ? kpiViewStart : `${kpiViewStart} ~ ${kpiViewEnd}`;
   const periodScoreEntries=dailyEntries.filter((entry:any)=>entry.work_date>=kpiViewStart&&entry.work_date<=kpiViewEnd&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry));
   const periodOverallRate=kpiCompletionRate(periodScoreEntries)??0;
+  const periodDoneCount=periodScoreEntries.filter((entry:any)=>entry.status==="done").length;
+  const periodMissedCount=periodScoreEntries.filter((entry:any)=>entry.status==="missed").length;
+  const periodOpenCount=Math.max(0,periodScoreEntries.length-periodDoneCount-periodMissedCount);
   const yearMonthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&String(entry.work_date??"").startsWith(`${currentYear}-`));
   const quarterMonthlyGoals=yearMonthlyGoals.filter((entry:any)=>quarterMonths.some(monthNumber=>kpiProjectOverlapsMonth(entry,monthKeyFromNumber(monthNumber))));
   const roadmapMonths=quarterMonths.map(monthNumber=>{
@@ -5520,6 +5547,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const operatingActionDailyEntries=operatingDailyEntries.filter((entry:any)=>!isDailyRoutineEntry(entry));
   const operatingTodoEntries=operatingActionDailyEntries.filter((entry:any)=>entry.status!=="done");
   const operatingDoneEntries=operatingActionDailyEntries.filter((entry:any)=>entry.status==="done");
+  const operatingTodayRate=kpiCompletionRate(operatingActionDailyEntries)??0;
   function kpiDateDistanceFromSelected(entry:any) {
     const date=String(entry?.work_date??"").slice(0,10);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return Number.MAX_SAFE_INTEGER;
@@ -6372,10 +6400,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         </button>
         {guideOpen&&(
           <div className="kpi-guide-panel">
-            <p><b>1. 기간 집계</b>는 데일리, 주간, 월간, 분기, 연간 탭을 누르면 위 직원별 퍼센티지 자체가 선택 기간 기준으로 바뀝니다.</p>
-            <p><b>2. 내 보드</b>는 오늘 할 일, 내 프로젝트, 이번 달 완료 기록을 한 화면에 세로로 보여줍니다.</p>
-            <p><b>3. 데일리</b> 기본 체크리스트는 스케줄 정리, 웍스 피드백, 메일 확인, 연락 회신, 업무 마무리를 모두 체크해야 100%가 됩니다.</p>
-            <p><b>4. 프로젝트 흐름</b>은 프로젝트, 월간, 주간, 데일리, 완료 요약 5칸으로 나뉘며 월간에서 주간, 주간에서 데일리로 연결해 봅니다.</p>
+            <p><b>1. 기간 집계</b>는 선택한 데일리·주간·월간·분기·연간 범위 안에 쌓인 데일리 KPI의 완료율입니다.</p>
+            <p><b>2. 한 줄 입력</b>은 각 KPI 칸 안에서 바로 추가합니다. Enter로 저장하고, 데일리는 쉼표로 여러 개를 나눠 만들 수 있습니다.</p>
+            <p><b>3. 단계 추천</b>은 업무 순서가 애매할 때 업무분장표와 입력 내용을 바탕으로 실행 단계를 제안합니다. 필요한 항목만 체크해 주간 또는 데일리 KPI로 넣습니다.</p>
+            <p><b>4. 퇴근 확인</b>은 퇴근 버튼을 눌렀을 때 미완료 KPI를 보여주고, 필요한 항목만 내일 데일리 KPI 초안으로 넘깁니다.</p>
+            <p><b>5. 프로젝트 흐름</b>은 프로젝트, 월간, 주간, 데일리, 완료 요약 5칸으로 나뉘며 월간에서 주간, 주간에서 데일리로 연결해 봅니다.</p>
           </div>
         )}
         {message&&<div className="alert" style={{marginTop:12}}>{message}</div>}
@@ -6458,8 +6487,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           )}
         </div>
         <div className="kpi-period-summary-line">
-          <b>{kpiViewLabel} 집계</b>
-          <span>{kpiViewRangeLabel} · 완료율 {periodOverallRate}% · 데일리 기준 {periodScoreEntries.length}건</span>
+          <b>{kpiViewLabel} 데일리 KPI 누적</b>
+          <span>{kpiViewRangeLabel} · 기간 내 데일리 KPI 완료율 {periodOverallRate}% · 완료 {periodDoneCount} / 전체 {periodScoreEntries.length}건 · 남은 {periodOpenCount}건 · 미완료 {periodMissedCount}건</span>
         </div>
         <div className="kpi-score-strip">
           <button
@@ -6468,9 +6497,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             style={{"--employee-color":"#334155","--kpi-rate":`${periodOverallRate}%`} as React.CSSProperties}
             onClick={()=>{setFocusEmployeeId("all"); if(isAdminView) setQuickTargets([]);}}
           >
-            <span className="kpi-score-name"><b>전체 직원</b></span>
+            <span className="kpi-score-name"><b>기간 전체</b></span>
             <strong>{periodOverallRate}<small>%</small></strong>
-            <span>{kpiViewLabel} · 직원 {scorePeople.length}명</span>
+            <span>데일리 누적 · 완료 {periodDoneCount}/{periodScoreEntries.length}</span>
             <div className="kpi-progress-track"><em></em></div>
           </button>
           {scorePeople.length>0 ? scorePeople.map((employee:any)=>{
@@ -6485,7 +6514,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               >
                 <span className="kpi-score-name"><b>{employee.name}</b></span>
                 <strong>{score.rate}<small>%</small></strong>
-                <span>완료 {score.done} / 전체 {score.total}</span>
+                <span>데일리 누적 · 완료 {score.done}/{score.total}</span>
                 <div className="kpi-progress-track"><em></em></div>
               </button>
             );
@@ -6495,33 +6524,33 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           <div>
             <span>내 보드</span>
             <b>오늘·프로젝트·회고</b>
-            <small>프로젝트별 오늘 할 일, 주간 KPI, 월간 목표, 완료 기록을 한 화면에서 확인합니다.</small>
+            <small>오늘 실행할 데일리 KPI와 완료 기록, 정리해야 할 항목을 먼저 확인합니다. 프로젝트 흐름은 아래에서 따로 봅니다.</small>
           </div>
           <div className="kpi-board-side-tools">
             <div className="kpi-board-counts">
-              <span>오늘 <b>{boardTotalCounts.today}</b></span>
-              <span>주간 <b>{boardTotalCounts.weekly}</b></span>
-              <span>월간 <b>{boardTotalCounts.monthly}</b></span>
-              <span>전체 <b>{boardTotalCounts.all}</b></span>
+              <span>오늘 남은 일 <b>{operatingTodoEntries.length}</b></span>
+              <span>오늘 완료 <b>{operatingDoneEntries.length}</b></span>
+              <span>정리 필요 <b>{kpiProblemCount}</b></span>
+              <span>완료율 <b>{operatingTodayRate}%</b></span>
             </div>
           </div>
         </div>
         <div className="kpi-ppp-board">
           <section className="plans">
-            <div><span>Plans</span><b>해야 할 일</b></div>
-            {operatingTodoEntries.slice(0,5).map((entry:any)=><button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>{entry.title}</button>)}
-            {operatingTodoEntries.length===0&&<small>남은 계획이 없습니다.</small>}
+            <div><span>Today</span><b>오늘 실행</b></div>
+            {operatingTodoEntries.slice(0,5).map((entry:any)=><button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>{entry.title}<small>{weeklyTitleForDaily(entry)}</small></button>)}
+            {operatingTodoEntries.length===0&&<small>오늘 남은 데일리 KPI가 없습니다.</small>}
           </section>
           <section className="progress">
-            <div><span>Progress</span><b>진행 중</b></div>
-            {operatingProgressEntries.slice(0,5).map((entry:any)=><button type="button" key={entry.id} onClick={()=>beginEditKpi(entry)}>{entry.work_date} · {entry.title}</button>)}
-            {operatingProgressEntries.length===0&&<small>진행 중인 주간/데일리 항목이 없습니다.</small>}
+            <div><span>Review</span><b>완료·회고</b></div>
+            {operatingDoneEntries.slice(0,5).map((entry:any)=><button type="button" key={entry.id} onClick={()=>focusKpiEntry(entry)}>{entry.title}<small>{entry.work_date} · {personName(entry.employee_id)}</small></button>)}
+            {operatingDoneEntries.length===0&&<small>오늘 완료한 데일리 KPI가 없습니다.</small>}
           </section>
           <section className="problems">
-            <div><span>Problems</span><b>점검 필요 {kpiProblemCount>0&&<em>{kpiProblemCount}</em>}</b></div>
+            <div><span>Needs</span><b>정리 필요 {kpiProblemCount>0&&<em>{kpiProblemCount}</em>}</b></div>
             {kpiCommentProblems.slice(0,4).map((row:any)=><button type="button" key={`${row.entry.id}-${row.comment.id}`} onClick={()=>focusKpiEntry(row.entry)}>댓글 점검 · {row.entry.title}<small>{row.comment.text}</small></button>)}
             {kpiUnlinkedProblems.slice(0,3).map((entry:any)=><button type="button" key={entry.id} onClick={()=>focusKpiEntry(entry)}>주간 KPI 연결 필요 · {entry.title}</button>)}
-            {kpiProblemCount===0&&<small>현재 점검 이슈가 없습니다.</small>}
+            {kpiProblemCount===0&&<small>현재 정리할 항목이 없습니다.</small>}
           </section>
         </div>
         {isAdminView&&(
@@ -6894,20 +6923,26 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           <section className="kpi-ops-panel kpi-ops-today">
             <div className="kpi-ops-head">
               <div>
-                <span>오늘 할 일</span>
-                <b>오늘 할 일</b>
+                <span>Today</span>
+                <b>오늘 실행</b>
               </div>
               <em>{selectedDailyDate}</em>
+            </div>
+            <div className="kpi-ops-summary-pills">
+              <span>남은 {operatingTodoEntries.length}건</span>
+              <span>완료 {operatingDoneEntries.length}건</span>
+              <span>오늘 완료율 {operatingTodayRate}%</span>
             </div>
             <div className="kpi-ops-input">
               <select className="select" value={quickWeeklyParentId} onChange={e=>setQuickWeeklyParentId(e.target.value)}>
                 <option value="">연결 주간 KPI 선택</option>
                 {quickWeeklyGoals.map((goal:any)=><option key={goal.id} value={goal.id}>{goal.title}</option>)}
               </select>
-              <input className="input" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={event=>handleQuickKpiKeyDown(event,"daily")} placeholder="오늘 할 일을 입력하고 Enter" />
+              <input className="input" value={quickDrafts.daily} onChange={e=>setQuickDrafts({...quickDrafts,daily:e.target.value})} onKeyDown={event=>handleQuickKpiKeyDown(event,"daily")} placeholder="데일리 KPI 입력 후 Enter 또는 쉼표" />
               <button className="button compact" disabled={saving} onClick={()=>saveQuickKpi("daily")}>추가</button>
+              <button className="button ghost compact" disabled={saving} onClick={()=>openKpiSuggestion("daily")}>단계 추천</button>
             </div>
-            <p className="kpi-input-help">연결 주간 KPI를 비워두면 프로젝트와 무관한 데일리 일정으로 저장됩니다.</p>
+            <p className="kpi-input-help">쉼표로 여러 개를 나눠 만들 수 있습니다. 연결 주간 KPI를 비워두면 개인 데일리 일정으로 저장됩니다.</p>
             <div className="kpi-ops-list">
               {operatingDailyEntries.length===0&&<p className="kpi-ops-empty">오늘 할 일이 없습니다. 새 데일리 KPI를 추가하거나 프로젝트 진행만 확인하면 됩니다.</p>}
               {operatingDailyEntries.map((entry:any)=>{
@@ -7019,8 +7054,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           <section className="kpi-ops-panel kpi-ops-review">
             <div className="kpi-ops-head">
               <div>
-                <span>기록/회고</span>
-                <b>이번 달 한 일</b>
+                <span>Review</span>
+                <b>완료·회고</b>
               </div>
               <em>{operatingMonthDoneEntries.length}건</em>
             </div>
