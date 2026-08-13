@@ -9725,6 +9725,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const [rnrDepartmentFilter,setRnrDepartmentFilter]=useState("all");
   const [rnrSubView,setRnrSubView]=useState<"work"|"candidates">("work");
   const [selectedRnrCandidateKeys,setSelectedRnrCandidateKeys]=useState<string[]>([]);
+  const [dismissedRnrCandidateKeys,setDismissedRnrCandidateKeys]=useState<string[]>(()=>{
+    try { return JSON.parse(localStorage.getItem("lupl_dismissed_rnr_candidate_keys")??"[]"); }
+    catch { return []; }
+  });
   const [rnrOrgDraft,setRnrOrgDraft]=useState<Record<string,{employeeId:string;position:string}>>({});
   const [rnrChecklistDone,setRnrChecklistDone]=useState<Record<string,boolean>>(()=>{try{return JSON.parse(localStorage.getItem("lupl_rnr_checklist_done")??"{}");}catch{return {};}});
   const [rnrBusy,setRnrBusy]=useState(false);
@@ -9912,6 +9916,16 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   function toggleRnrCandidateSelection(key:string,checked:boolean) {
     setSelectedRnrCandidateKeys(current=>checked?Array.from(new Set([...current,key])):current.filter(item=>item!==key));
+  }
+  function deleteSelectedRnrCandidates() {
+    const keys=selectedRnrCandidates.map((candidate:any)=>candidate.key).filter(Boolean);
+    if(keys.length===0) return setRnrMsg("삭제할 R&R 후보를 하나 이상 체크해주세요.");
+    if(!window.confirm(`선택한 ${keys.length}개 후보를 R&R 후보 목록에서 삭제할까요? KPI 완료 기록 자체는 유지됩니다.`)) return;
+    const next=Array.from(new Set([...dismissedRnrCandidateKeys,...keys]));
+    setDismissedRnrCandidateKeys(next);
+    localStorage.setItem("lupl_dismissed_rnr_candidate_keys",JSON.stringify(next));
+    setSelectedRnrCandidateKeys([]);
+    setRnrMsg(`선택한 ${keys.length}개 R&R 후보를 목록에서 삭제했습니다. KPI 완료 기록은 그대로 유지됩니다.`);
   }
   function prepareRnrCandidateAiDraft(candidate?:any) {
     const targets=candidate?[candidate]:selectedRnrCandidates;
@@ -10833,41 +10847,66 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   }
   const activeEmployees=employees.filter(e=>isEmployeeActive(e)&&!isTestEmployee(e)).sort(sortEmployeesBySeniority);
   const todayActiveEmployees=activeEmployees.filter((employee:any)=>employeeWorksOnDate(employee,todayIso()));
-  const rnrKpiCandidateRoleGroups=(()=>{
+  const dismissedRnrCandidateKeySet=new Set(dismissedRnrCandidateKeys);
+  const rnrKpiCandidateWeekGroups=(()=>{
     const candidateMap=new Map<string,any>();
     rnrKpiEntries.forEach((entry:any)=>{
+      if(isDefaultDailyKpiEntry(entry)||isNextKpiDraftEntry(entry)||isNextKpiDeferredEntry(entry)) return;
       const employee=entry.employee_id ? (empMap[entry.employee_id]??employees.find((row:any)=>row.id===entry.employee_id)) : null;
       if(employee&&isTestEmployee(employee)) return;
       const source=entry.source_rnr_entry_id ? rnrEntries.find((row:any)=>row.id===entry.source_rnr_entry_id) : null;
       const title=String(source?rnrPublicTitle(source):(entry.title??"업무 기록")).trim();
       if(!title) return;
+      const workDate=String(entry.work_date??todayIso()).slice(0,10);
+      const weekStart=weekStartIso(workDate);
       const department=normalizeDepartmentName(source?.department||employee?.department||"공통")||"공통";
       const position=String(source?.position||employee?.position||"직무 미정").trim()||"직무 미정";
       const category=classifyRnrCategory(`${title} ${entry.description??""}`);
       const workGroup=source?rnrWorkGroup(source):normalizeRnrWorkGroup("",`${title}\n${entry.description??""}`,category,department);
       const employeeKey=employee?.id??"unassigned";
-      const key=`${department}|${employeeKey}|${position}|${workGroup}|${title.toLowerCase()}`;
-      const prev=candidateMap.get(key)??{key,title,department,position,workGroup,source,count:0,employees:new Set<string>(),employeeIds:[],employeeName:employee?.name??"담당 미정",dates:new Set<string>(),entries:[]};
+      const key=`${weekStart}|${department}|${employeeKey}|${position}|${workGroup}|${title.toLowerCase()}`;
+      const prev=candidateMap.get(key)??{key,title,department,position,workGroup,source,weekStart,weekEnd:weekEndIso(weekStart),weekLabel:weekOfMonthLabel(weekStart),count:0,employees:new Set<string>(),employeeIds:[],employeeName:employee?.name??"담당 미정",dates:new Set<string>(),entries:[]};
       prev.count+=1;
       prev.entries.push(entry);
       if(entry.employee_id) prev.employees.add(entry.employee_id);
       if(entry.work_date) prev.dates.add(String(entry.work_date).slice(0,10));
       candidateMap.set(key,prev);
     });
+    const departmentOrder=(department:string)=>{
+      if(department==="운영 총괄") return 0;
+      if(department==="공통") return 1;
+      if(department==="개발부서") return 2;
+      if(department==="기획부서") return 3;
+      if(department==="경영지원부서") return 99;
+      return 50;
+    };
     const candidates=Array.from(candidateMap.values())
       .map((candidate:any)=>({...candidate,employeeIds:Array.from(candidate.employees),dateCount:candidate.dates.size}))
-      .sort((a:any,b:any)=>b.count-a.count||String(a.title).localeCompare(String(b.title)));
-    const roleMap=new Map<string,any>();
+      .filter((candidate:any)=>!dismissedRnrCandidateKeySet.has(candidate.key))
+      .sort((a:any,b:any)=>
+        String(b.weekStart).localeCompare(String(a.weekStart))
+        || departmentOrder(a.department)-departmentOrder(b.department)
+        || b.count-a.count
+        || String(a.title).localeCompare(String(b.title))
+      );
+    const weekMap=new Map<string,any>();
     candidates.forEach((candidate:any)=>{
-      const employeeId=candidate.employeeIds[0]??"unassigned";
-      const roleKey=`${candidate.department}|${employeeId}`;
-      const prev=roleMap.get(roleKey)??{key:roleKey,department:candidate.department,employeeId,employeeName:candidate.employeeName,position:candidate.position,candidates:[]};
-      prev.candidates.push(candidate);
-      roleMap.set(roleKey,prev);
+      const week=weekMap.get(candidate.weekStart)??{key:candidate.weekStart,weekStart:candidate.weekStart,weekEnd:candidate.weekEnd,weekLabel:candidate.weekLabel,candidates:[],departmentMap:new Map<string,any>()};
+      week.candidates.push(candidate);
+      const departmentKey=`${candidate.weekStart}|${candidate.department}`;
+      const departmentGroup=week.departmentMap.get(departmentKey)??{key:departmentKey,department:candidate.department,candidates:[]};
+      departmentGroup.candidates.push(candidate);
+      week.departmentMap.set(departmentKey,departmentGroup);
+      weekMap.set(candidate.weekStart,week);
     });
-    return Array.from(roleMap.values()).sort((a:any,b:any)=>String(a.department).localeCompare(String(b.department))||String(a.employeeName).localeCompare(String(b.employeeName)));
+    return Array.from(weekMap.values())
+      .map((week:any)=>({
+        ...week,
+        departments:Array.from(week.departmentMap.values()).sort((a:any,b:any)=>departmentOrder(a.department)-departmentOrder(b.department)||String(a.department).localeCompare(String(b.department))),
+      }))
+      .sort((a:any,b:any)=>String(b.weekStart).localeCompare(String(a.weekStart)));
   })();
-  const rnrKpiCandidateList=rnrKpiCandidateRoleGroups.flatMap((group:any)=>group.candidates);
+  const rnrKpiCandidateList=rnrKpiCandidateWeekGroups.flatMap((week:any)=>week.departments.flatMap((department:any)=>department.candidates));
   const selectedRnrCandidates=rnrKpiCandidateList.filter((candidate:any)=>selectedRnrCandidateKeys.includes(candidate.key));
   useEffect(()=>{
     if(activeEmployees.length===0) { if(selectedDetailEmployeeId) setSelectedDetailEmployeeId(""); return; }
@@ -11070,8 +11109,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   const visibleRnrDepartmentCards=rnrDepartmentFilter==="all"
     ? rnrDepartmentCards
     : rnrDepartmentCards.filter((card:any)=>card.department===rnrDepartmentFilter);
-  const rnrOrgDepartmentNames=rnrDepartmentNames.filter((department:string)=>department!=="공통");
-  const visibleRnrOrgDepartmentCards=visibleRnrDepartmentCards.filter((card:any)=>card.department!=="공통");
+  const rnrOrgDepartmentNames=rnrDepartmentNames.filter((department:string)=>department!=="공통"&&department!=="운영 총괄");
+  const visibleRnrOrgDepartmentCards=visibleRnrDepartmentCards.filter((card:any)=>card.department!=="공통"&&card.department!=="운영 총괄");
   const selectedDetailEmployee=activeEmployees.find((employee:any)=>employee.id===selectedDetailEmployeeId)??activeEmployees[0]??null;
   const selectedBreakStart=selectedDetailEmployee?.break_start??"12:00";
   const selectedBreakEnd=selectedDetailEmployee?.break_end??"13:00";
@@ -11650,35 +11689,49 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
         <div className="rnr-candidate-area">
           <div className="rnr-section-title">
             <b>R&R 후보</b>
-            <span>완료된 데일리 KPI를 부서별·직원별로 모아보고, 체크한 항목을 AI 정리 초안으로 넘깁니다.</span>
+            <span>완료된 데일리 KPI를 주차별로 크게 나누고, 그 안에서 부서별 후보로 확인합니다.</span>
           </div>
           <div className="rnr-candidate-toolbar">
             <div><b>{selectedRnrCandidates.length}개 선택</b><span>업무 R&R에 저장하기 전 담당/백업/공개 여부를 다시 확인합니다.</span></div>
             <div className="actions">
               <button className="button ghost compact" type="button" onClick={()=>setSelectedRnrCandidateKeys([])}>선택 초기화</button>
+              <button className="button danger ghost compact" type="button" onClick={deleteSelectedRnrCandidates}>선택 삭제</button>
               <button className="button compact" type="button" onClick={()=>prepareRnrCandidateAiDraft()}><i className="ti ti-sparkles" aria-hidden="true"></i>AI로 R&R 정리</button>
             </div>
           </div>
           <div className="rnr-kpi-candidate-board">
-            {rnrKpiCandidateRoleGroups.length===0&&<p className="rnr-empty-work">완료된 데일리 KPI 기록이 생기면 R&R 후보로 표시됩니다.</p>}
-            {rnrKpiCandidateRoleGroups.map((group:any)=>(
-              <section className="rnr-kpi-candidate-role" key={group.key}>
-                <div className="rnr-kpi-candidate-role-head">
-                  <div><b>{group.department}</b><span>{group.employeeName} · {group.position}</span></div>
-                  <em>{group.candidates.length}개 후보</em>
+            {rnrKpiCandidateWeekGroups.length===0&&<p className="rnr-empty-work">완료된 데일리 KPI 기록이 생기면 기본 데일리 업무를 제외하고 R&R 후보로 표시됩니다.</p>}
+            {rnrKpiCandidateWeekGroups.map((week:any)=>(
+              <section className="rnr-kpi-candidate-week" key={week.key}>
+                <div className="rnr-kpi-candidate-week-head">
+                  <div>
+                    <b>{week.weekLabel}</b>
+                    <span>{week.weekStart} ~ {week.weekEnd}</span>
+                  </div>
+                  <em>{week.candidates.length}개 후보</em>
                 </div>
-                <div className="rnr-kpi-candidate-list">
-                  {group.candidates.slice(0,8).map((candidate:any)=>(
-                    <label key={candidate.key} className={selectedRnrCandidateKeys.includes(candidate.key)?"selected":""}>
-                      <input type="checkbox" checked={selectedRnrCandidateKeys.includes(candidate.key)} onChange={event=>toggleRnrCandidateSelection(candidate.key,event.target.checked)} />
-                      <span>
-                        <b>{candidate.title}</b>
-                        <small>{candidate.workGroup} · 완료 {candidate.count}건 · {candidate.dateCount}일 · {rnrCandidatePeopleLabel(candidate.employeeIds)}</small>
-                      </span>
-                      <button type="button" className="button ghost compact" onClick={event=>{event.preventDefault();prepareRnrCandidateAiDraft(candidate);}}>
-                        AI 정리
-                      </button>
-                    </label>
+                <div className="rnr-kpi-candidate-dept-grid">
+                  {week.departments.map((group:any)=>(
+                    <section className="rnr-kpi-candidate-role" key={group.key}>
+                      <div className="rnr-kpi-candidate-role-head">
+                        <div><b>{group.department}</b><span>{group.candidates.length}개 업무 후보</span></div>
+                      </div>
+                      <div className="rnr-kpi-candidate-list">
+                        {group.candidates.map((candidate:any)=>(
+                          <label key={candidate.key} className={selectedRnrCandidateKeys.includes(candidate.key)?"selected":""}>
+                            <input type="checkbox" checked={selectedRnrCandidateKeys.includes(candidate.key)} onChange={event=>toggleRnrCandidateSelection(candidate.key,event.target.checked)} />
+                            <span>
+                              <b>{candidate.title}</b>
+                              {candidate.workGroup&&candidate.workGroup!==candidate.title&&<small className="rnr-candidate-workgroup">{candidate.workGroup}</small>}
+                              <small className="rnr-candidate-meta">완료 {candidate.count}건 · {candidate.dateCount}일 · {rnrCandidatePeopleLabel(candidate.employeeIds)}</small>
+                            </span>
+                            <button type="button" className="button ghost compact" onClick={event=>{event.preventDefault();prepareRnrCandidateAiDraft(candidate);}}>
+                              AI 정리
+                            </button>
+                          </label>
+                        ))}
+                      </div>
+                    </section>
                   ))}
                 </div>
               </section>
