@@ -10067,14 +10067,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   function deleteSelectedRnrCandidates() {
     deleteRnrCandidateKeys(selectedRnrCandidateKeys);
   }
-  function prepareRnrCandidateAiDraft(candidateOrCandidates?:any) {
-    const targets=Array.isArray(candidateOrCandidates)
-      ? candidateOrCandidates
-      : candidateOrCandidates
-        ? [candidateOrCandidates]
-        : selectedRnrCandidates;
-    if(targets.length===0) return setRnrMsg("R&R 후보를 하나 이상 체크해주세요.");
-    const sourceText=targets.map((item:any,index:number)=>[
+  function rnrCandidateDraftSource(targets:any[]) {
+    return targets.map((item:any,index:number)=>[
       `${index+1}. ${item.title}`,
       `부서: ${item.department}`,
       `직원: ${rnrCandidatePeopleLabel(item.employeeIds)}`,
@@ -10082,25 +10076,44 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       `완료 기록: ${item.count}건 / ${item.dateCount}일`,
       ...item.entries.slice(0,4).map((entry:any)=>`- ${entry.work_date}: ${entry.title}`),
     ].join("\n")).join("\n\n");
+  }
+  function rnrCandidateDraftPayload(targets:any[]) {
+    const sourceText=rnrCandidateDraftSource(targets);
     const suggestion=enrichRnrSuggestion(localRnrSuggestion(sourceText),sourceText);
     const firstEmployeeId=targets.flatMap((item:any)=>item.employeeIds??[]).find(Boolean)??"";
     const firstEmployee=firstEmployeeId?employees.find((employee:any)=>employee.id===firstEmployeeId):null;
+    return {
+      sourceText,
+      firstEmployeeId,
+      suggestion:{
+        ...suggestion,
+        title:targets.length===1?targets[0].title:"KPI 완료 기록 기반 업무 정리",
+        display_title:targets.length===1?targets[0].title:"KPI 완료 기록 기반 업무 정리",
+        summary:targets.length===1?`${targets[0].title} 업무를 KPI 완료 기록 기준으로 R&R 후보화합니다.`:`선택한 ${targets.length}개 KPI 완료 기록을 업무분장표 후보로 정리합니다.`,
+        department:firstEmployee?.department||targets[0]?.department||suggestion.department,
+        position:firstEmployee?.position||targets[0]?.position||suggestion.position,
+        work_group:targets[0]?.workGroup||suggestion.work_group,
+        assigned_person_name:firstEmployee?.name||suggestion.assigned_person_name,
+        target_scope:firstEmployeeId?"employee":"department",
+        is_public:true,
+      },
+    };
+  }
+  function prepareRnrCandidateAiDraft(candidateOrCandidates?:any, options?:{stayOnCandidates?:boolean}) {
+    const targets=Array.isArray(candidateOrCandidates)
+      ? candidateOrCandidates
+      : candidateOrCandidates
+        ? [candidateOrCandidates]
+        : selectedRnrCandidates;
+    if(targets.length===0) return setRnrMsg("R&R 후보를 하나 이상 체크해주세요.");
+    const {sourceText,firstEmployeeId,suggestion}=rnrCandidateDraftPayload(targets);
     setRnrInput(sourceText);
     setRnrAssigneeId(firstEmployeeId);
-    setRnrSuggestion({
-      ...suggestion,
-      title:targets.length===1?targets[0].title:"KPI 완료 기록 기반 업무 정리",
-      display_title:targets.length===1?targets[0].title:"KPI 완료 기록 기반 업무 정리",
-      summary:targets.length===1?`${targets[0].title} 업무를 KPI 완료 기록 기준으로 R&R 후보화합니다.`:`선택한 ${targets.length}개 KPI 완료 기록을 업무분장표 후보로 정리합니다.`,
-      department:firstEmployee?.department||targets[0]?.department||suggestion.department,
-      position:firstEmployee?.position||targets[0]?.position||suggestion.position,
-      work_group:targets[0]?.workGroup||suggestion.work_group,
-      assigned_person_name:firstEmployee?.name||suggestion.assigned_person_name,
-      target_scope:firstEmployeeId?"employee":"department",
-      is_public:true,
-    });
-    setRnrSubView("work");
-    setRnrMsg("선택한 KPI 완료 기록을 AI 정리 초안으로 만들었습니다. 담당자와 공개 업무명을 확인한 뒤 저장해주세요.");
+    setRnrSuggestion(suggestion);
+    if(!options?.stayOnCandidates) setRnrSubView("work");
+    setRnrMsg(options?.stayOnCandidates
+      ? "선택한 KPI 완료 기록을 오른쪽 AI 정리 패널에 반영했습니다."
+      : "선택한 KPI 완료 기록을 AI 정리 초안으로 만들었습니다. 담당자와 공개 업무명을 확인한 뒤 저장해주세요.");
   }
   async function handleRnrPaste(event:any) {
     const files=Array.from(event.clipboardData?.files??[]).filter((file:any)=>String(file.type??"").startsWith("image/")) as File[];
@@ -11052,6 +11065,10 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
   })();
   const rnrKpiCandidateList=rnrKpiCandidateWeekGroups.flatMap((week:any)=>week.departments.flatMap((department:any)=>department.candidates));
   const selectedRnrCandidates=rnrKpiCandidateList.filter((candidate:any)=>selectedRnrCandidateKeys.includes(candidate.key));
+  const selectedRnrCandidateSourceText=selectedRnrCandidates.length>0?rnrCandidateDraftSource(selectedRnrCandidates):"";
+  const selectedRnrCandidateAutoSuggestion=selectedRnrCandidates.length>0?rnrCandidateDraftPayload(selectedRnrCandidates).suggestion:null;
+  const rnrCandidateSidebarIsApplied=!!selectedRnrCandidateSourceText&&rnrInput===selectedRnrCandidateSourceText&&!!rnrSuggestion;
+  const rnrCandidateSidebarSuggestion=rnrCandidateSidebarIsApplied?rnrSuggestion:selectedRnrCandidateAutoSuggestion;
   const rnrCandidateWeekKey=rnrKpiCandidateWeekGroups.map((week:any)=>week.weekStart).join("|");
   const rnrCurrentCandidateWeek=rnrKpiCandidateWeekGroups.find((week:any)=>week.weekStart===rnrCandidateWeekStart)??rnrKpiCandidateWeekGroups[0]??null;
   const rnrCurrentCandidateWeekIndex=rnrCurrentCandidateWeek?rnrKpiCandidateWeekGroups.findIndex((week:any)=>week.weekStart===rnrCurrentCandidateWeek.weekStart):-1;
@@ -11862,14 +11879,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
               </button>
             </div>
           )}
-          {selectedRnrCandidateKeys.length>0&&(
-            <div className="rnr-selection-inline">
-              <span>{selectedRnrCandidateKeys.length}개 선택</span>
-              <button className="button danger ghost compact" type="button" onClick={deleteSelectedRnrCandidates}>선택 삭제</button>
-              <button className="button compact" type="button" disabled={selectedRnrCandidates.length===0} onClick={()=>prepareRnrCandidateAiDraft()}><i className="ti ti-sparkles" aria-hidden="true"></i>AI 정리</button>
-              <button className="button ghost compact" type="button" onClick={()=>setSelectedRnrCandidateKeys([])}>해제</button>
-            </div>
-          )}
+          <div className="rnr-candidate-workspace">
+            <div className="rnr-candidate-main">
           <div className="rnr-kpi-candidate-board">
             {rnrKpiCandidateWeekGroups.length===0&&<p className="rnr-empty-work">완료된 데일리 KPI 기록이 생기면 기본 데일리 업무를 제외하고 R&R 후보로 표시됩니다.</p>}
             {rnrCurrentCandidateWeek&&(
@@ -11898,7 +11909,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                         {selectedCount>0&&(
                           <div className="rnr-dept-actions">
                             <button className="button danger ghost compact" type="button" onClick={()=>deleteRnrCandidateKeys(selectedKeys)}>삭제</button>
-                            <button className="button compact" type="button" disabled={selectedGroupCandidates.length===0} onClick={()=>prepareRnrCandidateAiDraft(selectedGroupCandidates)}>
+                            <button className="button compact" type="button" disabled={selectedGroupCandidates.length===0} onClick={()=>prepareRnrCandidateAiDraft(selectedGroupCandidates,{stayOnCandidates:true})}>
                               AI 정리
                             </button>
                           </div>
@@ -11913,7 +11924,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                               {candidate.workGroup&&candidate.workGroup!==candidate.title&&<small className="rnr-candidate-workgroup">{candidate.workGroup}</small>}
                               <small className="rnr-candidate-meta">완료 {candidate.count}건 · {candidate.dateCount}일 · {rnrCandidatePeopleLabel(candidate.employeeIds)}</small>
                             </span>
-                            <button type="button" className="button ghost compact" onClick={event=>{event.preventDefault();prepareRnrCandidateAiDraft(candidate);}}>
+                            <button type="button" className="button ghost compact" onClick={event=>{event.preventDefault();event.stopPropagation();setSelectedRnrCandidateKeys([candidate.key]);prepareRnrCandidateAiDraft(candidate,{stayOnCandidates:true});}}>
                               AI 정리
                             </button>
                           </label>
@@ -11924,6 +11935,64 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
                 </div>
               </section>
             )}
+          </div>
+            </div>
+            <aside className={`rnr-candidate-ai-panel ${selectedRnrCandidates.length>0?"has-selection":""}`}>
+              <div className="rnr-candidate-ai-head">
+                <div>
+                  <span>선택 후보 AI 정리</span>
+                  <b>{selectedRnrCandidates.length>0?`${selectedRnrCandidates.length}개 선택`:"후보를 체크해주세요"}</b>
+                </div>
+                {selectedRnrCandidates.length>0&&<button className="button ghost compact" type="button" onClick={()=>setSelectedRnrCandidateKeys([])}>해제</button>}
+              </div>
+              {selectedRnrCandidates.length===0 ? (
+                <div className="rnr-candidate-ai-empty">
+                  <i className="ti ti-sparkles" aria-hidden="true"></i>
+                  <b>체크하면 바로 정리됩니다</b>
+                  <p>왼쪽 후보를 체크하면 이 칸에 업무명, 부서, 담당자, 업무 묶음 추천이 바로 표시됩니다.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="rnr-candidate-selected-list">
+                    {selectedRnrCandidates.slice(0,5).map((candidate:any)=>(
+                      <span key={`selected-${candidate.key}`}>
+                        <b>{candidate.title}</b>
+                        <small>{candidate.department} · {rnrCandidatePeopleLabel(candidate.employeeIds)}</small>
+                      </span>
+                    ))}
+                    {selectedRnrCandidates.length>5&&<em>외 {selectedRnrCandidates.length-5}개 후보</em>}
+                  </div>
+                  {rnrCandidateSidebarSuggestion&&(
+                    <div className="rnr-candidate-ai-result">
+                      <span>{rnrCandidateSidebarIsApplied?"반영된 정리안":"자동 추천 정리안"}</span>
+                      <b>{rnrCandidateSidebarSuggestion.display_title||rnrCandidateSidebarSuggestion.title}</b>
+                      <small>{rnrCandidateSidebarSuggestion.department||"부서 미정"} · {rnrCandidateSidebarSuggestion.position||"직책 미정"} · {rnrCandidateSidebarSuggestion.work_group||"업무 묶음 미정"}</small>
+                      <p>{rnrCandidateSidebarSuggestion.summary}</p>
+                      {Array.isArray(rnrCandidateSidebarSuggestion.checklist)&&rnrCandidateSidebarSuggestion.checklist.length>0&&(
+                        <ul>
+                          {rnrCandidateSidebarSuggestion.checklist.slice(0,4).map((item:string,index:number)=><li key={index}>{item}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                  <div className="rnr-candidate-ai-actions">
+                    <button className="button compact" type="button" onClick={()=>prepareRnrCandidateAiDraft(selectedRnrCandidates,{stayOnCandidates:true})}>
+                      <i className="ti ti-sparkles" aria-hidden="true"></i>{rnrCandidateSidebarIsApplied?"다시 반영":"정리 반영"}
+                    </button>
+                    <button className="button secondary compact" type="button" onClick={()=>prepareRnrCandidateAiDraft(selectedRnrCandidates)}>
+                      상세 수정
+                    </button>
+                    <button className="button compact" type="button" disabled={!rnrCandidateSidebarIsApplied} onClick={saveRnrEntry}>
+                      R&R에 저장
+                    </button>
+                    <button className="button danger ghost compact" type="button" onClick={deleteSelectedRnrCandidates}>
+                      선택 삭제
+                    </button>
+                  </div>
+                  {!rnrCandidateSidebarIsApplied&&<p className="rnr-candidate-ai-note">저장하려면 먼저 정리 반영을 눌러 담당자와 업무 묶음을 확정해주세요.</p>}
+                </>
+              )}
+            </aside>
           </div>
         </div>
         <div className="rnr-work-area">
