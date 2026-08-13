@@ -16,7 +16,7 @@ const leaveTypeLabels: Record<string, string> = {
   hourly: "시간차",
   sick: "병가",
   official: "공가",
-  special: "특별휴가",
+  special: "경조휴가",
   substitute: "대체휴가",
   compensatory: "보상휴가",
   comp_leave_use: "보상휴가 시간 사용",
@@ -172,6 +172,10 @@ function buildKpiCommentMessage(projectTitle: string, entryTitle: string, author
   return lines.join("\n").slice(0, 2000);
 }
 
+function employeeIdsFromKpiNote(note: string | null | undefined) {
+  return Array.from(new Set(String(note ?? "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig) ?? []));
+}
+
 function worksChannelIdFor(eventType: WorksEventType) {
   if (eventType.startsWith("leave_")) return env("NAVER_WORKS_SCHEDULE_CHANNEL_ID");
   return env("NAVER_WORKS_KPI_CHANNEL_ID");
@@ -282,7 +286,7 @@ Deno.serve(async (req) => {
 
       const { data: entry } = await userClient
         .from("kpi_entries")
-        .select("id, employee_id, employee_name, title, scope, work_date, parent_id, created_by, mentor_employee_id")
+        .select("id, employee_id, employee_name, title, scope, work_date, parent_id, created_by, mentor_employee_id, admin_note")
         .eq("id", kpiEntryId)
         .maybeSingle();
       if (!entry) return json({ ok: false, error: "KPI 항목을 찾을 수 없습니다." }, 404);
@@ -292,7 +296,7 @@ Deno.serve(async (req) => {
       if (entry.scope === "weekly" && entry.parent_id) {
         const { data } = await serviceClient
           .from("kpi_entries")
-          .select("id, employee_id, title, scope, parent_id, mentor_employee_id")
+          .select("id, employee_id, title, scope, parent_id, created_by, mentor_employee_id, admin_note")
           .eq("id", entry.parent_id)
           .maybeSingle();
         project = data ?? null;
@@ -300,14 +304,14 @@ Deno.serve(async (req) => {
       if (entry.scope === "daily" && entry.parent_id) {
         const { data } = await serviceClient
           .from("kpi_entries")
-          .select("id, employee_id, title, scope, parent_id, mentor_employee_id")
+          .select("id, employee_id, title, scope, parent_id, created_by, mentor_employee_id, admin_note")
           .eq("id", entry.parent_id)
           .maybeSingle();
         weekly = data ?? null;
         if (weekly?.parent_id) {
           const { data: monthly } = await serviceClient
             .from("kpi_entries")
-            .select("id, employee_id, title, scope, parent_id, mentor_employee_id")
+            .select("id, employee_id, title, scope, parent_id, created_by, mentor_employee_id, admin_note")
             .eq("id", weekly.parent_id)
             .maybeSingle();
           project = monthly ?? null;
@@ -318,30 +322,44 @@ Deno.serve(async (req) => {
         entry.employee_id,
         entry.created_by,
         entry.mentor_employee_id,
+        ...employeeIdsFromKpiNote(entry.admin_note),
         weekly?.employee_id,
+        weekly?.created_by,
         weekly?.mentor_employee_id,
+        ...employeeIdsFromKpiNote(weekly?.admin_note),
         project?.employee_id,
+        project?.created_by,
         project?.mentor_employee_id,
+        ...employeeIdsFromKpiNote(project?.admin_note),
       ].filter(Boolean));
       if (employee.role !== "admin" && !allowedEmployeeIds.has(employee.id)) {
         return json({ ok: false, error: "해당 KPI 댓글 알림을 보낼 권한이 없습니다." }, 403);
       }
 
-      const recipientId = entry.employee_id ?? project?.employee_id ?? weekly?.employee_id ?? null;
-      const recipientResult = recipientId
+      const recipientIds = Array.from(new Set([
+        entry.employee_id,
+        entry.mentor_employee_id,
+        ...employeeIdsFromKpiNote(entry.admin_note),
+        weekly?.employee_id,
+        weekly?.mentor_employee_id,
+        ...employeeIdsFromKpiNote(weekly?.admin_note),
+        project?.employee_id,
+        project?.mentor_employee_id,
+        ...employeeIdsFromKpiNote(project?.admin_note),
+      ].filter(Boolean)));
+      const recipientResult = recipientIds.length > 0
         ? await serviceClient
           .from("employees")
           .select("id, name, works_user_id")
-          .eq("id", recipientId)
-          .maybeSingle()
-        : { data: null };
-      const recipient = recipientResult.data;
+          .in("id", recipientIds)
+        : { data: [] };
+      const recipients = recipientResult.data ?? [];
       const projectTitle = project?.title ?? weekly?.title ?? "연결 프로젝트 없음";
       const message = buildKpiCommentMessage(projectTitle, entry.title, commentAuthor, commentText, appUrl);
       const botId = env("NAVER_WORKS_BOT_ID");
-      const worksUserId = String(recipient?.works_user_id ?? "").trim();
 
-      async function record(status: string, response: unknown = null, error: string | null = null) {
+      async function record(recipient: any, status: string, response: unknown = null, error: string | null = null) {
+        const worksUserId = String(recipient?.works_user_id ?? "").trim();
         await serviceClient.from("kpi_works_notifications").insert({
           employee_id: recipient?.id ?? entry.employee_id ?? employee.id,
           attendance_log_id: null,
@@ -356,30 +374,44 @@ Deno.serve(async (req) => {
         });
       }
 
-      if (!botId || !worksUserId) {
-        await record("skipped", null, "NAVER_WORKS_BOT_ID 또는 직원 works_user_id가 설정되지 않았습니다.");
+      const fallbackRecipients = recipients.length > 0 ? recipients : [{ id: entry.employee_id ?? employee.id, works_user_id: "" }];
+      const deliverableRecipients = botId ? recipients.filter((recipient: any) => String(recipient?.works_user_id ?? "").trim()) : [];
+      if (!botId || deliverableRecipients.length === 0) {
+        await Promise.all(fallbackRecipients.map((recipient: any) => record(recipient, "skipped", null, "NAVER_WORKS_BOT_ID 또는 직원 works_user_id가 설정되지 않았습니다.")));
         return json({ ok: true, sent: false, skipped: true, message });
       }
 
       const token = await getWorksToken();
-      const worksResponse = await fetch(`https://www.worksapis.com/v1.0/bots/${encodeURIComponent(botId)}/users/${encodeURIComponent(worksUserId)}/messages`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ content: { type: "text", text: message } }),
-      });
-      const responseText = await worksResponse.text();
-      let responseBody: unknown = responseText;
-      try { responseBody = responseText ? JSON.parse(responseText) : {}; } catch { /* keep text */ }
-      if (!worksResponse.ok) {
-        await record("failed", responseBody, `NAVER WORKS 1:1 메시지 전송 실패(${worksResponse.status})`);
-        return json({ ok: true, sent: false, error: `NAVER WORKS 1:1 메시지 전송 실패(${worksResponse.status})`, detail: responseBody, message });
+      let sentCount = 0;
+      const failures: unknown[] = [];
+      for (const recipient of deliverableRecipients) {
+        const worksUserId = String(recipient?.works_user_id ?? "").trim();
+        const worksResponse = await fetch(`https://www.worksapis.com/v1.0/bots/${encodeURIComponent(botId)}/users/${encodeURIComponent(worksUserId)}/messages`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ content: { type: "text", text: message } }),
+        });
+        const responseText = await worksResponse.text();
+        let responseBody: unknown = responseText;
+        try { responseBody = responseText ? JSON.parse(responseText) : {}; } catch { /* keep text */ }
+        if (!worksResponse.ok) {
+          failures.push(responseBody);
+          await record(recipient, "failed", responseBody, `NAVER WORKS 1:1 메시지 전송 실패(${worksResponse.status})`);
+          continue;
+        }
+        sentCount += 1;
+        await record(recipient, "sent", responseBody, null);
       }
 
-      await record("sent", responseBody, null);
-      return json({ ok: true, sent: true, message });
+      const skippedRecipients = recipients.filter((recipient: any) => !String(recipient?.works_user_id ?? "").trim());
+      await Promise.all(skippedRecipients.map((recipient: any) => record(recipient, "skipped", null, "직원 works_user_id가 설정되지 않았습니다.")));
+      if (sentCount === 0 && failures.length > 0) {
+        return json({ ok: true, sent: false, error: "NAVER WORKS 1:1 메시지 전송이 모두 실패했습니다.", detail: failures[0], message });
+      }
+      return json({ ok: true, sent: sentCount > 0, sent_count: sentCount, failed_count: failures.length, message });
     }
 
     if (!attendanceLogId) return json({ ok: false, error: "attendance_log_id가 필요합니다." }, 400);
