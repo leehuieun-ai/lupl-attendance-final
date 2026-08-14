@@ -3689,7 +3689,7 @@ body { overflow-x: hidden; }
 }
 .kpi-topic-flow-head {
   display: grid;
-  grid-template-columns: minmax(130px,.42fr) minmax(210px,.72fr) minmax(260px,1.18fr);
+  grid-template-columns: minmax(130px,.34fr) minmax(260px,.86fr) minmax(340px,1.2fr);
   gap: 0;
   border-bottom: 1px solid #dfe1e6;
   background: #f7f8f9;
@@ -3718,7 +3718,7 @@ body { overflow-x: hidden; }
 .kpi-topic-flow-group {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(130px,.42fr) minmax(210px,.72fr) minmax(260px,1.18fr);
+  grid-template-columns: minmax(130px,.34fr) minmax(260px,.86fr) minmax(340px,1.2fr);
   border-bottom: 1px solid #edf1f7;
   background: color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 3%,#fff);
   box-shadow: inset 3px 0 0 color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 42%,transparent);
@@ -3768,7 +3768,7 @@ body { overflow-x: hidden; }
 .kpi-topic-flow-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(210px,.72fr) minmax(260px,1.18fr);
+  grid-template-columns: minmax(260px,.86fr) minmax(340px,1.2fr);
   border-bottom: 1px solid #edf1f7;
 }
 .kpi-topic-flow-row:last-child {
@@ -3799,23 +3799,27 @@ body { overflow-x: hidden; }
 .kpi-topic-daily-cell {
   position: relative;
 }
-.kpi-topic-daily-cell:not(.muted)::before {
-  content: "";
-  position: absolute;
-  left: -12px;
-  top: 28px;
-  width: 12px;
-  border-top: 1px solid color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 34%,#dfe1e6);
-}
 .kpi-topic-daily-cell .kpi-flow-node {
   background: color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 4%,#fff);
 }
 .kpi-topic-flow-table .kpi-flow-node {
-  padding: 8px 9px;
-  gap: 3px;
+  padding: 8px 92px 8px 10px;
+  gap: 4px;
+  min-height: 46px;
 }
 .kpi-topic-flow-table .kpi-flow-node.with-actions {
-  padding-right: 100px;
+  padding-right: 92px;
+}
+.kpi-topic-flow-table .kpi-flow-node.compact-flow-node {
+  grid-template-columns: minmax(120px,1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+}
+.kpi-topic-flow-table .kpi-flow-node.compact-flow-node b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .kpi-topic-flow-table .kpi-flow-node b {
   font-size: 13px;
@@ -3828,6 +3832,37 @@ body { overflow-x: hidden; }
   font-weight: 430;
   line-height: 1.35;
 }
+.kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  color: #626f86;
+  justify-content: flex-end;
+}
+.kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta em,
+.kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta strong {
+  min-width: 0;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 430;
+  line-height: 1.25;
+}
+.kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta em + em::before,
+.kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta em + strong::before {
+  content: "·";
+  margin-right: 8px;
+  color: #8590a2;
+}
+.kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta strong {
+  border: 1px solid #cfe8dc;
+  border-radius: 999px;
+  background: #f3fbf7;
+  color: #216e4e;
+  padding: 2px 7px;
+  font-weight: 620;
+}
 .kpi-topic-daily-cell.muted {
   color: #626f86;
   font-size: 12px;
@@ -3839,13 +3874,13 @@ body { overflow-x: hidden; }
   min-width: 0;
   position: relative;
   display: grid;
-  gap: 5px;
+  gap: 3px;
 }
 .kpi-flow-card-wrap .kpi-flow-node {
   width: 100%;
 }
 .kpi-flow-node.with-actions {
-  min-height: 62px;
+  min-height: 46px;
 }
 .kpi-flow-node.done-item {
   background: color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 4%,#fff);
@@ -3929,6 +3964,17 @@ body { overflow-x: hidden; }
   font-size: 11px;
   font-weight: 430;
   overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: max-height .16s ease, opacity .16s ease, margin .16s ease;
+}
+.kpi-flow-card-wrap:hover .kpi-flow-assignee-control,
+.kpi-topic-weekly-cell:hover .kpi-flow-assignee-control,
+.kpi-flow-assignee-control[open] {
+  max-height: 220px;
+  opacity: 1;
+  pointer-events: auto;
 }
 .kpi-flow-assignee-control summary {
   min-width: 0;

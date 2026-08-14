@@ -6485,7 +6485,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       <div
         role="button"
         tabIndex={0}
-        className={`kpi-flow-node daily-node with-actions${entry.status==="done"?" done-item":""}${dropTargetId===entry.id?" drop-target":""}${draggingKpi?.id===entry.id?" dragging":""}${highlightKpiId===entry.id?" kpi-focus-pulse":""}`}
+        className={`kpi-flow-node daily-node compact-flow-node with-actions${entry.status==="done"?" done-item":""}${dropTargetId===entry.id?" drop-target":""}${draggingKpi?.id===entry.id?" dragging":""}${highlightKpiId===entry.id?" kpi-focus-pulse":""}`}
         key={entry.id}
         data-operating-kpi-id={entry.id}
         draggable={canDragProjectFlow(entry)}
@@ -6506,10 +6506,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         onClick={()=>focusKpiEntry(entry,{preservePeriod:true})}
         onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();focusKpiEntry(entry,{preservePeriod:true});}}}
       >
-        <small>{weeklyTitleForDaily(entry,weeklyOverride)}</small>
         <b>{entry.title}</b>
-        <span>{String(entry.work_date??"").slice(5)} · {personListLabel(dailyFlowAssigneeIds(entry,weeklyOverride),"담당 미정")}</span>
-        {entry.status==="done"&&<em className="kpi-flow-status done">완료</em>}
+        <span className="kpi-flow-inline-meta">
+          <em>{String(entry.work_date??"").slice(5)||"날짜 미정"}</em>
+          <em>{personListLabel(dailyFlowAssigneeIds(entry,weeklyOverride),"담당 미정")}</em>
+          {entry.status==="done"&&<strong>완료</strong>}
+        </span>
         {renderProjectFlowCardActions(entry)}
       </div>
     );
@@ -8380,8 +8382,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <section className="kpi-topic-flow-table" style={kpiLinkedStyle(mindMapProject)}>
                 <div className="kpi-topic-flow-head">
                   <span>주제</span>
-                  <span>주간</span>
-                  <span>데일리</span>
+                  <span>주요 업무</span>
+                  <span>실행 항목</span>
                 </div>
                 {isAdminView&&(
                   <div className="kpi-topic-add-row">
@@ -8441,7 +8443,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                         ) : (
                           <>
                             <b>{topic}</b>
-                            <span>주간 {topicWeekly.length} · 데일리 {topicWeekly.reduce((sum:number,weekly:any)=>sum+((mindMapDailyGroups.find((group:any)=>group.weekly.id===weekly.id)?.entries??[]).length),0)+topicUnlinkedDaily.length}</span>
+                            <span>주요 업무 {topicWeekly.length} · 실행 항목 {topicWeekly.reduce((sum:number,weekly:any)=>sum+((mindMapDailyGroups.find((group:any)=>group.weekly.id===weekly.id)?.entries??[]).length),0)+topicUnlinkedDaily.length}</span>
                             {isAdminView&&(
                               <div className="kpi-topic-flow-actions" onClick={event=>event.stopPropagation()}>
                                 <button type="button" title="주제 수정" disabled={saving||topic==="기본 흐름"} onClick={()=>setProjectFlowEditingTopic({projectId:mindMapProject.id,topic,value:topic})}><i className="ti ti-edit" aria-hidden="true"></i></button>
@@ -8471,7 +8473,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                 <div
                                   role="button"
                                   tabIndex={0}
-                                  className={`kpi-flow-node with-actions${weekly.status==="done"?" done-item":""}${dropTargetId===weekly.id?" drop-target":""}${draggingKpi?.id===weekly.id?" dragging":""}${highlightKpiId===weekly.id?" kpi-focus-pulse":""}`}
+                                  className={`kpi-flow-node compact-flow-node with-actions${weekly.status==="done"?" done-item":""}${dropTargetId===weekly.id?" drop-target":""}${draggingKpi?.id===weekly.id?" dragging":""}${highlightKpiId===weekly.id?" kpi-focus-pulse":""}`}
                                   data-operating-kpi-id={weekly.id}
                                   draggable={canDragProjectFlow(weekly)}
                                   onDragStart={canDragProjectFlow(weekly)?event=>{event.stopPropagation();setDraggingKpi({id:weekly.id,scope:"weekly",sortOrder:weekly.sort_order??0});}:undefined}
@@ -8487,10 +8489,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                   onClick={()=>focusKpiEntry(weekly,{preservePeriod:true})}
                                   onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();focusKpiEntry(weekly,{preservePeriod:true});}}}
                                 >
-                                  <small>{topic==="기본 흐름"?"주간":topic}</small>
                                   <b>{weekly.title}</b>
-                                  {kpiRoleLine(weekly)&&<span>{kpiRoleLine(weekly)}</span>}
-                                  {weekly.status==="done"&&<em className="kpi-flow-status done">완료</em>}
+                                  <span className="kpi-flow-inline-meta">
+                                    {kpiRoleLine(weekly)&&<em>{kpiRoleLine(weekly)}</em>}
+                                    {weekly.status==="done"&&<strong>완료</strong>}
+                                  </span>
                                   {renderProjectFlowCardActions(weekly)}
                                 </div>
                                 {renderKpiAssigneeControl(weekly)}
@@ -8511,7 +8514,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                     {renderDailyFlowCard(entry,weekly)}
                                     {renderKpiAssigneeControl(entry)}
                                   </div>
-                                )) : <p className="kpi-ops-empty compact">연결된 데일리가 없습니다.</p>}
+                                )) : <p className="kpi-ops-empty compact">연결된 실행 항목이 없습니다.</p>}
                                 {isAdminView&&(
                                   projectFlowAddIsOpen(dailyDraftKey) ? (
                                     <div className="kpi-topic-inline-add">
@@ -8520,13 +8523,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                         value={projectFlowDrafts[dailyDraftKey]??""}
                                         onChange={event=>setProjectFlowDraft(dailyDraftKey,event.target.value)}
                                         onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectDaily(weekly,topic,mindMapProject.id,weekly.id))}
-                                        placeholder="데일리 할 일 입력"
+                                        placeholder="실행 항목 입력"
                                       />
                                       <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectDaily(weekly,topic,mindMapProject.id,weekly.id)}>추가</button>
                                       <button type="button" className="button ghost compact" disabled={saving} onClick={()=>closeProjectFlowAdd(dailyDraftKey)}>취소</button>
                                     </div>
                                   ) : (
-                                    <button type="button" className="kpi-flow-add" disabled={saving} onClick={()=>openProjectFlowAdd(dailyDraftKey)}>+ 데일리</button>
+                                    <button type="button" className="kpi-flow-add" disabled={saving} onClick={()=>openProjectFlowAdd(dailyDraftKey)}>+ 실행 항목</button>
                                   )
                                 )}
                               </div>
@@ -8535,7 +8538,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                         })}
                         {topicUnlinkedDaily.length>0&&(
                           <div className="kpi-topic-flow-row unlinked">
-                            <div className="kpi-topic-weekly-cell"><p className="kpi-ops-empty compact">연결 주간 없음</p></div>
+                            <div className="kpi-topic-weekly-cell"><p className="kpi-ops-empty compact">주요 업무 없음</p></div>
                             <div
                               className={`kpi-topic-daily-cell${dropTargetId===`topic-daily-${topic}`?" drop-target":""}`}
                               onDragOver={draggingKpi&&(draggingKpi.scope==="daily"||draggingKpi.scope==="weekly")?event=>{event.preventDefault();setDropTargetId(`topic-daily-${topic}`);}:undefined}
@@ -8566,16 +8569,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                     value={projectFlowDrafts[weeklyDraftKey]??""}
                                     onChange={event=>setProjectFlowDraft(weeklyDraftKey,event.target.value)}
                                     onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectWeekly(mindMapProject,topic,topic))}
-                                    placeholder={`${topic} 주간 할 일 입력`}
+                                    placeholder={`${topic} 주요 업무 입력`}
                                   />
                                   <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectWeekly(mindMapProject,topic,topic)}>추가</button>
                                   <button type="button" className="button ghost compact" disabled={saving} onClick={()=>closeProjectFlowAdd(weeklyDraftKey)}>취소</button>
                                 </div>
                               ) : (
-                                <button type="button" className="kpi-flow-add" disabled={saving} onClick={()=>openProjectFlowAdd(weeklyDraftKey)}>+ 주간</button>
+                                <button type="button" className="kpi-flow-add" disabled={saving} onClick={()=>openProjectFlowAdd(weeklyDraftKey)}>+ 주요 업무</button>
                               )}
                             </div>
-                            <div className="kpi-topic-daily-cell muted">주간 할 일을 만들면 여기에 데일리를 연결할 수 있습니다.</div>
+                            <div className="kpi-topic-daily-cell muted">주요 업무를 만들면 여기에 실행 항목을 연결할 수 있습니다.</div>
                           </div>
                         )}
                       </div>
