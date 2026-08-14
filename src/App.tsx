@@ -1600,20 +1600,37 @@ export default function App() {
   const [showPwModal, setShowPwModal] = useState(false);
   const [mobileNavOpen,setMobileNavOpen]=useState(false);
   const loadSeqRef=useRef(0);
-  const tabScrollPositionsRef=useRef<Record<string,number>>({});
+  const tabScrollPositionsRef=useRef<Record<string,number>>(readStoredRecord("lupl_app_tab_scroll_positions"));
 
   function tabScrollKey(tabValue:Tab=tab,kpiModeValue:KpiNavMode=kpiNavMode) {
-    return tabValue==="kpi" ? `${tabValue}:${kpiModeValue}` : tabValue;
+    const owner=employee?.id??"guest";
+    return tabValue==="kpi" ? `${owner}:${tabValue}:${kpiModeValue}` : `${owner}:${tabValue}`;
+  }
+  function persistTabScrollPositions() {
+    try { localStorage.setItem("lupl_app_tab_scroll_positions",JSON.stringify(tabScrollPositionsRef.current)); } catch {}
   }
   function rememberCurrentScroll() {
     tabScrollPositionsRef.current[tabScrollKey()]=window.scrollY;
+    persistTabScrollPositions();
   }
   function restoreScrollForTab(tabValue:Tab,kpiModeValue:KpiNavMode=kpiNavMode) {
     const key=tabScrollKey(tabValue,kpiModeValue);
+    const restore=()=>window.scrollTo({top:tabScrollPositionsRef.current[key]??0,behavior:"auto"});
+    window.requestAnimationFrame(()=>window.requestAnimationFrame(restore));
+    window.setTimeout(restore,140);
+    window.setTimeout(restore,420);
+  }
+  useEffect(()=>{
+    if(!employee?.id) return;
+    const key=tabScrollKey();
     window.requestAnimationFrame(()=>window.requestAnimationFrame(()=>{
       window.scrollTo({top:tabScrollPositionsRef.current[key]??0,behavior:"auto"});
     }));
-  }
+  },[employee?.id]);
+  useEffect(()=>{
+    if(!employee?.id) return;
+    restoreScrollForTab(tab,kpiNavMode);
+  },[loading,employee?.id,tab,kpiNavMode]);
 
   async function load() {
     const seq=++loadSeqRef.current;
@@ -1744,6 +1761,7 @@ export default function App() {
       if(frame) return;
       frame=window.requestAnimationFrame(()=>{
         tabScrollPositionsRef.current[key]=window.scrollY;
+        persistTabScrollPositions();
         frame=0;
       });
     };
@@ -6754,7 +6772,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const base=Array.from(optionMap.values())
       .filter((employee:any)=>isEmployeeActive(employee))
       .sort(sortEmployeesByEmployeeNo);
-    const scoped=base.filter((employee:any)=>employeeWorksInDateRange(employee,start,end));
+    const scoped=base;
     const seedIds=Array.from(new Set([
       currentEmployee.id,
       projectEditorDraft.ownerId,
@@ -6773,7 +6791,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const seen=new Set<string>();
     return [
       ...scoped,
-      ...seeded.filter((employee:any)=>employeeWorksInDateRange(employee,start,end)),
+      ...seeded,
     ].filter((employee:any)=>{
       if(!employee?.id||seen.has(employee.id)) return false;
       seen.add(employee.id);
@@ -8809,7 +8827,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   {projectListGoals.length>0 ? projectListGoals.map((goal:any)=>{
                     const pct=monthlyProgress(goal);
                     return (
-                      <button type="button" key={goal.id} className="kpi-project-card" style={kpiLinkedStyle(goal)} onClick={()=>{setMonth(String(goal.work_date??monthStart).slice(0,7));setFocusProjectId(goal.id);}}>
+                      <button type="button" key={goal.id} className="kpi-project-card" style={kpiLinkedStyle(goal)} onClick={()=>{setFocusProjectId(goal.id);setActiveProjectDetailId(goal.id);if(isAdminView) hydrateProjectEditor(goal);}}>
                         <b>{goal.title}</b>
                         <span>{projectMonthPeriodLabel(goal)}</span>
                         <em>{pct}%</em>
