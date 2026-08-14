@@ -5339,8 +5339,20 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       employeeMap.set(entry.employee_id,{id:entry.employee_id,name:entry.employee_name||"직원",employee_no:""});
     }
   });
+  function employeeHasCheckInOnDate(employeeId?:string|null,dateIso=selectedDailyDate) {
+    if(!employeeId) return false;
+    return kpiAttendanceLogs.some((log:any)=>log.employee_id===employeeId&&log.check_in_time&&localDateStr(log.check_in_time)===dateIso);
+  }
+  function employeeCountsInDailyAccumulation(employee:any,dateIso=selectedDailyDate) {
+    if(!employee?.id||!isKpiVisibleEmployeeOnDate(employee,dateIso)) return false;
+    if(employeeKpiDayBadge(employee)) return false;
+    return employeeHasCheckInOnDate(employee.id,dateIso);
+  }
+  const dailyAccumulationEmployeeIds=new Set(Array.from(employeeMap.values())
+    .filter((employee:any)=>employeeCountsInDailyAccumulation(employee,selectedDailyDate))
+    .map((employee:any)=>employee.id));
   const scorePeople=Array.from(employeeMap.values())
-    .filter((employee:any)=>employee.id&&isKpiVisibleEmployee(employee))
+    .filter((employee:any)=>employee.id&&(kpiView==="daily" ? dailyAccumulationEmployeeIds.has(employee.id) : isKpiVisibleEmployee(employee)))
     .sort((a:any,b:any)=>{
       if(a.id===currentEmployee.id) return -1;
       if(b.id===currentEmployee.id) return 1;
@@ -5457,7 +5469,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&kpiProjectOverlapsMonth(entry,month));
   const parentGoalOptions=(list:any[])=>isAdminView
     ? list
-    : list.filter((goal:any)=>goal.employee_id===currentEmployee.id||goal.mentor_employee_id===currentEmployee.id||projectConnectedEmployeeIds(goal).includes(currentEmployee.id)||goal.created_by===currentEmployee.id);
+    : list.filter((goal:any)=>{
+      const project=kpiProjectFromList(goal);
+      return goal.employee_id===currentEmployee.id
+        || goal.mentor_employee_id===currentEmployee.id
+        || projectConnectedEmployeeIds(goal).includes(currentEmployee.id)
+        || goal.created_by===currentEmployee.id
+        || project?.employee_id===currentEmployee.id
+        || project?.mentor_employee_id===currentEmployee.id
+        || projectConnectedEmployeeIds(project).includes(currentEmployee.id);
+    });
   const quickMonthlyGoals=parentGoalOptions(monthlyGoals);
   const quickWeeklyGoals=parentGoalOptions(weeklyGoals);
   const selectedProject=focusProjectId==="all"?null:monthlyGoals.find((goal:any)=>goal.id===focusProjectId)??null;
@@ -5602,11 +5623,18 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return Array.from(new Set([entry?.employee_id,entry?.mentor_employee_id,...projectConnectedEmployeeIds(entry)].filter(Boolean)));
   }
   function projectAssignedEmployeeIds(project:any) {
-    return Array.from(new Set(projectLinkedEntries(project).flatMap((entry:any)=>kpiEntryAssigneeIds(entry))));
+    const ids=Array.from(new Set([
+      project?.employee_id,
+      project?.mentor_employee_id,
+      ...projectConnectedEmployeeIds(project),
+      ...projectLinkedEntries(project).flatMap((entry:any)=>kpiEntryAssigneeIds(entry)),
+    ].filter(Boolean)));
+    return ids.filter((id:any)=>isKpiProjectParticipantVisible(id,project));
   }
   function projectVisibleToEmployee(project:any,employeeId?:string|null) {
     if(!employeeId) return false;
-    return projectAssignedEmployeeIds(project).includes(employeeId);
+    if([project?.employee_id,project?.mentor_employee_id,...projectConnectedEmployeeIds(project)].filter(Boolean).includes(employeeId)) return true;
+    return projectLinkedEntries(project).some((entry:any)=>kpiEntryAssigneeIds(entry).includes(employeeId));
   }
   function canManageKpi(entry:any) {
     const root=kpiProjectFromList(entry);
@@ -5640,7 +5668,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const kpiAccumulationLabel=kpiView==="daily" ? "일간 KPI 누적" : kpiView==="weekly" ? "주간 KPI 누적" : kpiView==="monthly" ? "월간 KPI 누적" : kpiView==="quarterly" ? `${currentQuarter}분기 KPI 누적` : `${currentYear}년 KPI 누적`;
   const kpiAccumulationShortLabel=kpiView==="daily" ? "일간 누적" : kpiView==="weekly" ? "주간 누적" : kpiView==="monthly" ? "월간 누적" : kpiView==="quarterly" ? "분기 누적" : "연간 누적";
   const kpiViewRangeLabel=kpiViewStart===kpiViewEnd ? kpiViewStart : `${kpiViewStart} ~ ${kpiViewEnd}`;
-  const periodScoreEntries=dailyEntries.filter((entry:any)=>entry.work_date>=kpiViewStart&&entry.work_date<=kpiViewEnd&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry));
+  const periodScoreEntries=dailyEntries.filter((entry:any)=>
+    entry.work_date>=kpiViewStart
+    && entry.work_date<=kpiViewEnd
+    && !isDailyRoutineEntry(entry)
+    && !isNextKpiDraftEntry(entry)
+    && !isNextKpiDeferredEntry(entry)
+    && (kpiView!=="daily" || !entry.employee_id || dailyAccumulationEmployeeIds.has(entry.employee_id))
+  );
   const periodOverallRate=kpiCompletionRate(periodScoreEntries)??0;
   const periodDoneCount=periodScoreEntries.filter((entry:any)=>entry.status==="done").length;
   const periodMissedCount=periodScoreEntries.filter((entry:any)=>entry.status==="missed").length;
@@ -5694,7 +5729,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!employeeId) return false;
     const employee=employeeMap.get(employeeId);
     if(!employee) return employeeId===currentEmployee.id;
-    if(!isEmployeeActive(employee)||isTestEmployee(employee)) return false;
+    if(!isEmployeeActive(employee)) return false;
+    if(isTestEmployee(employee)&&!isAdminView&&employeeId!==currentEmployee.id) return false;
     const period=project?kpiProjectPeriod(project):null;
     return period ? employeeWorksInDateRange(employee,period.start,period.end) : employeeWorksOnDate(employee,today);
   }
@@ -6484,7 +6520,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       optionMap.set(projectEditorDraft.ownerId,{id:projectEditorDraft.ownerId,name:personName(projectEditorDraft.ownerId),employee_no:""});
     }
     const base=Array.from(optionMap.values())
-      .filter((employee:any)=>isEmployeeActive(employee)&&!isTestEmployee(employee))
+      .filter((employee:any)=>isEmployeeActive(employee))
       .sort(sortEmployeesByEmployeeNo);
     const scoped=base.filter((employee:any)=>employeeWorksInDateRange(employee,start,end));
     const scopedIds=new Set(scoped.map((employee:any)=>employee.id));
@@ -6515,7 +6551,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     });
   }
   function isKpiVisibleEmployeeOnDate(employee:any,dateIso=selectedDailyDate) {
-    return isEmployeeActive(employee)&&employeeWorksOnDate(employee,dateIso)&&!isTestEmployee(employee);
+    return isEmployeeActive(employee)&&employeeWorksOnDate(employee,dateIso)&&(!isTestEmployee(employee)||employee?.id===currentEmployee.id);
   }
   function isKpiVisibleEmployee(employee:any) {
     return isKpiVisibleEmployeeOnDate(employee,selectedDailyDate);
