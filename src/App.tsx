@@ -5508,23 +5508,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   function entryVisibleToCurrentEmployee(entry:any,list:any[]=entries) {
     if(isAdminView) return true;
-    const project=kpiProjectFromList(entry,list);
-    const weekly=entry?.scope==="daily"&&entry?.parent_id ? list.find((goal:any)=>goal.scope==="weekly"&&goal.id===entry.parent_id) : null;
-    const connectedIds=Array.from(new Set([
-      ...projectConnectedEmployeeIds(entry),
-      ...projectConnectedEmployeeIds(weekly),
-      ...projectConnectedEmployeeIds(project),
-    ]));
-    return entry?.is_public!==false
-      || !entry?.employee_id
-      || entry.employee_id===currentEmployee.id
-      || entry.created_by===currentEmployee.id
-      || entry.mentor_employee_id===currentEmployee.id
-      || weekly?.employee_id===currentEmployee.id
-      || weekly?.mentor_employee_id===currentEmployee.id
-      || project?.employee_id===currentEmployee.id
-      || project?.mentor_employee_id===currentEmployee.id
-      || connectedIds.includes(currentEmployee.id);
+    if(entry?.scope==="monthly") return projectVisibleToEmployee(entry,currentEmployee.id,list);
+    if(entryDirectlyAssignedToEmployee(entry,currentEmployee.id)) return true;
+    if(entry?.scope==="weekly") {
+      const project=kpiProjectFromList(entry,list);
+      const hasSpecificAssignee=!!entry.employee_id||!!entry.mentor_employee_id||projectConnectedEmployeeIds(entry).length>0;
+      return !hasSpecificAssignee&&projectVisibleToEmployee(project,currentEmployee.id,list);
+    }
+    return false;
   }
   function kpiRootId(entry:any):string|null {
     if(!entry) return null;
@@ -5538,12 +5529,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return root?.employee_id??entry?.employee_id??null;
   }
   function weeklyGoalAcceptsEmployee(goal:any,employeeId?:string|null) {
-    if(!goal||!employeeId) return true;
-    if(!goal.employee_id) return true;
-    const ids=new Set([goal.employee_id,goal.mentor_employee_id,goal.created_by,...projectConnectedEmployeeIds(goal)].filter(Boolean));
+    if(!goal||!employeeId) return false;
+    const ids=new Set([goal.employee_id,goal.mentor_employee_id,...projectConnectedEmployeeIds(goal)].filter(Boolean));
+    if(ids.has(employeeId)) return true;
+    const hasSpecificAssignee=ids.size>0;
     const project=monthlyGoals.find((item:any)=>item.id===goal.parent_id);
-    if(project) [project.employee_id,project.mentor_employee_id,project.created_by,...projectConnectedEmployeeIds(project)].filter(Boolean).forEach((id:any)=>ids.add(id));
-    return ids.has(employeeId);
+    return !hasSpecificAssignee&&projectVisibleToEmployee(project,employeeId);
   }
   function weeklyGoalAcceptsDailyEntry(goal:any,entry:any) {
     if(!goal) return false;
@@ -5622,25 +5613,34 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function kpiEntryAssigneeIds(entry:any) {
     return Array.from(new Set([entry?.employee_id,entry?.mentor_employee_id,...projectConnectedEmployeeIds(entry)].filter(Boolean)));
   }
-  function projectAssignedEmployeeIds(project:any) {
+  function entryDirectlyAssignedToEmployee(entry:any,employeeId?:string|null) {
+    if(!entry||!employeeId) return false;
+    if(kpiEntryAssigneeIds(entry).includes(employeeId)) return true;
+    return !entry.employee_id&&!entry.mentor_employee_id&&projectConnectedEmployeeIds(entry).length===0&&entry.created_by===employeeId;
+  }
+  function projectAssignedEmployeeIds(project:any,list:any[]=entries) {
     const ids=Array.from(new Set([
       project?.employee_id,
       project?.mentor_employee_id,
       ...projectConnectedEmployeeIds(project),
-      ...projectLinkedEntries(project).flatMap((entry:any)=>kpiEntryAssigneeIds(entry)),
+      ...projectLinkedEntries(project,list).flatMap((entry:any)=>kpiEntryAssigneeIds(entry)),
     ].filter(Boolean)));
     return ids.filter((id:any)=>isKpiProjectParticipantVisible(id,project));
   }
-  function projectVisibleToEmployee(project:any,employeeId?:string|null) {
-    if(!employeeId) return false;
+  function projectVisibleToEmployee(project:any,employeeId?:string|null,list:any[]=entries) {
+    if(!project||!employeeId) return false;
     if([project?.employee_id,project?.mentor_employee_id,...projectConnectedEmployeeIds(project)].filter(Boolean).includes(employeeId)) return true;
-    return projectLinkedEntries(project).some((entry:any)=>kpiEntryAssigneeIds(entry).includes(employeeId));
+    return projectLinkedEntries(project,list).some((entry:any)=>kpiEntryAssigneeIds(entry).includes(employeeId));
   }
   function canManageKpi(entry:any) {
-    const root=kpiProjectFromList(entry);
-    const projectOwnerId=root?.employee_id??null;
-    const connectedIds=Array.from(new Set([...(root?projectConnectedEmployeeIds(root):[]),...projectConnectedEmployeeIds(entry)]));
-    return isAdminView || !entry?.employee_id || entry.employee_id===currentEmployee.id || entry.mentor_employee_id===currentEmployee.id || projectOwnerId===currentEmployee.id || connectedIds.includes(currentEmployee.id);
+    if(isAdminView) return true;
+    if(entry?.scope==="monthly") return false;
+    if(entryDirectlyAssignedToEmployee(entry,currentEmployee.id)) return true;
+    if(entry?.scope==="weekly") {
+      const hasSpecificAssignee=!!entry.employee_id||!!entry.mentor_employee_id||projectConnectedEmployeeIds(entry).length>0;
+      return !hasSpecificAssignee&&projectVisibleToEmployee(kpiProjectFromList(entry),currentEmployee.id);
+    }
+    return false;
   }
   function canEditKpiEntry(entry:any) {
     if(entry?.scope==="monthly") return isAdminView;
@@ -5715,15 +5715,34 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return {rate:rate??0,total:list.length,done:list.filter((entry:any)=>entry.status==="done").length};
   }
   const operatingEmployeeId=!isAdminView ? currentEmployee.id : focusEmployeeId==="all" ? null : focusEmployeeId;
+  function entryAssignedToOperatingEmployee(entry:any) {
+    if(!operatingEmployeeId) return true;
+    if(entry?.scope==="monthly") return projectVisibleToEmployee(entry,operatingEmployeeId);
+    if(isDailyRoutineEntry(entry)) return !entry.employee_id||entry.employee_id===operatingEmployeeId;
+    if(entryDirectlyAssignedToEmployee(entry,operatingEmployeeId)) return true;
+    if(entry?.scope==="weekly") {
+      const hasSpecificAssignee=!!entry.employee_id||!!entry.mentor_employee_id||projectConnectedEmployeeIds(entry).length>0;
+      return !hasSpecificAssignee&&projectVisibleToEmployee(kpiProjectFromList(entry),operatingEmployeeId);
+    }
+    return false;
+  }
   function entryMatchesOperatingScope(entry:any) {
-    const root=monthlyGoals.find((goal:any)=>goal.id===kpiProjectId(entry)||goal.id===entry.id);
-    const connectedIds=Array.from(new Set([...(root?projectConnectedEmployeeIds(root):[]),...projectConnectedEmployeeIds(entry)]));
-    const employeeOk=!operatingEmployeeId || entry.employee_id===operatingEmployeeId || entry.mentor_employee_id===operatingEmployeeId || root?.employee_id===operatingEmployeeId || root?.mentor_employee_id===operatingEmployeeId || connectedIds.includes(operatingEmployeeId);
+    const employeeOk=entryAssignedToOperatingEmployee(entry);
     const projectOk=(isDailyRoutineEntry(entry)&&focusProjectId==="all") || focusProjectId==="all" || kpiProjectId(entry)===focusProjectId || entry.id===focusProjectId || entry.parent_id===focusProjectId;
     return employeeOk&&projectOk;
   }
-  function projectLinkedEntries(project:any) {
-    return entries.filter((entry:any)=>entry.id===project.id||kpiProjectId(entry)===project.id);
+  function projectLinkedEntries(project:any,list:any[]=entries) {
+    if(!project) return [];
+    return list.filter((entry:any)=>{
+      if(entry.id===project.id) return true;
+      if(entry.scope==="weekly") return entry.parent_id===project.id;
+      if(entry.scope==="daily") {
+        if(entry.parent_id===project.id) return true;
+        const weekly=list.find((goal:any)=>goal.scope==="weekly"&&goal.id===entry.parent_id);
+        return weekly?.parent_id===project.id;
+      }
+      return false;
+    });
   }
   function isKpiProjectParticipantVisible(employeeId?:string|null,project?:any) {
     if(!employeeId) return false;
@@ -6187,10 +6206,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function boardEntriesForProject(project:any|null) {
     const projectIds=new Set(operatingProjectGoals.map((goal:any)=>goal.id));
     return entries.filter((entry:any)=>{
-      const root=monthlyGoals.find((goal:any)=>goal.id===kpiProjectId(entry)||goal.id===entry.id);
-      const connectedIds=Array.from(new Set([...(root?projectConnectedEmployeeIds(root):[]),...projectConnectedEmployeeIds(entry)]));
-      const employeeOk=!operatingEmployeeId || entry.employee_id===operatingEmployeeId || entry.mentor_employee_id===operatingEmployeeId || root?.employee_id===operatingEmployeeId || root?.mentor_employee_id===operatingEmployeeId || connectedIds.includes(operatingEmployeeId);
-      if(!employeeOk) return false;
+      if(!entryAssignedToOperatingEmployee(entry)) return false;
       if(project) return entry.id===project.id || kpiProjectId(entry)===project.id;
       const projectId=kpiProjectId(entry);
       return projectId ? projectIds.has(projectId) : entry.scope==="daily" || entry.scope==="weekly";
