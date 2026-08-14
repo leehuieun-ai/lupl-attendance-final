@@ -4871,6 +4871,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [projectEditorWeeklyPlan,setProjectEditorWeeklyPlan]=useState(initialKpiUiState.projectEditorWeeklyPlan??"");
   const [projectEditorPlanTopic,setProjectEditorPlanTopic]=useState(initialKpiUiState.projectEditorPlanTopic??"기본 흐름");
   const [projectEditorPlanOpen,setProjectEditorPlanOpen]=useState(false);
+  const [projectFlowBulkAssigneeIds,setProjectFlowBulkAssigneeIds]=useState<string[]>([]);
   const [openProjectFlowAdds,setOpenProjectFlowAdds]=useState<Record<string,boolean>>(initialKpiUiState.openProjectFlowAdds??{});
   const [projectFlowEditingTopic,setProjectFlowEditingTopic]=useState<{projectId:string;topic:string;value:string}|null>(initialKpiUiState.projectFlowEditingTopic??null);
   const [draggingProjectTopic,setDraggingProjectTopic]=useState<{projectId:string;topic:string;index:number}|null>(null);
@@ -5242,7 +5243,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(existingKeys.has(key)) return [];
       if(!options.allowInternalDuplicates&&seenKeys.has(key)) return [];
       seenKeys.add(key);
-      const topicNote=withKpiProjectTopicMeta("",options.topic||"기본 흐름");
+      const topicNote=withProjectFlowTopicForProject("",options.project,options.topic||"기본 흐름");
       const assigneeNote=withKpiConnectedEmployeesMeta(topicNote,connectedIds);
       const adminNote=scope==="daily" ? withKpiDateUnknownMeta(assigneeNote,item.dateUnknown) : assigneeNote;
       return [{
@@ -6352,11 +6353,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     ...mindMapAllWeeklyGoals,
     ...mindMapAllDailyOpen,
   ].some((entry:any)=>!parseKpiProjectTopic(entry.admin_note)) : false;
+  const mindMapProjectTopicless=mindMapProject ? kpiDefaultTopicHidden(mindMapProject)&&parseKpiProjectTopics(mindMapProject.admin_note).length===0 : false;
   const mindMapTopicNames=mindMapProject ? Array.from(new Set([
     ...parseKpiProjectTopics(mindMapProject.admin_note),
     ...mindMapAllWeeklyGoals.map((entry:any)=>parseKpiProjectTopic(entry.admin_note)).filter(Boolean),
     ...mindMapAllDailyOpen.map((entry:any)=>parseKpiProjectTopic(entry.admin_note)).filter(Boolean),
-    ...(!kpiDefaultTopicHidden(mindMapProject)||mindMapHasDefaultTopicEntries ? ["기본 흐름"] : []),
+    ...(!mindMapProjectTopicless&&(!kpiDefaultTopicHidden(mindMapProject)||mindMapHasDefaultTopicEntries) ? ["기본 흐름"] : []),
+    ...(mindMapProjectTopicless ? ["기본 흐름"] : []),
   ])).filter(Boolean) : [];
   const mindMapTopicDraftKey=mindMapProject ? projectFlowDraftKey("topic",mindMapProject.id) : "";
   const mindMapWeeklyDraftKey=mindMapProject ? projectFlowDraftKey("weekly",mindMapProject.id) : "";
@@ -6383,6 +6386,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       projectEditorPlanTopic,
       ...(!kpiDefaultTopicHidden(project) ? ["기본 흐름"] : []),
     ].filter(Boolean)));
+  }
+  function projectUsesTopiclessFlow(project:any) {
+    return !!project&&kpiDefaultTopicHidden(project)&&parseKpiProjectTopics(project.admin_note).length===0;
+  }
+  function withProjectFlowTopicForProject(note:string,project:any,topic:string) {
+    return projectUsesTopiclessFlow(project) ? stripKpiProjectTopics(note) : withKpiProjectTopicMeta(note,topic);
   }
   function projectFlowSortValue(entry:any) {
     const value=Number(entry?.sort_order);
@@ -6465,7 +6474,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         scope:"weekly",
         parent_id:project.id,
         work_date:flowDateForScope(entry,"weekly"),
-        admin_note:withKpiProjectTopicMeta(entry.admin_note??"",targetTopic),
+        admin_note:withProjectFlowTopicForProject(entry.admin_note??"",project,targetTopic),
       },targetId,"주간 할 일을 해당 주제로 이동했습니다.");
       return;
     }
@@ -6474,7 +6483,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         scope:"daily",
         parent_id:project.id,
         work_date:flowDateForScope(entry,"daily"),
-        admin_note:withKpiProjectTopicMeta(entry.admin_note??"",targetTopic),
+        admin_note:withProjectFlowTopicForProject(entry.admin_note??"",project,targetTopic),
       },targetId,"데일리 할 일을 해당 주제로 이동했습니다.");
     }
   }
@@ -6485,7 +6494,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       scope:"weekly",
       parent_id:project.id,
       work_date:flowDateForScope(entry,"weekly"),
-      admin_note:withKpiProjectTopicMeta(entry.admin_note??"",targetTopic),
+      admin_note:withProjectFlowTopicForProject(entry.admin_note??"",project,targetTopic),
     },targetId,"주간 할 일로 이동했습니다.");
   }
   async function moveKpiToDailyFlow(entry:any,weekly:any,project:any,topic:string,targetId?:string|null) {
@@ -6495,7 +6504,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       scope:"daily",
       parent_id:weekly.id,
       work_date:flowDateForScope(entry,"daily"),
-      admin_note:withKpiProjectTopicMeta(entry.admin_note??"",targetTopic),
+      admin_note:withProjectFlowTopicForProject(entry.admin_note??"",project,targetTopic),
     },targetId,"데일리 할 일로 이동했습니다.");
   }
   async function reorderProjectOverview(entry:any,target:any) {
@@ -7470,6 +7479,81 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(projectEditorPlanTopic===topic) setProjectEditorPlanTopic("기본 흐름");
       await load();
       setMessage("프로젝트 주제를 삭제하고 연결 업무를 기본 흐름으로 이동했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  function toggleProjectFlowBulkAssignee(id:string) {
+    setProjectFlowBulkAssigneeIds(prev=>prev.includes(id)?prev.filter(item=>item!==id):sortKpiEmployeeIds([...prev,id]));
+  }
+  async function setProjectTopicless(project:any,hidden:boolean) {
+    if(!project?.id) return;
+    if(!isAdminView) return setMessage("프로젝트 주제 표시는 관리자만 변경할 수 있습니다.");
+    const currentProject=entries.find((entry:any)=>entry.id===project.id)??project;
+    const linkedEntries=projectLinkedEntries(currentProject).filter((entry:any)=>entry.id!==currentProject.id);
+    if(hidden&&!window.confirm("이 프로젝트의 주제 구분을 없애고 주요 업무 / 실행 항목만 보이게 할까요? 기존 주제명은 항목에서 제거됩니다.")) return;
+    setSaving(true); setMessage("");
+    try {
+      const projectNote=hidden
+        ? withKpiDefaultTopicHiddenMeta(withKpiProjectTopicListMeta(currentProject.admin_note??"",[]),true)
+        : withKpiDefaultTopicHiddenMeta(currentProject.admin_note??"",false);
+      const projectResult=await updateKpiEntryWithFallback(currentProject.id,{
+        admin_note:projectNote,
+        updated_by:currentEmployee.id,
+        updated_at:new Date().toISOString(),
+      });
+      if(projectResult.error) throw projectResult.error;
+      if(hidden) {
+        for(const entry of linkedEntries) {
+          const result=await updateKpiEntryWithFallback(entry.id,{
+            admin_note:stripKpiProjectTopics(entry.admin_note??""),
+            updated_by:currentEmployee.id,
+            updated_at:new Date().toISOString(),
+          });
+          if(result.error) throw result.error;
+        }
+        setProjectEditorPlanTopic("기본 흐름");
+      }
+      setProjectFlowEditingTopic(null);
+      await load();
+      setMessage(hidden ? "주제 구분을 없애고 주요 업무 / 실행 항목 흐름으로 정리했습니다." : "주제 구분을 다시 보이게 했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function bulkUpdateProjectFlowAssignees(project:any,target:"weekly"|"daily"|"all") {
+    if(!project?.id) return;
+    if(!isAdminView) return setMessage("담당자 일괄 변경은 관리자만 할 수 있습니다.");
+    const currentProject=entries.find((entry:any)=>entry.id===project.id)??project;
+    const assigneeIds=sortKpiEmployeeIds(projectFlowBulkAssigneeIds.length>0 ? projectFlowBulkAssigneeIds : projectDirectAssigneeIds(currentProject));
+    if(assigneeIds.length===0) return setMessage("일괄 변경할 담당자를 먼저 선택해주세요.");
+    const targetEntries=projectLinkedEntries(currentProject)
+      .filter((entry:any)=>entry.id!==currentProject.id)
+      .filter((entry:any)=>target==="all" ? ["weekly","daily"].includes(entry.scope) : entry.scope===target);
+    if(targetEntries.length===0) return setMessage("일괄 변경할 항목이 없습니다.");
+    const primaryId=assigneeIds[0]??"";
+    const connectedIds=assigneeIds.slice(1);
+    const primaryEmployee=primaryId ? (employeeMap.get(primaryId)??assignableKpiEmployees().find((employee:any)=>employee.id===primaryId)) : null;
+    setSaving(true); setMessage("");
+    try {
+      for(const entry of targetEntries) {
+        const result=await updateKpiEntryWithFallback(entry.id,{
+          employee_id:primaryId||null,
+          employee_name:primaryEmployee?.name??(primaryId?entry.employee_name:null),
+          mentor_employee_id:null,
+          admin_note:withKpiConnectedEmployeesMeta(entry.admin_note??"",connectedIds),
+          updated_by:currentEmployee.id,
+          updated_at:new Date().toISOString(),
+        });
+        if(result.error) throw result.error;
+      }
+      await load();
+      const label=target==="weekly"?"주요 업무":target==="daily"?"실행 항목":"주요 업무/실행 항목";
+      setMessage(`${label} ${targetEntries.length}건의 담당자를 일괄 변경했습니다.`);
     } catch(e:any) {
       setMessage(e.message);
     } finally {
@@ -8692,22 +8776,47 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   </section>}
                 </section>
               )}
-              <section className="kpi-topic-flow-table" style={kpiLinkedStyle(mindMapProject)}>
+              <section className={`kpi-topic-flow-table${mindMapProjectTopicless?" topicless":""}`} style={kpiLinkedStyle(mindMapProject)}>
                 <div className="kpi-topic-flow-head">
-                  <span>주제</span>
+                  {!mindMapProjectTopicless&&<span>주제</span>}
                   <span>주요 업무</span>
                   <span>실행 항목</span>
                 </div>
                 {isAdminView&&(
-                  <div className="kpi-topic-add-row">
-                    <input
-                      className="input"
-                      value={projectFlowDrafts[mindMapTopicDraftKey]??""}
-                      onChange={event=>setProjectFlowDraft(mindMapTopicDraftKey,event.target.value)}
-                      onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectTopic(mindMapProject))}
-                      placeholder="새 주제 입력"
-                    />
-                    <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectTopic(mindMapProject)}>주제 추가</button>
+                  <div className="kpi-topic-tools">
+                    {!mindMapProjectTopicless&&(
+                      <div className="kpi-topic-add-row">
+                        <input
+                          className="input"
+                          value={projectFlowDrafts[mindMapTopicDraftKey]??""}
+                          onChange={event=>setProjectFlowDraft(mindMapTopicDraftKey,event.target.value)}
+                          onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectTopic(mindMapProject))}
+                          placeholder="새 주제 입력"
+                        />
+                        <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectTopic(mindMapProject)}>주제 추가</button>
+                      </div>
+                    )}
+                    <div className="kpi-topic-tool-row">
+                      <button type="button" className="button ghost compact" disabled={saving} onClick={()=>setProjectTopicless(mindMapProject,!mindMapProjectTopicless)}>
+                        {mindMapProjectTopicless?"주제 다시 보이기":"주제 없애기"}
+                      </button>
+                      <details className="kpi-bulk-assignee-panel">
+                        <summary>담당 일괄 변경</summary>
+                        <div className="kpi-bulk-assignee-grid">
+                          {assignableKpiEmployees().map((employee:any)=>(
+                            <label key={employee.id} className={projectFlowBulkAssigneeIds.includes(employee.id)?"checked":""}>
+                              <input type="checkbox" checked={projectFlowBulkAssigneeIds.includes(employee.id)} onChange={()=>toggleProjectFlowBulkAssignee(employee.id)} />
+                              <span>{employee.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="kpi-bulk-assignee-actions">
+                          <button type="button" className="button ghost compact" disabled={saving} onClick={()=>bulkUpdateProjectFlowAssignees(mindMapProject,"weekly")}>주요 업무만 변경</button>
+                          <button type="button" className="button ghost compact" disabled={saving} onClick={()=>bulkUpdateProjectFlowAssignees(mindMapProject,"daily")}>실행 항목만 변경</button>
+                          <button type="button" className="button compact" disabled={saving} onClick={()=>bulkUpdateProjectFlowAssignees(mindMapProject,"all")}>전체 변경</button>
+                        </div>
+                      </details>
+                    </div>
                   </div>
                 )}
                 {mindMapTopicNames.map((topic:string,topicIndex:number)=>{
