@@ -3274,6 +3274,37 @@ body { overflow-x: hidden; }
 .kpi-connected-employee-grid label.checked { border-color: #85b8ff; background: #f7fbff; color: #0c66e4; box-shadow: inset 0 0 0 1px rgba(12,102,228,.08); }
 .kpi-connected-employee-grid label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kpi-connected-employee-grid input { accent-color: #0c66e4; }
+.kpi-edit-assignee-summary {
+  min-width: 0;
+  border: 1px solid #dfe1e6;
+  border-radius: 8px;
+  background: #f7fbff;
+  padding: 9px 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  color: #44546f;
+  font-size: 12px;
+  font-weight: 430;
+}
+.kpi-edit-assignee-summary span {
+  min-width: 0;
+  overflow: hidden;
+  color: #172b4d;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kpi-edit-assignee-summary b {
+  flex: 0 0 auto;
+  color: #0c66e4;
+  font-size: 12px;
+  font-weight: 560;
+}
+.kpi-connected-employee-grid.multi {
+  max-height: 220px;
+  grid-template-columns: repeat(auto-fit,minmax(128px,1fr));
+}
 .kpi-project-editor-savebar { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; border: 1px solid #cfe0f8; border-radius: 8px; background: #f7fbff; padding: 10px; }
 .kpi-project-editor-savebar b { display: block; color: #172b4d; font-size: 13px; font-weight: 650; }
 .kpi-project-editor-savebar span { display: block; margin-top: 2px; color: #626f86; font-size: 12px; font-weight: 420; line-height: 1.45; }
@@ -3336,6 +3367,37 @@ body { overflow-x: hidden; }
 .kpi-review-summary-card.compact b {
   font-size: 15px;
 }
+.kpi-review-topic-toggle {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.kpi-review-topic-toggle > summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 8px;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+}
+.kpi-review-topic-toggle > summary::-webkit-details-marker {
+  display: none;
+}
+.kpi-review-topic-toggle > summary > i {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #dfe1e6;
+  border-radius: 8px;
+  background: #fff;
+  color: #626f86;
+  display: grid;
+  place-items: center;
+  transition: transform .14s ease;
+}
+.kpi-review-topic-toggle[open] > summary > i {
+  transform: rotate(180deg);
+}
 .kpi-review-topic-table {
   min-width: 0;
   border: 1px solid #dfe1e6;
@@ -3354,7 +3416,7 @@ body { overflow-x: hidden; }
   padding: 9px 11px;
   color: #44546f;
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 520;
 }
 .kpi-review-topic-group {
   min-width: 0;
@@ -3379,7 +3441,7 @@ body { overflow-x: hidden; }
 .kpi-review-topic-subject b {
   color: #172b4d;
   font-size: 13px;
-  font-weight: 760;
+  font-weight: 560;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -3421,12 +3483,12 @@ body { overflow-x: hidden; }
 .kpi-review-mini-node small {
   color: color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 64%,#44546f);
   font-size: 11px;
-  font-weight: 760;
+  font-weight: 430;
 }
 .kpi-review-mini-node b {
   color: #172b4d;
   font-size: 13px;
-  font-weight: 760;
+  font-weight: 540;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -3583,7 +3645,7 @@ body { overflow-x: hidden; }
   padding: 10px 12px;
   color: #44546f;
   font-size: 12px;
-  font-weight: 760;
+  font-weight: 520;
 }
 .kpi-topic-add-row {
   display: grid;
@@ -3626,7 +3688,7 @@ body { overflow-x: hidden; }
 .kpi-topic-flow-subject b {
   color: #172b4d;
   font-size: 14px;
-  font-weight: 760;
+  font-weight: 560;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -3674,13 +3736,18 @@ body { overflow-x: hidden; }
   padding: 8px 9px;
   gap: 3px;
 }
+.kpi-topic-flow-table .kpi-flow-node.with-actions {
+  padding-right: 100px;
+}
 .kpi-topic-flow-table .kpi-flow-node b {
   font-size: 13px;
+  font-weight: 540;
   line-height: 1.32;
 }
 .kpi-topic-flow-table .kpi-flow-node span,
 .kpi-topic-flow-table .kpi-flow-node small {
   font-size: 11px;
+  font-weight: 430;
   line-height: 1.35;
 }
 .kpi-topic-daily-cell.muted {
@@ -3699,6 +3766,9 @@ body { overflow-x: hidden; }
 .kpi-flow-card-wrap .kpi-flow-node {
   width: 100%;
 }
+.kpi-flow-node.with-actions {
+  min-height: 62px;
+}
 .kpi-flow-card-actions,
 .kpi-topic-flow-actions {
   display: flex;
@@ -3709,7 +3779,15 @@ body { overflow-x: hidden; }
   transition: opacity .14s ease;
 }
 .kpi-flow-card-wrap:hover .kpi-flow-card-actions,
+.kpi-flow-node:hover .kpi-flow-card-actions,
 .kpi-topic-flow-subject:hover .kpi-topic-flow-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.kpi-flow-node .kpi-flow-card-actions {
+  position: absolute;
+  top: 7px;
+  right: 7px;
   opacity: 1;
   pointer-events: auto;
 }
@@ -3724,6 +3802,12 @@ body { overflow-x: hidden; }
   display: grid;
   place-items: center;
   cursor: pointer;
+}
+.kpi-flow-node .kpi-flow-card-actions button {
+  background: rgba(255,255,255,.88);
+}
+.kpi-flow-node .kpi-flow-card-actions button:first-child {
+  color: #216e4e;
 }
 .kpi-flow-card-actions button:hover,
 .kpi-topic-flow-actions button:hover {
@@ -3749,7 +3833,7 @@ body { overflow-x: hidden; }
   background: rgba(255,255,255,.9);
   color: #44546f;
   font-size: 11px;
-  font-weight: 720;
+  font-weight: 430;
   overflow: hidden;
 }
 .kpi-flow-assignee-control summary {
@@ -3772,14 +3856,14 @@ body { overflow-x: hidden; }
 .kpi-flow-assignee-control summary span {
   color: color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 66%,#44546f);
   font-size: 10px;
-  font-weight: 820;
+  font-weight: 620;
 }
 .kpi-flow-assignee-control summary b {
   min-width: 0;
   overflow: hidden;
   color: #172b4d;
   font-size: 11px;
-  font-weight: 760;
+  font-weight: 520;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3799,7 +3883,7 @@ body { overflow-x: hidden; }
   color: #44546f;
   font: inherit;
   font-size: 11px;
-  font-weight: 760;
+  font-weight: 520;
   padding: 6px 8px;
   text-align: left;
   cursor: pointer;
@@ -3839,7 +3923,7 @@ body { overflow-x: hidden; }
   min-width: 0;
   overflow: hidden;
   font-size: 11px;
-  font-weight: 760;
+  font-weight: 520;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
