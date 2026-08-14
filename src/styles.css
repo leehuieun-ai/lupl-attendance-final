@@ -3574,16 +3574,19 @@ body { overflow-x: hidden; }
 .kpi-project-detail-main {
   min-width: 0;
   display: grid;
+  align-content: start;
+  align-self: start;
   gap: 12px;
 }
 .kpi-project-detail-hero {
   --employee-color: #0c66e4;
   min-width: 0;
   min-height: 0;
+  align-self: start;
   border: 1px solid color-mix(in srgb,var(--employee-color,#0c66e4) 24%,#dfe1e6);
   border-radius: 8px;
   background: color-mix(in srgb,var(--employee-color,#0c66e4) 6%,#fff);
-  padding: 12px 14px;
+  padding: 10px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
