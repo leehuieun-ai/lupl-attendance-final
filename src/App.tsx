@@ -5357,14 +5357,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       employeeMap.set(entry.employee_id,{id:entry.employee_id,name:entry.employee_name||"직원",employee_no:""});
     }
   });
-  function employeeHasCheckInOnDate(employeeId?:string|null,dateIso=selectedDailyDate) {
-    if(!employeeId) return false;
-    return kpiAttendanceLogs.some((log:any)=>log.employee_id===employeeId&&log.check_in_time&&localDateStr(log.check_in_time)===dateIso);
-  }
   function employeeCountsInDailyAccumulation(employee:any,dateIso=selectedDailyDate) {
     if(!employee?.id||!isKpiVisibleEmployeeOnDate(employee,dateIso)) return false;
-    if(employeeKpiDayBadge(employee)) return false;
-    return employeeHasCheckInOnDate(employee.id,dateIso);
+    if(employeeLongAbsenceForKpi(employee,dateIso)) return false;
+    return true;
   }
   function employeeCanAppearInDailyAccumulation(employee:any,dateIso=selectedDailyDate) {
     return employeeCountsInDailyAccumulation(employee,dateIso);
