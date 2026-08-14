@@ -5769,10 +5769,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     : kpiView==="quarterly"
       ? quarterMonthlyGoals
       : monthlyGoals;
-  const projectListGoals=rawProjectListGoals.filter((goal:any)=>{
-    if(isAdminView) return true;
-    return projectVisibleToEmployee(goal,currentEmployee.id);
-  });
+  const projectListGoals=rawProjectListGoals;
   const selectedProjectParticipants=Array.from(new Set(entries
     .filter((entry:any)=>selectedProject&&kpiRootId(entry)===selectedProject.id&&entry.employee_id)
     .map((entry:any)=>entry.employee_id)))
@@ -6284,11 +6281,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const operatingMonthDoneEntries=monthDailyEntries
     .filter((entry:any)=>entry.status==="done"&&entryMatchesOperatingScope(entry)&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry))
     .sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??""))||(b.sort_order??0)-(a.sort_order??0));
-  const operatingProjectGoals=monthlyGoals.filter((goal:any)=>{
-    if(isAdminView&&!operatingEmployeeId) return true;
-    const targetId=operatingEmployeeId??currentEmployee.id;
-    return projectVisibleToEmployee(goal,targetId);
-  }).sort((a:any,b:any)=>projectFlowSortValue(a)-projectFlowSortValue(b)||String(a.work_date??"").localeCompare(String(b.work_date??""))||String(a.created_at??"").localeCompare(String(b.created_at??"")));
+  const operatingProjectGoals=monthlyGoals
+    .sort((a:any,b:any)=>projectFlowSortValue(a)-projectFlowSortValue(b)||String(a.work_date??"").localeCompare(String(b.work_date??""))||String(a.created_at??"").localeCompare(String(b.created_at??"")));
   const operatingRnrCandidates=(()=>{
     const groups=new Map<string,any>();
     operatingMonthDoneEntries.forEach((entry:any)=>{
