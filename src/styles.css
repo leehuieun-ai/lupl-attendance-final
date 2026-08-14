@@ -3998,9 +3998,9 @@ body { overflow-x: hidden; }
   padding-right: 116px;
 }
 .kpi-topic-flow-table .kpi-flow-node.compact-flow-node {
-  grid-template-columns: minmax(140px,1fr) minmax(120px,auto);
+  grid-template-columns: minmax(150px,.56fr) minmax(160px,1fr);
   align-items: center;
-  column-gap: 14px;
+  column-gap: 10px;
 }
 .kpi-topic-flow-table .kpi-flow-node.compact-flow-node b {
   min-width: 0;

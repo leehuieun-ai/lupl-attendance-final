@@ -5370,8 +5370,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const dailyAccumulationEmployeeIds=new Set(Array.from(employeeMap.values())
     .filter((employee:any)=>employeeCanAppearInDailyAccumulation(employee,selectedDailyDate))
     .map((employee:any)=>employee.id));
+  function scoreStripEmployeeVisible(employee:any) {
+    if(!employee?.id||!isEmployeeActive(employee)) return false;
+    if(isTestEmployee(employee)&&employee.id!==currentEmployee.id) return false;
+    if(kpiView==="daily") return isAdminView ? dailyAccumulationEmployeeIds.has(employee.id) : true;
+    return isKpiVisibleEmployee(employee);
+  }
   const scorePeople=Array.from(employeeMap.values())
-    .filter((employee:any)=>employee.id&&(kpiView==="daily" ? dailyAccumulationEmployeeIds.has(employee.id) : isKpiVisibleEmployee(employee)))
+    .filter((employee:any)=>employee.id&&scoreStripEmployeeVisible(employee))
     .sort(sortEmployeesByEmployeeNo);
   const kpiColorPeople=activeKpiEmployees();
   function employeeSortValue(id:string) {
@@ -9095,7 +9101,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             </div>
           </section>
         )}
-        <section className="kpi-roadmap-toggle-card">
+        {isAdminView&&<section className="kpi-roadmap-toggle-card">
           <button type="button" className={`kpi-guide-toggle ${kpiRoadmapOpen?"open":""}`} onClick={()=>setKpiRoadmapOpen(open=>!open)}>
             <span><i className="ti ti-timeline" aria-hidden="true"></i>연간·분기·월간 목표 요약</span>
             <i className={`ti ${kpiRoadmapOpen?"ti-chevron-up":"ti-chevron-down"}`} aria-hidden="true"></i>
@@ -9143,7 +9149,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               )}
             </>
           )}
-        </section>
+        </section>}
       </section>
 
       {kpiTreeGoal&&(
