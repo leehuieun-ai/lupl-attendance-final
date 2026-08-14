@@ -5474,8 +5474,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function dailyFlowAssigneeIds(entry:any,weeklyOverride?:any|null) {
     const weekly=weeklyOverride??parentWeeklyGoalForDaily(entry);
     const project=weekly?kpiProjectFromList(weekly):kpiProjectFromList(entry);
+    const entryIds=kpiEntryAssigneeIds(entry).filter((id:string)=>isKpiProjectParticipantVisible(id,project??entry));
     const weeklyIds=weekly?kpiEntryAssigneeIds(weekly).filter((id:string)=>isKpiProjectParticipantVisible(id,project??weekly)):[];
-    return weeklyIds.length>0 ? weeklyIds : kpiEntryAssigneeIds(entry);
+    return entryIds.length>0 ? entryIds : weeklyIds;
   }
   function kpiProjectColor(entry:any) {
     const rootId=kpiRootId(entry)??kpiProjectId(entry)??entry?.id;
@@ -6102,7 +6103,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(isAdminView&&!operatingEmployeeId) return true;
     const targetId=operatingEmployeeId??currentEmployee.id;
     return projectVisibleToEmployee(goal,targetId);
-  });
+  }).sort((a:any,b:any)=>projectFlowSortValue(a)-projectFlowSortValue(b)||String(a.work_date??"").localeCompare(String(b.work_date??""))||String(a.created_at??"").localeCompare(String(b.created_at??"")));
   const operatingRnrCandidates=(()=>{
     const groups=new Map<string,any>();
     operatingMonthDoneEntries.forEach((entry:any)=>{
@@ -6350,6 +6351,18 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       admin_note:withKpiProjectTopicMeta(entry.admin_note??"",targetTopic),
     },targetId,"데일리 할 일로 이동했습니다.");
   }
+  async function reorderProjectOverview(entry:any,target:any) {
+    if(!entry?.id||!target?.id||entry.id===target.id) {
+      setDraggingKpi(null);
+      setDropTargetId(null);
+      return;
+    }
+    await saveOrderedProjectFlowMove(entry,operatingProjectGoals,{
+      scope:"monthly",
+      parent_id:null,
+      work_date:flowDateForScope(entry,"monthly"),
+    },target.id,"전체 프로젝트 순서를 변경했습니다.");
+  }
   async function reorderProjectTopic(project:any,fromTopic:string,toTopic:string) {
     if(!project?.id||!fromTopic||!toTopic||fromTopic===toTopic) {
       setDraggingProjectTopic(null);
@@ -6517,7 +6530,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         key={entry.id}
         data-operating-kpi-id={entry.id}
         draggable={canDragProjectFlow(entry)}
-        onDragStart={canDragProjectFlow(entry)?event=>{event.stopPropagation();setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}:undefined}
+        onDragStart={canDragProjectFlow(entry)?event=>{event.stopPropagation();event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",entry.id);setDraggingKpi({id:entry.id,scope:"daily",sortOrder:entry.sort_order??0});}:undefined}
         onDragEnd={canDragProjectFlow(entry)?()=>{setDraggingKpi(null);setDropTargetId(null);setDropColTarget(null);}:undefined}
         onDragOver={draggingKpi&&draggingKpi.id!==entry.id?event=>{event.preventDefault();setDropTargetId(entry.id);}:undefined}
         onDragLeave={draggingKpi?()=>setDropTargetId(null):undefined}
@@ -8484,7 +8497,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       <div
                         className="kpi-topic-flow-subject"
                         draggable={isAdminView&&!projectFlowEditingTopic}
-                        onDragStart={isAdminView&&!projectFlowEditingTopic?event=>{event.stopPropagation();setDraggingProjectTopic({projectId:mindMapProject.id,topic,index:topicIndex});event.dataTransfer.effectAllowed="move";}:undefined}
+                        onDragStart={isAdminView&&!projectFlowEditingTopic?event=>{event.stopPropagation();event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",topic);setDraggingProjectTopic({projectId:mindMapProject.id,topic,index:topicIndex});}:undefined}
                         onDragEnd={isAdminView?()=>{setDraggingProjectTopic(null);setDropTargetId(null);}:undefined}
                         onDragOver={(draggingProjectTopic||draggingKpi&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily"))?event=>{event.preventDefault();setDropTargetId(`topic-${topic}`);}:undefined}
                         onDragLeave={(draggingProjectTopic||draggingKpi&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily"))?()=>setDropTargetId(null):undefined}
@@ -8553,7 +8566,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                   className={`kpi-flow-node compact-flow-node with-actions${weekly.status==="done"?" done-item":""}${dropTargetId===weekly.id?" drop-target":""}${draggingKpi?.id===weekly.id?" dragging":""}${highlightKpiId===weekly.id?" kpi-focus-pulse":""}`}
                                   data-operating-kpi-id={weekly.id}
                                   draggable={canDragProjectFlow(weekly)}
-                                  onDragStart={canDragProjectFlow(weekly)?event=>{event.stopPropagation();setDraggingKpi({id:weekly.id,scope:"weekly",sortOrder:weekly.sort_order??0});}:undefined}
+                                  onDragStart={canDragProjectFlow(weekly)?event=>{event.stopPropagation();event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",weekly.id);setDraggingKpi({id:weekly.id,scope:"weekly",sortOrder:weekly.sort_order??0});}:undefined}
                                   onDragEnd={canDragProjectFlow(weekly)?()=>{setDraggingKpi(null);setDropTargetId(null);setDropColTarget(null);}:undefined}
                                   onDragOver={draggingKpi&&draggingKpi.id!==weekly.id?event=>{event.preventDefault();setDropTargetId(weekly.id);}:undefined}
                                   onDragLeave={()=>setDropTargetId(null)}
@@ -8667,15 +8680,36 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           ) : (
             <div className="kpi-project-overview-list">
               {operatingProjectGoals.length===0&&<p className="kpi-ops-empty">월간 KPI를 만들면 프로젝트별 세부 흐름이 여기에 표시됩니다.</p>}
-              {operatingProjectGoals.map((goal:any)=>(
-                <button type="button" key={goal.id} style={kpiLinkedStyle(goal)} onClick={()=>setActiveProjectDetailId(goal.id)}>
-                  <b>{goal.title}</b>
-                  <span>{projectMonthPeriodLabel(goal)} · 진행 {projectSummary(goal).rate}%</span>
-                  <small>담당/연결 {personListLabel(projectParticipantIds(goal),"담당자 미정")}</small>
-                  <small>오늘 {projectSummary(goal).todayCount} · 주간 {projectSummary(goal).weeklyCount} · 완료 {projectSummary(goal).done}/{projectSummary(goal).total}</small>
-                  {projectNotionUrl(goal)&&<span className="kpi-notion-link" role="link" tabIndex={0} onClick={event=>{event.stopPropagation();window.open(projectNotionUrl(goal),"_blank","noopener,noreferrer");}}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</span>}
-                </button>
-              ))}
+              {operatingProjectGoals.map((goal:any)=>{
+                const canDragOverview=canDragProjectFlow(goal);
+                const summary=projectSummary(goal);
+                return (
+                  <button
+                    type="button"
+                    key={goal.id}
+                    className={`${dropTargetId===`project-${goal.id}`?"drop-target ":""}${draggingKpi?.id===goal.id?"dragging":""}`}
+                    style={kpiLinkedStyle(goal)}
+                    draggable={canDragOverview}
+                    onDragStart={canDragOverview?event=>{event.stopPropagation();event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",goal.id);setDraggingKpi({id:goal.id,scope:"monthly",sortOrder:goal.sort_order??0});}:undefined}
+                    onDragEnd={canDragOverview?()=>{setDraggingKpi(null);setDropTargetId(null);setDropColTarget(null);}:undefined}
+                    onDragOver={draggingKpi?.scope==="monthly"&&draggingKpi.id!==goal.id?event=>{event.preventDefault();setDropTargetId(`project-${goal.id}`);}:undefined}
+                    onDragLeave={draggingKpi?.scope==="monthly"?()=>setDropTargetId(null):undefined}
+                    onDrop={draggingKpi?.scope==="monthly"&&draggingKpi.id!==goal.id?event=>{
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
+                      if(dragged) reorderProjectOverview(dragged,goal);
+                    }:undefined}
+                    onClick={()=>setActiveProjectDetailId(goal.id)}
+                  >
+                    <b>{goal.title}</b>
+                    <span>{projectMonthPeriodLabel(goal)} · 진행 {summary.rate}%</span>
+                    <small>담당/연결 {personListLabel(projectParticipantIds(goal),"담당자 미정")}</small>
+                    <small>오늘 {summary.todayCount} · 주간 {summary.weeklyCount} · 완료 {summary.done}/{summary.total}</small>
+                    {projectNotionUrl(goal)&&<span className="kpi-notion-link" role="link" tabIndex={0} onClick={event=>{event.stopPropagation();window.open(projectNotionUrl(goal),"_blank","noopener,noreferrer");}}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</span>}
+                  </button>
+                );
+              })}
             </div>
           )}
             </div>

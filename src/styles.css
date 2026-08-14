@@ -4278,6 +4278,20 @@ body { overflow-x: hidden; }
   border-color: color-mix(in srgb,var(--employee-color,#0c66e4) 38%,#85b8ff);
   background: color-mix(in srgb,var(--employee-color,#0c66e4) 12%,#fff);
 }
+.kpi-project-overview-list button[draggable="true"] {
+  cursor: grab;
+}
+.kpi-project-overview-list button[draggable="true"]:active {
+  cursor: grabbing;
+}
+.kpi-project-overview-list button.dragging {
+  opacity: .58;
+}
+.kpi-project-overview-list button.drop-target {
+  border-color: color-mix(in srgb,var(--employee-color,#0c66e4) 58%,#85b8ff);
+  background: color-mix(in srgb,var(--employee-color,#0c66e4) 14%,#fff);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--employee-color,#0c66e4) 24%,transparent), 0 0 0 3px color-mix(in srgb,var(--employee-color,#0c66e4) 12%,transparent);
+}
 .kpi-project-overview-list b {
   color: #172b4d;
   font-size: 14px;
