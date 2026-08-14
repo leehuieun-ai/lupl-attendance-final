@@ -3308,6 +3308,7 @@ body { overflow-x: hidden; }
 .kpi-project-editor-savebar { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center; border: 1px solid #cfe0f8; border-radius: 8px; background: #f7fbff; padding: 10px; }
 .kpi-project-editor-savebar b { display: block; color: #172b4d; font-size: 13px; font-weight: 650; }
 .kpi-project-editor-savebar span { display: block; margin-top: 2px; color: #626f86; font-size: 12px; font-weight: 420; line-height: 1.45; }
+.kpi-project-editor-savebar-actions { display: inline-flex; justify-content: flex-end; gap: 8px; align-items: center; flex-wrap: wrap; }
 .kpi-design-showcase,
 .kpi-option-label,
 .kpi-perdoo-board,

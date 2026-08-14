@@ -7505,7 +7505,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   },[lastKpiStatusChange,saving]);
   async function deleteKpiEntry(entry:any) {
     if(!entry?.id) return;
-    if(entry.scope==="monthly"&&!isAdminView) return setMessage("프로젝트 삭제는 관리자만 할 수 있습니다.");
+    if(entry.scope==="monthly") return deleteKpiProject(entry);
     if(!canManageKpi(entry)) return setMessage("본인 KPI만 삭제할 수 있습니다.");
     if(!window.confirm(`${entry.title} KPI를 삭제할까요?`)) return;
     setSaving(true); setMessage("");
@@ -7522,6 +7522,40 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(error) throw error;
       await load();
       setMessage("KPI를 삭제했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function deleteKpiProject(project:any) {
+    if(!project?.id) return;
+    if(!isAdminView) return setMessage("프로젝트 삭제는 관리자만 할 수 있습니다.");
+    const linkedEntries=projectLinkedEntries(project).filter((entry:any)=>entry?.is_active!==false);
+    const childCount=Math.max(0,linkedEntries.length-1);
+    const confirmText=childCount>0
+      ? `${project.title} 프로젝트를 삭제할까요?\n연결된 주요 업무/실행 항목 ${childCount}건도 함께 숨김 처리됩니다.`
+      : `${project.title} 프로젝트를 삭제할까요?`;
+    if(!window.confirm(confirmText)) return;
+    const targetIds=Array.from(new Set([project.id,...linkedEntries.map((entry:any)=>entry.id)].filter(Boolean)));
+    setSaving(true); setMessage("");
+    try {
+      let result=await supabase.from("kpi_entries").update({
+        is_active:false,
+        updated_by:currentEmployee.id,
+        updated_at:new Date().toISOString(),
+      }).in("id",targetIds);
+      if(result.error&&/updated_by|schema cache/i.test(result.error.message)){
+        result=await supabase.from("kpi_entries").update({is_active:false,updated_at:new Date().toISOString()}).in("id",targetIds);
+      }
+      if(result.error) throw result.error;
+      setActiveProjectDetailId("all");
+      setFocusProjectId("all");
+      setProjectDetailEditorOpen(false);
+      setProjectEditorId("");
+      setProjectEditorWeeklyPlan("");
+      await load();
+      setMessage(childCount>0 ? `프로젝트와 연결 업무 ${childCount}건을 삭제했습니다.` : "프로젝트를 삭제했습니다.");
     } catch(e:any) {
       setMessage(e.message);
     } finally {
@@ -7920,9 +7954,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   <b>프로젝트 정보 저장</b>
                   <span>기간, 담당자, 연결 직원, 노션 페이지가 월간 프로젝트 카드에 반영됩니다.</span>
                 </div>
-                <button className="button compact" disabled={saving} onClick={saveProjectEditor}>
-                  저장
-                </button>
+                <div className="kpi-project-editor-savebar-actions">
+                  {projectEditorId&&selectedProject&&<button className="button danger ghost compact" disabled={saving} onClick={()=>deleteKpiProject(selectedProject)}>삭제</button>}
+                  <button className="button compact" disabled={saving} onClick={saveProjectEditor}>
+                    저장
+                  </button>
+                </div>
               </div>
             </section>
             <section className="kpi-project-editor-plan">
@@ -8344,7 +8381,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                         <b>프로젝트 정보 저장</b>
                         <span>저장 후 선택한 프로젝트 세부 내역에 바로 반영됩니다.</span>
                       </div>
-                      <button className="button compact" disabled={saving} onClick={saveProjectEditor}>저장</button>
+                      <div className="kpi-project-editor-savebar-actions">
+                        {projectEditorId&&<button className="button danger ghost compact" disabled={saving} onClick={()=>deleteKpiProject(mindMapProject)}>삭제</button>}
+                        <button className="button compact" disabled={saving} onClick={saveProjectEditor}>저장</button>
+                      </div>
                     </div>
                   </section>
                   <section className="kpi-project-editor-plan">
