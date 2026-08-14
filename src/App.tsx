@@ -5761,18 +5761,23 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     }).toString();
     return url.toString();
   }
-  function focusKpiEntry(entry:any) {
+  function focusKpiEntry(entry:any, options?:{preservePeriod?:boolean}) {
     const projectId=kpiProjectId(entry)??(entry?.scope==="monthly"?entry.id:null);
-    setFocusProjectId(projectId??"all");
-    if(entry?.work_date&&String(entry.work_date).length>=10) {
-      const date=String(entry.work_date).slice(0,10);
-      setMonth(date.slice(0,7));
-      setQuickDailyDate(date);
+    if(projectId) setActiveProjectDetailId(projectId);
+    if(!options?.preservePeriod) {
+      setFocusProjectId(projectId??"all");
+      if(entry?.work_date&&String(entry.work_date).length>=10) {
+        const date=String(entry.work_date).slice(0,10);
+        setMonth(date.slice(0,7));
+        setQuickDailyDate(date);
+      }
+      setKpiView(entry?.scope==="monthly"?"monthly":entry?.scope==="weekly"?"weekly":"daily");
     }
-    setKpiView(entry?.scope==="monthly"?"monthly":entry?.scope==="weekly"?"weekly":"daily");
     setHighlightKpiId(entry?.id??null);
     window.setTimeout(()=>{
-      const target=document.querySelector(`[data-operating-kpi-id="${entry?.id}"], [data-kpi-id="${entry?.id}"]`);
+      const detailSelector=`.kpi-bottom-mindmap [data-operating-kpi-id="${entry?.id}"]`;
+      const globalSelector=`[data-operating-kpi-id="${entry?.id}"], [data-kpi-id="${entry?.id}"]`;
+      const target=document.querySelector(options?.preservePeriod?detailSelector:globalSelector)??document.querySelector(globalSelector);
       target?.scrollIntoView({behavior:"smooth",block:"center",inline:"center"});
     },160);
   }
@@ -6335,7 +6340,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         onDragOver={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?event=>{event.preventDefault();setDropTargetId(entry.id);}:undefined}
         onDragLeave={draggingKpi?.scope==="daily"?()=>setDropTargetId(null):undefined}
         onDrop={draggingKpi?.scope==="daily"&&draggingKpi.id!==entry.id?event=>{event.preventDefault();event.stopPropagation();reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);}:undefined}
-        onClick={()=>focusKpiEntry(entry)}
+        onClick={()=>focusKpiEntry(entry,{preservePeriod:true})}
       >
         <small>{weeklyTitleForDaily(entry)}</small>
         <b>{entry.title}</b>
@@ -6369,7 +6374,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             onDragOver={draggingKpi&&draggingKpi.id!==entry.id&&draggingKpi.scope===entry.scope?event=>{event.preventDefault();setDropTargetId(entry.id);}:undefined}
             onDragLeave={draggingKpi?.scope===entry.scope?()=>setDropTargetId(null):undefined}
             onDrop={draggingKpi&&draggingKpi.id!==entry.id&&draggingKpi.scope===entry.scope?event=>{event.preventDefault();reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);}:undefined}
-            onClick={()=>focusKpiEntry(entry)}
+            onClick={()=>focusKpiEntry(entry,{preservePeriod:true})}
           >
             <small>{entry.scope==="weekly"?"주간 완료":entry.scope==="daily"?"데일리 완료":"월간 완료"}</small>
             <b>{entry.title}</b>
@@ -6436,14 +6441,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     const dailies=completedDailies.filter((daily:any)=>daily.parent_id===weekly.id);
                     return (
                       <div className="kpi-review-topic-row" key={`review-weekly-${weekly.id}`}>
-                        <button type="button" className={`kpi-review-mini-node weekly${highlightKpiId===weekly.id?" kpi-focus-pulse":""}`} data-operating-kpi-id={weekly.id} onClick={()=>focusKpiEntry(weekly)}>
+                        <button type="button" className={`kpi-review-mini-node weekly${highlightKpiId===weekly.id?" kpi-focus-pulse":""}`} data-operating-kpi-id={weekly.id} onClick={()=>focusKpiEntry(weekly,{preservePeriod:true})}>
                           <small>{weekly.status==="done"?"주간 완료":"연결 주간"}</small>
                           <b>{weekly.title}</b>
                           {kpiRoleLine(weekly)&&<span>{kpiRoleLine(weekly)}</span>}
                         </button>
                         <div className="kpi-review-daily-stack">
                           {dailies.length>0 ? dailies.map((daily:any)=>(
-                            <button type="button" className={`kpi-review-mini-node daily${highlightKpiId===daily.id?" kpi-focus-pulse":""}`} key={`review-daily-${daily.id}`} data-operating-kpi-id={daily.id} onClick={()=>focusKpiEntry(daily)}>
+                            <button type="button" className={`kpi-review-mini-node daily${highlightKpiId===daily.id?" kpi-focus-pulse":""}`} key={`review-daily-${daily.id}`} data-operating-kpi-id={daily.id} onClick={()=>focusKpiEntry(daily,{preservePeriod:true})}>
                               <small>{String(daily.work_date??"").slice(5)} · {personName(daily.employee_id)}</small>
                               <b>{daily.title}</b>
                             </button>
@@ -6457,7 +6462,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       <p className="kpi-ops-empty compact">연결 주간 없음</p>
                       <div className="kpi-review-daily-stack">
                         {topicUnlinkedDailies.map((daily:any)=>(
-                          <button type="button" className={`kpi-review-mini-node daily${highlightKpiId===daily.id?" kpi-focus-pulse":""}`} key={`review-unlinked-${daily.id}`} data-operating-kpi-id={daily.id} onClick={()=>focusKpiEntry(daily)}>
+                          <button type="button" className={`kpi-review-mini-node daily${highlightKpiId===daily.id?" kpi-focus-pulse":""}`} key={`review-unlinked-${daily.id}`} data-operating-kpi-id={daily.id} onClick={()=>focusKpiEntry(daily,{preservePeriod:true})}>
                             <small>{String(daily.work_date??"").slice(5)} · {personName(daily.employee_id)}</small>
                             <b>{daily.title}</b>
                           </button>
@@ -8116,7 +8121,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                     if(draggingKpi.scope==="weekly") reorderKpi(draggingKpi.id,draggingKpi.sortOrder,weekly.id,weekly.sort_order??0);
                                     else if(draggingKpi.scope==="daily") linkKpi(draggingKpi.id,weekly.id,"pending");
                                   }:undefined}
-                                  onClick={()=>focusKpiEntry(weekly)}
+                                  onClick={()=>focusKpiEntry(weekly,{preservePeriod:true})}
                                 >
                                   <small>{topic}</small>
                                   <b>{weekly.title}</b>
