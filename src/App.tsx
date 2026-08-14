@@ -7371,6 +7371,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   function renderKpiAssigneeControl(entry:any) {
     if(!isAdminView) return null;
+    if(activeProjectDetailId&&activeProjectDetailId!=="all") return null;
     const assignable=assignableKpiEmployees();
     const isOpen=openKpiAssigneeId===entry.id;
     const currentIds=kpiAssigneeDraft(entry);
@@ -7409,7 +7410,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!isAdminView||!canEditKpiEntry(entry)) return null;
     return (
       <div className="kpi-flow-card-actions" onClick={event=>event.stopPropagation()}>
-        <button type="button" title={entry.status==="done"?"완료 취소":"완료"} disabled={saving} onClick={()=>updateKpiStatus(entry,entry.status==="done"?"pending":"done")}><i className={`ti ${entry.status==="done"?"ti-rotate-clockwise":"ti-check"}`} aria-hidden="true"></i></button>
+        <button type="button" title="완료" disabled={saving||entry.status==="done"} onClick={()=>updateKpiStatus(entry,"done")}><i className="ti ti-check" aria-hidden="true"></i></button>
         <button type="button" title="수정" disabled={saving} onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
         <button type="button" title="삭제" disabled={saving} onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
       </div>
