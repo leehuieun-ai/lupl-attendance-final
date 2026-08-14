@@ -5397,7 +5397,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   function kpiProjectSeedColor(projectId?:string|null) {
     if(!projectId) return KPI_PROJECT_COLORS[0];
-    const visibleIndex=monthlyGoals.findIndex((goal:any)=>goal.id===projectId);
+    const colorSource=scoreEntries.length>0 ? scoreEntries : entries;
+    const colorProjects=colorSource.filter((goal:any)=>goal.scope==="monthly"&&kpiProjectOverlapsMonth(goal,month));
+    const visibleIndex=colorProjects.findIndex((goal:any)=>goal.id===projectId);
     if(visibleIndex>=0) return KPI_PROJECT_COLORS[visibleIndex%KPI_PROJECT_COLORS.length];
     let hash=0;
     for(let i=0;i<projectId.length;i++) hash=(hash*33+projectId.charCodeAt(i))>>>0;
@@ -8693,15 +8695,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       <b>{projectEditorDraft.title||"프로젝트 기본 정보"}</b>
                       <small>기간, 담당자, 연결 직원, 노션 페이지를 수정합니다.</small>
                     </div>
-                    <label className="form-row">
-                      <span className="label">프로젝트명</span>
-                      <input className="input" value={projectEditorDraft.title} onChange={event=>setProjectEditorDraft({...projectEditorDraft,title:event.target.value})} placeholder="예: 영산대학교 캡스톤 디자인 과정 운영" />
-                    </label>
-                    <div className="kpi-period-inputs">
-                      <label><span>시작일</span><input className="input" type="date" value={projectEditorDraft.projectStart} onChange={event=>setProjectEditorDraft({...projectEditorDraft,projectStart:event.target.value})} /></label>
-                      <label><span>마감일</span><input className="input" type="date" value={projectEditorDraft.projectEnd} onChange={event=>setProjectEditorDraft({...projectEditorDraft,projectEnd:event.target.value})} /></label>
-                    </div>
-                    <div className="grid two">
+                    <div className="kpi-project-editor-line title-owner">
+                      <label className="form-row">
+                        <span className="label">프로젝트명</span>
+                        <input className="input" value={projectEditorDraft.title} onChange={event=>setProjectEditorDraft({...projectEditorDraft,title:event.target.value})} placeholder="예: 영산대학교 캡스톤 디자인 과정 운영" />
+                      </label>
                       <label className="form-row">
                         <span className="label">담당자</span>
                         <select className="select" value={projectEditorDraft.ownerId} onChange={event=>setProjectEditorDraft({...projectEditorDraft,ownerId:event.target.value})}>
@@ -8709,26 +8707,32 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           {assignableKpiEmployees().map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}{employee.department||employee.position?` · ${employee.department??""} ${employee.position??""}`:""}</option>)}
                         </select>
                       </label>
+                    </div>
+                    <div className="kpi-project-editor-line dates-notion">
+                      <label className="form-row"><span className="label">시작일</span><input className="input" type="date" value={projectEditorDraft.projectStart} onChange={event=>setProjectEditorDraft({...projectEditorDraft,projectStart:event.target.value})} /></label>
+                      <label className="form-row"><span className="label">마감일</span><input className="input" type="date" value={projectEditorDraft.projectEnd} onChange={event=>setProjectEditorDraft({...projectEditorDraft,projectEnd:event.target.value})} /></label>
                       <label className="form-row">
                         <span className="label">노션 페이지</span>
                         <input className="input" value={projectEditorDraft.notionUrl} onChange={event=>setProjectEditorDraft({...projectEditorDraft,notionUrl:event.target.value})} placeholder="https://www.notion.so/..." />
                       </label>
                     </div>
-                    <div className="form-row">
-                      <span className="label">연결 직원</span>
-                      <div className="kpi-connected-employee-grid">
-                        {assignableKpiEmployees().map((employee:any)=>(
-                          <label key={employee.id} className={projectEditorDraft.connectedEmployeeIds.includes(employee.id)?"checked":""}>
-                            <input type="checkbox" checked={projectEditorDraft.connectedEmployeeIds.includes(employee.id)} onChange={()=>toggleProjectEditorEmployee(employee.id)} />
-                            <span>{employee.name}{employee.department?` · ${employee.department}`:""}</span>
-                          </label>
-                        ))}
+                    <div className="kpi-project-editor-line people-note">
+                      <div className="form-row">
+                        <span className="label">연결 직원</span>
+                        <div className="kpi-connected-employee-grid">
+                          {assignableKpiEmployees().map((employee:any)=>(
+                            <label key={employee.id} className={projectEditorDraft.connectedEmployeeIds.includes(employee.id)?"checked":""}>
+                              <input type="checkbox" checked={projectEditorDraft.connectedEmployeeIds.includes(employee.id)} onChange={()=>toggleProjectEditorEmployee(employee.id)} />
+                              <span>{employee.name}{employee.department?` · ${employee.department}`:""}</span>
+                            </label>
+                          ))}
+                        </div>
                       </div>
+                      <label className="form-row">
+                        <span className="label">프로젝트 세부 내용</span>
+                        <textarea className="textarea compact-textarea" value={projectEditorDraft.adminNote} onChange={event=>setProjectEditorDraft({...projectEditorDraft,adminNote:event.target.value})} placeholder="운영 목적, 산출물, 주의할 점, 직원에게 전달할 내용을 적어주세요." />
+                      </label>
                     </div>
-                    <label className="form-row">
-                      <span className="label">프로젝트 세부 내용</span>
-                      <textarea className="textarea compact-textarea" value={projectEditorDraft.adminNote} onChange={event=>setProjectEditorDraft({...projectEditorDraft,adminNote:event.target.value})} placeholder="운영 목적, 산출물, 주의할 점, 직원에게 전달할 내용을 적어주세요." />
-                    </label>
                     <button type="button" className="kpi-project-plan-toggle" onClick={()=>setProjectEditorPlanOpen(open=>!open)}>
                       <span>AI 초안 만들기</span>
                       <b>{projectEditorPlanOpen?"접기":"열기"}</b>

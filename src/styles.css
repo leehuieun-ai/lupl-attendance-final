@@ -3702,15 +3702,29 @@ body { overflow-x: hidden; }
 .kpi-project-editor-card.detail-editor .form-row {
   gap: 5px;
 }
+.kpi-project-editor-card.detail-editor .kpi-project-editor-line {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+.kpi-project-editor-card.detail-editor .kpi-project-editor-line.title-owner {
+  grid-template-columns: minmax(260px,1fr) minmax(180px,.42fr);
+}
+.kpi-project-editor-card.detail-editor .kpi-project-editor-line.dates-notion {
+  grid-template-columns: minmax(150px,.3fr) minmax(150px,.3fr) minmax(240px,.75fr);
+}
+.kpi-project-editor-card.detail-editor .kpi-project-editor-line.people-note {
+  grid-template-columns: minmax(300px,.9fr) minmax(280px,1fr);
+}
 .kpi-project-editor-card.detail-editor .input,
 .kpi-project-editor-card.detail-editor .select {
-  min-height: 42px;
+  min-height: 38px;
 }
 .kpi-project-editor-card.detail-editor .compact-textarea {
-  min-height: 74px;
+  min-height: 88px;
 }
 .kpi-project-editor-card.detail-editor .kpi-connected-employee-grid {
-  max-height: 126px;
+  max-height: 88px;
   grid-template-columns: repeat(auto-fit,minmax(128px,1fr));
 }
 .kpi-project-plan-toggle {
@@ -4488,6 +4502,11 @@ body { overflow-x: hidden; }
     display: grid;
   }
   .kpi-project-editor-card.detail-editor {
+    grid-template-columns: 1fr;
+  }
+  .kpi-project-editor-card.detail-editor .kpi-project-editor-line.title-owner,
+  .kpi-project-editor-card.detail-editor .kpi-project-editor-line.dates-notion,
+  .kpi-project-editor-card.detail-editor .kpi-project-editor-line.people-note {
     grid-template-columns: 1fr;
   }
   .kpi-topic-flow-head,
