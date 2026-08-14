@@ -6473,7 +6473,17 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return employees.filter((employee:any)=>isKpiVisibleEmployee(employee));
   }
   function assignableKpiEmployees(start=projectEditorDraft.projectStart||monthStart,end=projectEditorDraft.projectEnd||monthEnd) {
-    const base=employees
+    const optionMap=new Map<string,any>();
+    [...employees,...Array.from(employeeMap.values()),currentEmployee].forEach((employee:any)=>{
+      if(employee?.id) optionMap.set(employee.id,employee);
+    });
+    projectEditorDraft.connectedEmployeeIds.forEach(id=>{
+      if(id&&!optionMap.has(id)) optionMap.set(id,{id,name:personName(id),employee_no:""});
+    });
+    if(projectEditorDraft.ownerId&&!optionMap.has(projectEditorDraft.ownerId)) {
+      optionMap.set(projectEditorDraft.ownerId,{id:projectEditorDraft.ownerId,name:personName(projectEditorDraft.ownerId),employee_no:""});
+    }
+    const base=Array.from(optionMap.values())
       .filter((employee:any)=>isEmployeeActive(employee)&&!isTestEmployee(employee))
       .sort(sortEmployeesByEmployeeNo);
     const scoped=base.filter((employee:any)=>employeeWorksInDateRange(employee,start,end));
