@@ -4811,6 +4811,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [activeProjectDetailId,setActiveProjectDetailId]=useState(initialKpiUiState.activeProjectDetailId??"all");
   const [projectDetailEditorOpen,setProjectDetailEditorOpen]=useState(Boolean(initialKpiUiState.projectDetailEditorOpen));
   const [projectFlowDrafts,setProjectFlowDrafts]=useState<Record<string,string>>(initialKpiUiState.projectFlowDrafts??{});
+  const [hiddenProjectTopicIds,setHiddenProjectTopicIds]=useState<Record<string,boolean>>(initialKpiUiState.hiddenProjectTopicIds??{});
   const [highlightKpiId,setHighlightKpiId]=useState<string|null>(null);
   const [dailyRoutineChecks,setDailyRoutineChecks]=useState<Record<string,string[]>>(()=>readStoredRecord("lupl_daily_kpi_routine_checks"));
   const [kpiCommentDrafts,setKpiCommentDrafts]=useState<Record<string,string>>({});
@@ -5032,6 +5033,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         activeProjectDetailId,
         projectDetailEditorOpen,
         projectFlowDrafts,
+        hiddenProjectTopicIds,
         projectEditorId,
         projectEditorDraft,
         projectEditorWeeklyPlan,
@@ -5040,7 +5042,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         projectFlowEditingTopic,
       }));
     } catch {}
-  },[kpiUiStateKey,month,quickDrafts,quickEmployeeId,quickEmployeeIds,quickDailyDate,focusEmployeeId,focusProjectId,activeProjectDetailId,projectDetailEditorOpen,projectFlowDrafts,projectEditorId,projectEditorDraft,projectEditorWeeklyPlan,projectEditorPlanTopic,openProjectFlowAdds,projectFlowEditingTopic]);
+  },[kpiUiStateKey,month,quickDrafts,quickEmployeeId,quickEmployeeIds,quickDailyDate,focusEmployeeId,focusProjectId,activeProjectDetailId,projectDetailEditorOpen,projectFlowDrafts,hiddenProjectTopicIds,projectEditorId,projectEditorDraft,projectEditorWeeklyPlan,projectEditorPlanTopic,openProjectFlowAdds,projectFlowEditingTopic]);
   useEffect(()=>{
     if(!openKpiAssigneeId) return;
     const onMouseDown=(event:MouseEvent)=>{
@@ -5226,7 +5228,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function employeeCountsInDailyAccumulation(employee:any,dateIso=selectedDailyDate) {
     if(!employee?.id||!isKpiVisibleEmployeeOnDate(employee,dateIso)) return false;
     if(employeeKpiDayBadge(employee)) return false;
-    return employeeHasCheckInOnDate(employee.id,dateIso);
+    if(employeeHasCheckInOnDate(employee.id,dateIso)) return true;
+    return selectedDayEntries.some((entry:any)=>!isDailyRoutineEntry(entry)&&kpiEntryAssigneeIds(entry).includes(employee.id));
   }
   function employeeCanAppearInDailyAccumulation(employee:any,dateIso=selectedDailyDate) {
     if(!employeeCountsInDailyAccumulation(employee,dateIso)) return false;
@@ -5452,6 +5455,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const project=weekly?kpiProjectFromList(weekly):kpiProjectFromList(entry);
     const weeklyIds=weekly?kpiEntryAssigneeIds(weekly).filter((id:string)=>isKpiProjectParticipantVisible(id,project??weekly)):[];
     return weeklyIds.length>0 ? weeklyIds : kpiEntryAssigneeIds(entry);
+  }
+  function projectFlowCardAssigneeIds(entry:any) {
+    if(!entry) return [];
+    return isAdminView ? kpiAssigneeDraft(entry) : kpiEntryAssigneeIds(entry);
   }
   function kpiProjectColor(entry:any) {
     const rootId=kpiRootId(entry)??kpiProjectId(entry)??entry?.id;
@@ -6079,6 +6086,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const targetId=operatingEmployeeId??currentEmployee.id;
     return projectVisibleToEmployee(goal,targetId);
   });
+  const projectDetailGoals=entries
+    .filter((entry:any)=>entry.scope==="monthly")
+    .filter((goal:any)=>isAdminView ? true : projectVisibleToEmployee(goal,currentEmployee.id))
+    .sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??""))||String(a.title??"").localeCompare(String(b.title??""),"ko-KR",{numeric:true}));
   const operatingRnrCandidates=(()=>{
     const groups=new Map<string,any>();
     operatingMonthDoneEntries.forEach((entry:any)=>{
@@ -6140,7 +6151,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     };
   }
   const boardTotalCounts=boardCountSummary(null);
-  const activeProjectDetail=activeProjectDetailId==="all"?null:operatingProjectGoals.find((goal:any)=>goal.id===activeProjectDetailId)??null;
+  const activeProjectDetail=activeProjectDetailId==="all"?null:projectDetailGoals.find((goal:any)=>goal.id===activeProjectDetailId)??entries.find((entry:any)=>entry.scope==="monthly"&&entry.id===activeProjectDetailId)??null;
   const mindMapProject=activeProjectDetail;
   const mindMapAllWeeklyGoals=mindMapProject?allWeeklyEntries
     .filter((entry:any)=>kpiProjectId(entry)===mindMapProject.id)
@@ -6182,6 +6193,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     ...mindMapAllDailyOpen.map((entry:any)=>parseKpiProjectTopic(entry.admin_note)).filter(Boolean),
     "기본 흐름",
   ])).filter(Boolean) : [];
+  const mindMapShowTopics=mindMapProject ? hiddenProjectTopicIds[mindMapProject.id]!==true : true;
+  const mindMapDisplayTopicNames=mindMapShowTopics ? mindMapTopicNames : ["전체 흐름"];
   const mindMapTopicDraftKey=mindMapProject ? projectFlowDraftKey("topic",mindMapProject.id) : "";
   const mindMapWeeklyDraftKey=mindMapProject ? projectFlowDraftKey("weekly",mindMapProject.id) : "";
   const mindMapWeeklyTopicKey=mindMapProject ? projectFlowDraftKey("weekly-topic",mindMapProject.id) : "";
@@ -6503,13 +6516,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           else if(targetProject) moveKpiToProjectTopic(dragged,targetProject,topicForKpi(entry),entry.id);
           else if(draggingKpi.scope==="daily") reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);
         }:undefined}
-        onClick={()=>focusKpiEntry(entry,{preservePeriod:true})}
-        onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();focusKpiEntry(entry,{preservePeriod:true});}}}
+        onClick={()=>isAdminView?beginEditKpi(entry):focusKpiEntry(entry,{preservePeriod:true})}
+        onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();isAdminView?beginEditKpi(entry):focusKpiEntry(entry,{preservePeriod:true});}}}
       >
         <b>{entry.title}</b>
         <span className="kpi-flow-inline-meta">
           <em>{String(entry.work_date??"").slice(5)||"날짜 미정"}</em>
-          <em>{personListLabel(dailyFlowAssigneeIds(entry,weeklyOverride),"담당 미정")}</em>
+          <em>{personListLabel(projectFlowCardAssigneeIds(entry),"담당 미정")}</em>
           {entry.status==="done"&&<strong>완료</strong>}
         </span>
         {renderProjectFlowCardActions(entry)}
@@ -7409,7 +7422,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!isAdminView||!canEditKpiEntry(entry)) return null;
     return (
       <div className="kpi-flow-card-actions" onClick={event=>event.stopPropagation()}>
-        <button type="button" title={entry.status==="done"?"완료 취소":"완료"} disabled={saving} onClick={()=>updateKpiStatus(entry,entry.status==="done"?"pending":"done")}><i className={`ti ${entry.status==="done"?"ti-rotate-clockwise":"ti-check"}`} aria-hidden="true"></i></button>
+        {entry.status!=="done"&&<button type="button" title="완료" disabled={saving} onClick={()=>updateKpiStatus(entry,"done")}><i className="ti ti-check" aria-hidden="true"></i></button>}
         <button type="button" title="수정" disabled={saving} onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
         <button type="button" title="삭제" disabled={saving} onClick={()=>deleteKpiEntry(entry)}><i className="ti ti-trash" aria-hidden="true"></i></button>
       </div>
@@ -8281,15 +8294,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <b>{mindMapProject ? mindMapProject.title : "전체 프로젝트"}</b>
               <small>프로젝트를 눌러도 상단 KPI 기간은 유지되고, 이 영역에서만 세부 흐름을 확인합니다.</small>
             </div>
-            <em>{mindMapProject ? "세부 보기" : `${operatingProjectGoals.length}개 프로젝트`}</em>
+            <em>{mindMapProject ? "세부 보기" : `${projectDetailGoals.length}개 프로젝트`}</em>
           </div>
           <div className="kpi-project-detail-layout">
             <aside className="kpi-project-detail-sidebar">
               <button type="button" className={activeProjectDetailId==="all"?"active":""} onClick={()=>{setActiveProjectDetailId("all");setProjectDetailEditorOpen(false);}}>
                 <b>전체 프로젝트</b>
-                <span>{operatingProjectGoals.length}개 프로젝트</span>
+                <span>{projectDetailGoals.length}개 프로젝트</span>
               </button>
-              {operatingProjectGoals.map((goal:any)=>{
+              {projectDetailGoals.map((goal:any)=>{
                 const summary=projectSummary(goal);
                 return (
                   <button type="button" key={goal.id} className={activeProjectDetailId===goal.id?"active":""} style={kpiLinkedStyle(goal)} onClick={()=>{setActiveProjectDetailId(goal.id);if(isAdminView) hydrateProjectEditor(goal);}}>
@@ -8324,6 +8337,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   <label className={`kpi-hide-done-toggle${showDoneKpi?" active":""}`}>
                     <input type="checkbox" checked={showDoneKpi} onChange={event=>setShowDoneKpi(event.target.checked)} />
                     <span>완료 숨기기</span>
+                  </label>
+                  <label className={`kpi-hide-done-toggle${mindMapShowTopics?" active":""}`}>
+                    <input
+                      type="checkbox"
+                      checked={mindMapShowTopics}
+                      onChange={event=>setHiddenProjectTopicIds(prev=>({...prev,[mindMapProject.id]:!event.target.checked}))}
+                    />
+                    <span>주제 보기</span>
                   </label>
                   {isAdminView&&(
                     <button type="button" className="button ghost compact" onClick={()=>{hydrateProjectEditor(mindMapProject);setProjectDetailEditorOpen(open=>!open);}}>
@@ -8425,7 +8446,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   <span>주요 업무</span>
                   <span>실행 항목</span>
                 </div>
-                {isAdminView&&(
+                {isAdminView&&mindMapShowTopics&&(
                   <div className="kpi-topic-add-row">
                     <input
                       className="input"
@@ -8437,17 +8458,18 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectTopic(mindMapProject)}>주제 추가</button>
                   </div>
                 )}
-                {mindMapTopicNames.map((topic:string,topicIndex:number)=>{
-                  const topicWeekly=mindMapWeeklyGoals.filter((entry:any)=>topicForKpi(entry)===topic);
-                  const topicUnlinkedDaily=mindMapUnlinkedDaily.filter((entry:any)=>topicForKpi(entry)===topic);
-                  const weeklyDraftKey=projectFlowDraftKey("weekly",mindMapProject.id,topic);
+                {mindMapDisplayTopicNames.map((topic:string,topicIndex:number)=>{
+                  const topicWeekly=mindMapShowTopics ? mindMapWeeklyGoals.filter((entry:any)=>topicForKpi(entry)===topic) : mindMapWeeklyGoals;
+                  const topicUnlinkedDaily=mindMapShowTopics ? mindMapUnlinkedDaily.filter((entry:any)=>topicForKpi(entry)===topic) : mindMapUnlinkedDaily;
+                  const targetTopic=mindMapShowTopics ? topic : "기본 흐름";
+                  const weeklyDraftKey=projectFlowDraftKey("weekly",mindMapProject.id,targetTopic);
                   const weeklyAddOpen=projectFlowAddIsOpen(weeklyDraftKey);
                   return (
                     <article className={`kpi-topic-flow-group${dropTargetId===`topic-${topic}`?" drop-target":""}${draggingProjectTopic?.topic===topic?" dragging-topic":""}`} key={topic} style={kpiTopicStyle(mindMapProject,topic,topicIndex)}>
                       <div
                         className="kpi-topic-flow-subject"
-                        draggable={isAdminView&&!projectFlowEditingTopic}
-                        onDragStart={isAdminView&&!projectFlowEditingTopic?event=>{event.stopPropagation();setDraggingProjectTopic({projectId:mindMapProject.id,topic,index:topicIndex});event.dataTransfer.effectAllowed="move";}:undefined}
+                        draggable={isAdminView&&mindMapShowTopics&&!projectFlowEditingTopic}
+                        onDragStart={isAdminView&&mindMapShowTopics&&!projectFlowEditingTopic?event=>{event.stopPropagation();setDraggingProjectTopic({projectId:mindMapProject.id,topic,index:topicIndex});event.dataTransfer.effectAllowed="move";}:undefined}
                         onDragEnd={isAdminView?()=>{setDraggingProjectTopic(null);setDropTargetId(null);}:undefined}
                         onDragOver={(draggingProjectTopic||draggingKpi&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily"))?event=>{event.preventDefault();setDropTargetId(`topic-${topic}`);}:undefined}
                         onDragLeave={(draggingProjectTopic||draggingKpi&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily"))?()=>setDropTargetId(null):undefined}
@@ -8459,7 +8481,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                             return;
                           }
                           const entry=entries.find((item:any)=>item.id===draggingKpi?.id);
-                          updateKpiProjectTopic(entry,topic,mindMapProject);
+                          updateKpiProjectTopic(entry,targetTopic,mindMapProject);
                         }:undefined}
                       >
                         {projectFlowEditingTopic?.projectId===mindMapProject.id&&projectFlowEditingTopic.topic===topic ? (
@@ -8484,7 +8506,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           <>
                             <b>{topic}</b>
                             <span>주요 업무 {topicWeekly.length} · 실행 항목 {topicWeekly.reduce((sum:number,weekly:any)=>sum+((mindMapDailyGroups.find((group:any)=>group.weekly.id===weekly.id)?.entries??[]).length),0)+topicUnlinkedDaily.length}</span>
-                            {isAdminView&&(
+                            {isAdminView&&mindMapShowTopics&&(
                               <div className="kpi-topic-flow-actions" onClick={event=>event.stopPropagation()}>
                                 <button type="button" title="주제 수정" disabled={saving||topic==="기본 흐름"} onClick={()=>setProjectFlowEditingTopic({projectId:mindMapProject.id,topic,value:topic})}><i className="ti ti-edit" aria-hidden="true"></i></button>
                                 <button type="button" title="주제 삭제" disabled={saving||topic==="기본 흐름"} onClick={()=>deleteProjectTopic(mindMapProject,topic)}><i className="ti ti-trash" aria-hidden="true"></i></button>
@@ -8507,7 +8529,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                   event.preventDefault();
                                   event.stopPropagation();
                                   const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
-                                  if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,topic);
+                                  if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,targetTopic);
                                 }:undefined}
                               >
                                 <div
@@ -8524,14 +8546,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                     event.preventDefault();
                                     event.stopPropagation();
                                     const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
-                                    if(dragged&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily")) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,weekly.id);
+                                    if(dragged&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily")) moveKpiToWeeklyFlow(dragged,mindMapProject,targetTopic,weekly.id);
                                   }:undefined}
-                                  onClick={()=>focusKpiEntry(weekly,{preservePeriod:true})}
-                                  onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();focusKpiEntry(weekly,{preservePeriod:true});}}}
+                                  onClick={()=>isAdminView?beginEditKpi(weekly):focusKpiEntry(weekly,{preservePeriod:true})}
+                                  onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();isAdminView?beginEditKpi(weekly):focusKpiEntry(weekly,{preservePeriod:true});}}}
                                 >
                                   <b>{weekly.title}</b>
                                   <span className="kpi-flow-inline-meta">
-                                    {kpiRoleLine(weekly)&&<em>{kpiRoleLine(weekly)}</em>}
+                                    <em>{personListLabel(projectFlowCardAssigneeIds(weekly),"담당 미정")}</em>
                                     {weekly.status==="done"&&<strong>완료</strong>}
                                   </span>
                                   {renderProjectFlowCardActions(weekly)}
@@ -8546,7 +8568,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                   event.preventDefault();
                                   event.stopPropagation();
                                   const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
-                                  if(dragged) moveKpiToDailyFlow(dragged,weekly,mindMapProject,topic);
+                                  if(dragged) moveKpiToDailyFlow(dragged,weekly,mindMapProject,targetTopic);
                                 }:undefined}
                               >
                                 {dailyForWeekly.length>0 ? dailyForWeekly.map((entry:any)=>(
@@ -8562,10 +8584,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                         className="input"
                                         value={projectFlowDrafts[dailyDraftKey]??""}
                                         onChange={event=>setProjectFlowDraft(dailyDraftKey,event.target.value)}
-                                        onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectDaily(weekly,topic,mindMapProject.id,weekly.id))}
+                                        onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectDaily(weekly,targetTopic,mindMapProject.id,weekly.id))}
                                         placeholder="실행 항목 입력"
                                       />
-                                      <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectDaily(weekly,topic,mindMapProject.id,weekly.id)}>추가</button>
+                                      <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectDaily(weekly,targetTopic,mindMapProject.id,weekly.id)}>추가</button>
                                       <button type="button" className="button ghost compact" disabled={saving} onClick={()=>closeProjectFlowAdd(dailyDraftKey)}>취소</button>
                                     </div>
                                   ) : (
@@ -8587,7 +8609,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                 event.preventDefault();
                                 event.stopPropagation();
                                 const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
-                                if(dragged) moveKpiToProjectTopic(dragged,mindMapProject,topic);
+                                if(dragged) moveKpiToProjectTopic(dragged,mindMapProject,targetTopic);
                               }:undefined}
                             >
                               {topicUnlinkedDaily.map((entry:any)=>(
@@ -8608,10 +8630,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                     className="input"
                                     value={projectFlowDrafts[weeklyDraftKey]??""}
                                     onChange={event=>setProjectFlowDraft(weeklyDraftKey,event.target.value)}
-                                    onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectWeekly(mindMapProject,topic,topic))}
+                                    onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectWeekly(mindMapProject,targetTopic,targetTopic))}
                                     placeholder={`${topic} 주요 업무 입력`}
                                   />
-                                  <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectWeekly(mindMapProject,topic,topic)}>추가</button>
+                                  <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectWeekly(mindMapProject,targetTopic,targetTopic)}>추가</button>
                                   <button type="button" className="button ghost compact" disabled={saving} onClick={()=>closeProjectFlowAdd(weeklyDraftKey)}>취소</button>
                                 </div>
                               ) : (
@@ -8629,8 +8651,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             </>
           ) : (
             <div className="kpi-project-overview-list">
-              {operatingProjectGoals.length===0&&<p className="kpi-ops-empty">월간 KPI를 만들면 프로젝트별 세부 흐름이 여기에 표시됩니다.</p>}
-              {operatingProjectGoals.map((goal:any)=>(
+              {projectDetailGoals.length===0&&<p className="kpi-ops-empty">월간 KPI를 만들면 프로젝트별 세부 흐름이 여기에 표시됩니다.</p>}
+              {projectDetailGoals.map((goal:any)=>(
                 <button type="button" key={goal.id} style={kpiLinkedStyle(goal)} onClick={()=>setActiveProjectDetailId(goal.id)}>
                   <b>{goal.title}</b>
                   <span>{projectMonthPeriodLabel(goal)} · 진행 {projectSummary(goal).rate}%</span>
