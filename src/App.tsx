@@ -5516,9 +5516,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const scoreDailyEntries=scoreEntryList.filter((entry:any)=>entry.scope==="daily");
   const dailyEntries=entries.filter((entry:any)=>entry.scope==="daily");
   const allWeeklyEntries=entries.filter((entry:any)=>entry.scope==="weekly");
-  const monthDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=monthStart&&entry.work_date<=monthEnd);
-  const selectedDayEntries=dailyEntries.filter((entry:any)=>entry.work_date===selectedDailyDate);
-  const weekDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
+  const scheduledDailyEntries=dailyEntries.filter((entry:any)=>!kpiDateIsUnknown(entry));
+  const monthDailyEntries=scheduledDailyEntries.filter((entry:any)=>entry.work_date>=monthStart&&entry.work_date<=monthEnd);
+  const selectedDayEntries=scheduledDailyEntries.filter((entry:any)=>entry.work_date===selectedDailyDate);
+  const weekDailyEntries=scheduledDailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&kpiProjectOverlapsMonth(entry,month));
   const parentGoalOptions=(list:any[])=>isAdminView
@@ -5622,7 +5623,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return /^\d{4}-\d{2}-\d{2}$/.test(date)&&date>=start&&date<=end;
   }
   function scorableDailyKpis(list:any[]) {
-    return list.filter((entry:any)=>!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry));
+    return list.filter((entry:any)=>!kpiDateIsUnknown(entry)&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry));
   }
   function weeklyProgress(goal:any,range={start:weekStart,end:weekEnd}) {
     const dl=scorableDailyKpis(dailyEntries.filter((entry:any)=>entry.parent_id===goal.id&&kpiEntryWithinRange(entry,range.start,range.end)));
@@ -5722,6 +5723,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const periodScoreEntries=scoreDailyEntries.filter((entry:any)=>
     entry.work_date>=kpiViewStart
     && entry.work_date<=kpiViewEnd
+    && !kpiDateIsUnknown(entry)
     && !isDailyRoutineEntry(entry)
     && !isNextKpiDraftEntry(entry)
     && !isNextKpiDeferredEntry(entry)
