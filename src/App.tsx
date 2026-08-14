@@ -5842,15 +5842,6 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function focusKpiEntry(entry:any, options?:{preservePeriod?:boolean; scrollToBoard?:boolean}) {
     const projectId=kpiProjectId(entry)??(entry?.scope==="monthly"?entry.id:null);
     if(projectId) setActiveProjectDetailId(projectId);
-    if(!options?.preservePeriod) {
-      setFocusProjectId(projectId??"all");
-      if(entry?.work_date&&String(entry.work_date).length>=10) {
-        const date=String(entry.work_date).slice(0,10);
-        setMonth(date.slice(0,7));
-        setQuickDailyDate(date);
-      }
-      setKpiView(entry?.scope==="monthly"?"monthly":entry?.scope==="weekly"?"weekly":"daily");
-    }
     setHighlightKpiId(entry?.id??null);
     window.setTimeout(()=>{
       if(options?.scrollToBoard) {
@@ -7092,8 +7083,6 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         const weeklyResult=await insertKpiEntryRows(weeklyRows);
         if(weeklyResult.error) throw weeklyResult.error;
       }
-      setMonth(start.slice(0,7));
-      setFocusProjectId(savedProjectId||"all");
       setActiveProjectDetailId(savedProjectId||"all");
       setProjectDetailEditorOpen(true);
       setProjectEditorPlanTopic(selectedPlanTopic);
@@ -7722,10 +7711,6 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         result=await supabase.from("kpi_entries").update({work_date:workDate,updated_at:new Date().toISOString()}).eq("id",entry.id);
       }
       if(result.error) throw result.error;
-      if(entry.scope==="daily"&&!dateUnknown) {
-        setMonth(workDate.slice(0,7));
-        setQuickDailyDate(workDate);
-      }
       await load();
       setMessage("데일리 KPI 날짜를 변경했습니다.");
     } catch(e:any) {
@@ -8142,7 +8127,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   key={goal.id}
                   className={`kpi-project-editor-item ${projectEditorId===goal.id?"active":""}`}
                   style={kpiLinkedStyle(goal)}
-                  onClick={()=>{setFocusProjectId(goal.id);hydrateProjectEditor(goal);}}
+                  onClick={()=>hydrateProjectEditor(goal)}
                 >
                   <b>{goal.title}</b>
                   <span>{projectMonthPeriodLabel(goal)}</span>
@@ -8244,7 +8229,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       type="button"
                       className={`kpi-flow-node root${highlightKpiId===projectEditorFlowProject.id?" kpi-focus-pulse":""}`}
                       data-operating-kpi-id={projectEditorFlowProject.id}
-                      onClick={()=>focusKpiEntry(projectEditorFlowProject)}
+                      onClick={()=>focusKpiEntry(projectEditorFlowProject,{preservePeriod:true})}
                     >
                       <b>{projectEditorFlowProject.title}</b>
                       <span>기간 {projectMonthPeriodLabel(projectEditorFlowProject)}</span>
@@ -8261,7 +8246,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       onDragOver={draggingKpi?.scope==="weekly"?event=>{event.preventDefault();setDropTargetId(projectEditorFlowProject.id);}:undefined}
                       onDragLeave={draggingKpi?.scope==="weekly"?()=>setDropTargetId(null):undefined}
                       onDrop={draggingKpi?.scope==="weekly"?event=>{event.preventDefault();linkKpi(draggingKpi.id,projectEditorFlowProject.id);}:undefined}
-                      onClick={()=>focusKpiEntry(projectEditorFlowProject)}
+                      onClick={()=>focusKpiEntry(projectEditorFlowProject,{preservePeriod:true})}
                     >
                       <small>월간 목표</small>
                       <b>{projectEditorFlowProject.title}</b>
@@ -8286,7 +8271,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           if(draggingKpi.scope==="weekly") reorderKpi(draggingKpi.id,draggingKpi.sortOrder,weekly.id,weekly.sort_order??0);
                           else if(draggingKpi.scope==="daily") linkKpi(draggingKpi.id,weekly.id);
                         }:undefined}
-                        onClick={()=>focusKpiEntry(weekly)}
+                        onClick={()=>focusKpiEntry(weekly,{preservePeriod:true})}
                       >
                         <small>{projectEditorFlowProject.title}</small>
                         <b>{weekly.title}</b>
@@ -8977,7 +8962,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   {projectListGoals.length>0 ? projectListGoals.map((goal:any)=>{
                     const pct=monthlyProgress(goal);
                     return (
-                      <button type="button" key={goal.id} className="kpi-project-card" style={kpiLinkedStyle(goal)} onClick={()=>{setFocusProjectId(goal.id);setActiveProjectDetailId(goal.id);if(isAdminView) hydrateProjectEditor(goal);}}>
+                      <button type="button" key={goal.id} className="kpi-project-card" style={kpiLinkedStyle(goal)} onClick={()=>{setActiveProjectDetailId(goal.id);if(isAdminView) hydrateProjectEditor(goal);}}>
                         <b>{goal.title}</b>
                         <span>{projectMonthPeriodLabel(goal)}</span>
                         <em>{pct}%</em>
