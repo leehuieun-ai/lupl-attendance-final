@@ -852,6 +852,10 @@ function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequ
   return compEnd&&compEnd.getTime()>target.getTime()?compEnd:target;
 }
 function dateFromIso(iso: string) { return new Date(`${iso}T00:00:00`); }
+function isStrictIsoDate(value?: string | null) {
+  const text = String(value ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) && isoDate(dateFromIso(text)) === text;
+}
 function addLocalDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate()+n); return x; }
 function isoDate(d: Date) { const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,"0"); const dd=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${dd}`; }
 function dayKeyFromDate(d: Date) { return ["sun","mon","tue","wed","thu","fri","sat"][d.getDay()]; }
@@ -1987,7 +1991,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
   }
   function safeIsoDate(value:any) {
     const text=String(value??"").slice(0,10);
-    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+    return isStrictIsoDate(text) ? text : "";
   }
   function assistantProjectPeriodNote(payload:any) {
     const start=safeIsoDate(payload.project_start);
@@ -5545,8 +5549,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   function projectVisibleToEmployee(project:any,employeeId?:string|null,list:any[]=entries) {
     if(!project||!employeeId) return false;
-    if([project?.employee_id,project?.mentor_employee_id,...projectConnectedEmployeeIds(project)].filter(Boolean).includes(employeeId)) return true;
-    return projectLinkedEntries(project,list).some((entry:any)=>kpiEntryAssigneeIds(entry).includes(employeeId));
+    const directIds=[project?.employee_id,project?.mentor_employee_id,...projectConnectedEmployeeIds(project)].filter(Boolean);
+    const directlyAssigned=directIds.includes(employeeId);
+    const linkedAssigned=projectLinkedEntries(project,list)
+      .filter((entry:any)=>entry.id!==project.id&&kpiEntryAssigneeIds(entry).includes(employeeId));
+    if(isAdminView) return directlyAssigned||linkedAssigned.length>0;
+    if(linkedAssigned.length>0) return linkedAssigned.some((entry:any)=>entry.status!=="done"||kpiDateIsUnknown(entry));
+    return directlyAssigned&&(project.status!=="done"||kpiDateIsUnknown(project));
   }
   function canManageKpi(entry:any) {
     if(isAdminView) return true;
@@ -6847,7 +6856,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!title) return setMessage("프로젝트명을 입력해주세요.");
     const start=projectEditorDraft.projectStart;
     const end=projectEditorDraft.projectEnd;
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(start)||!/^\d{4}-\d{2}-\d{2}$/.test(end)) return setMessage("프로젝트 기간을 날짜 형식으로 입력해주세요.");
+    if(!isStrictIsoDate(start)||!isStrictIsoDate(end)) return setMessage("프로젝트 기간을 실제 존재하는 날짜로 입력해주세요. 예: 2026-11-30");
     if(end<start) return setMessage("프로젝트 종료일은 시작일 이후여야 합니다.");
     const owner=employeeMap.get(projectEditorDraft.ownerId)??employees.find((employee:any)=>employee.id===projectEditorDraft.ownerId);
     const connectedIds=sortKpiEmployeeIds(projectEditorDraft.connectedEmployeeIds);
@@ -6883,15 +6892,23 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(savedProjectId) {
         let result=await supabase.from("kpi_entries").update(projectPayload).eq("id",savedProjectId);
         if(result.error&&optionalKpiColumnError(result.error)){
-          const {project_start,project_end,admin_note,mentor_employee_id,updated_by,sort_order,...fallbackPayload}=projectPayload as any;
+          const {project_start,project_end,mentor_employee_id,updated_by,sort_order,...fallbackPayload}=projectPayload as any;
           result=await supabase.from("kpi_entries").update(fallbackPayload).eq("id",savedProjectId);
+          if(result.error&&optionalKpiColumnError(result.error)){
+            const {admin_note,...minimalPayload}=fallbackPayload;
+            result=await supabase.from("kpi_entries").update(minimalPayload).eq("id",savedProjectId);
+          }
         }
         if(result.error) throw result.error;
       } else {
         let result=await supabase.from("kpi_entries").insert(projectPayload).select("id").single();
         if(result.error&&optionalKpiColumnError(result.error)){
-          const {project_start,project_end,admin_note,mentor_employee_id,updated_by,...fallbackPayload}=projectPayload as any;
+          const {project_start,project_end,mentor_employee_id,updated_by,...fallbackPayload}=projectPayload as any;
           result=await supabase.from("kpi_entries").insert(fallbackPayload).select("id").single();
+          if(result.error&&optionalKpiColumnError(result.error)){
+            const {admin_note,...minimalPayload}=fallbackPayload;
+            result=await supabase.from("kpi_entries").insert(minimalPayload).select("id").single();
+          }
         }
         if(result.error) throw result.error;
         savedProjectId=result.data?.id;
@@ -6949,6 +6966,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setProjectEditorPlanTopic(selectedPlanTopic);
       await load();
       setProjectEditorId(savedProjectId||"");
+      setProjectEditorDraft({
+        title,
+        projectStart:start,
+        projectEnd:end,
+        ownerId:projectEditorDraft.ownerId,
+        connectedEmployeeIds:connectedIds,
+        notionUrl:projectEditorDraft.notionUrl,
+        adminNote:projectEditorDraft.adminNote,
+      });
       setProjectEditorWeeklyPlan("");
       const assignedWeeklyCount=weeklyRows.length+weeklyUpdates.length;
       setMessage(assignedWeeklyCount>0 ? `프로젝트를 저장했고 "${selectedPlanTopic}" 주제로 주간 업무 ${assignedWeeklyCount}건을 배정했습니다.` : "프로젝트 정보를 저장했습니다.");
