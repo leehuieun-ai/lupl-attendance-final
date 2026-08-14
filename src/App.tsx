@@ -5156,10 +5156,120 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return openProjectFlowAdds[key]===true || Boolean(projectFlowDrafts[key]);
   }
   function handleProjectFlowDraftKeyDown(event:any,submit:()=>void) {
-    if(event.key==="Enter"&&!event.shiftKey) {
+    if(event.key==="Enter"&&(event.ctrlKey||event.metaKey)) {
       event.preventDefault();
       submit();
     }
+  }
+  function projectFlowLinesFromText(text:string) {
+    const seen=new Set<string>();
+    return String(text??"")
+      .split(/\r?\n|[,，]/)
+      .map(line=>line.replace(/^\s*(?:[-*]|\d+[.)])\s*/,"").trim())
+      .filter(Boolean)
+      .filter(line=>{
+        const key=line.replace(/\s+/g," ").toLowerCase();
+        if(seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0,30);
+  }
+  function parseProjectFlowDailyLine(line:string) {
+    const raw=String(line??"").replace(/^\s*(?:[-*]|\d+[.)])\s*/,"").trim();
+    const match=raw.match(/^(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[./-]\d{1,2})(?:\s*주차)?\s*(?:[·:)\-]\s*)?(.*)$/);
+    if(!match) return {title:raw,workDate:selectedDailyDate,dateUnknown:true};
+    const token=match[1];
+    const rest=String(match[2]??"").trim();
+    let date="";
+    if(/^\d{4}-\d{1,2}-\d{1,2}$/.test(token)) {
+      const [y,m,d]=token.split("-").map(Number);
+      date=`${String(y).padStart(4,"0")}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    } else {
+      const [m,d]=token.split(/[./-]/).map(Number);
+      date=`${currentYear}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    }
+    if(!isStrictIsoDate(date)) return {title:raw,workDate:selectedDailyDate,dateUnknown:true};
+    return {title:rest||raw,workDate:date,dateUnknown:false};
+  }
+  function projectFlowAssigneeIdsForInsert(project:any,source:any) {
+    const sourceIds=source?kpiEntryAssigneeIds(source):[];
+    const projectIds=project?projectAssignedEmployeeIds(project):[];
+    return sortKpiEmployeeIds(sourceIds.length>0 ? sourceIds : projectIds);
+  }
+  function projectFlowInsertDuplicateKey(scope:"weekly"|"daily",parentId:string|null,title:string,workDate:string,dateUnknown:boolean,assigneeIds:string[]) {
+    return [
+      scope,
+      parentId??"",
+      title.trim().replace(/\s+/g," ").toLowerCase(),
+      dateUnknown ? "date-unknown" : workDate,
+      sortKpiEmployeeIds(assigneeIds).join(","),
+    ].join("|");
+  }
+  async function insertProjectFlowItems(
+    scope:"weekly"|"daily",
+    items:{title:string;workDate?:string;dateUnknown?:boolean}[],
+    options:{project:any;weekly?:any;topic:string;sortOrder?:number;allowInternalDuplicates?:boolean}
+  ) {
+    const cleanItems=items
+      .map(item=>({
+        title:String(item.title??"").trim(),
+        workDate:String(item.workDate??(scope==="weekly"?weekStart:selectedDailyDate)).slice(0,10),
+        dateUnknown:scope==="daily"&&item.dateUnknown===true,
+      }))
+      .filter(item=>item.title);
+    if(cleanItems.length===0) return 0;
+    const parentId=scope==="weekly" ? options.project.id : options.weekly?.id;
+    if(!parentId) throw new Error(scope==="weekly"?"프로젝트를 찾지 못했습니다.":"실행 항목을 연결할 주요 업무를 먼저 선택해주세요.");
+    const assigneeIds=projectFlowAssigneeIdsForInsert(options.project,scope==="daily"?options.weekly:options.project);
+    const connectedIds=assigneeIds.slice(1);
+    const existingKeys=new Set(entries
+      .filter((entry:any)=>entry.scope===scope&&entry.parent_id===parentId)
+      .map((entry:any)=>projectFlowInsertDuplicateKey(
+        scope,
+        parentId,
+        entry.title,
+        String(entry.work_date??"").slice(0,10),
+        kpiDateIsUnknown(entry),
+        kpiEntryAssigneeIds(entry),
+      ))
+    );
+    const seenKeys=new Set<string>();
+    const baseSortOrder=Number.isFinite(Number(options.sortOrder)) ? Number(options.sortOrder) : entries.filter((entry:any)=>entry.scope===scope&&entry.parent_id===parentId).length+1;
+    const payloads=cleanItems.flatMap((item,index)=>{
+      const key=projectFlowInsertDuplicateKey(scope,parentId,item.title,item.workDate,item.dateUnknown,assigneeIds);
+      if(existingKeys.has(key)) return [];
+      if(!options.allowInternalDuplicates&&seenKeys.has(key)) return [];
+      seenKeys.add(key);
+      const topicNote=withKpiProjectTopicMeta("",options.topic||"기본 흐름");
+      const assigneeNote=withKpiConnectedEmployeesMeta(topicNote,connectedIds);
+      const adminNote=scope==="daily" ? withKpiDateUnknownMeta(assigneeNote,item.dateUnknown) : assigneeNote;
+      return [{
+        employee_id:assigneeIds[0]??null,
+        employee_name:assigneeIds[0] ? personName(assigneeIds[0]) : "전체",
+        parent_id:parentId,
+        scope,
+        work_date:item.workDate,
+        title:item.title,
+        description:null,
+        source_rnr_entry_id:null,
+        due_date:scope==="daily" ? (item.dateUnknown ? null : item.workDate) : null,
+        project_start:null,
+        project_end:null,
+        mentor_employee_id:null,
+        admin_note:adminNote,
+        status:"pending",
+        sort_order:baseSortOrder+index,
+        is_public:true,
+        is_active:true,
+        created_by:currentEmployee.id,
+        updated_by:currentEmployee.id,
+      }];
+    });
+    if(payloads.length===0) return 0;
+    const result=await insertKpiEntryRows(payloads);
+    if(result.error) throw result.error;
+    return payloads.length;
   }
   async function moveKpiIntoProjectStage(entryId:string,stage:"project"|"topic"|"weekly"|"daily",project:any,topic?:string,weeklyTarget?:any) {
     if(saving||!project?.id) return;
@@ -7337,21 +7447,20 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!project?.id) return;
     const draftKey=projectFlowDraftKey("weekly",project.id,draftExtra);
     const topicKey=projectFlowDraftKey("weekly-topic",project.id);
-    const title=(projectFlowDrafts[draftKey]??"").trim();
+    const lines=projectFlowLinesFromText(projectFlowDrafts[draftKey]??"");
     const targetTopic=(topic||projectFlowDrafts[topicKey]||"기본 흐름").trim();
-    if(!title) return setMessage("추가할 주간 할 일을 입력해주세요.");
+    if(lines.length===0) return setMessage("추가할 주요 업무를 입력해주세요.");
     setSaving(true); setMessage("");
     try {
-      await insertKpiRows("weekly",[title.trim()],{
-        parent_id:project.id,
-        work_date:weekStart,
-        admin_note:withKpiProjectTopicMeta("",targetTopic),
-        sort_order:nextProjectFlowSortOrder(projectWeeklyEntriesForTopic(project,targetTopic)),
+      const inserted=await insertProjectFlowItems("weekly",lines.map(title=>({title,workDate:weekStart})),{
+        project,
+        topic:targetTopic,
+        sortOrder:nextProjectFlowSortOrder(projectWeeklyEntriesForTopic(project,targetTopic)),
       });
       clearProjectFlowDraft(draftKey);
       setOpenProjectFlowAdds(prev=>({...prev,[draftKey]:false}));
       await load();
-      setMessage("주간 할 일을 추가했습니다.");
+      setMessage(inserted>0 ? `주요 업무 ${inserted}건을 추가했습니다.` : "같은 주요 업무가 이미 있어 추가하지 않았습니다.");
     } catch(e:any) {
       setMessage(e.message);
     } finally {
@@ -7362,20 +7471,54 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!weekly?.id) return;
     const rootProjectId=projectId||kpiProjectId(weekly)||weekly.id;
     const draftKey=projectFlowDraftKey("daily",rootProjectId,draftExtra);
-    const title=(projectFlowDrafts[draftKey]??"").trim();
-    if(!title) return setMessage("추가할 일간 할 일을 입력해주세요.");
+    const lines=projectFlowLinesFromText(projectFlowDrafts[draftKey]??"");
+    if(lines.length===0) return setMessage("추가할 실행 항목을 입력해주세요.");
+    const project=entries.find((entry:any)=>entry.id===rootProjectId)??kpiProjectFromList(weekly);
+    const items=lines.map(line=>parseProjectFlowDailyLine(line));
     setSaving(true); setMessage("");
     try {
-      await insertKpiRows("daily",[title.trim()],{
-        parent_id:weekly.id,
-        work_date:selectedDailyDate,
-        admin_note:withKpiProjectTopicMeta("",topic||parseKpiProjectTopic(weekly.admin_note)||"기본 흐름"),
-        sort_order:nextProjectFlowSortOrder(projectDailyEntriesForWeekly(weekly)),
+      const inserted=await insertProjectFlowItems("daily",items,{
+        project,
+        weekly,
+        topic:topic||parseKpiProjectTopic(weekly.admin_note)||"기본 흐름",
+        sortOrder:nextProjectFlowSortOrder(projectDailyEntriesForWeekly(weekly)),
       });
       clearProjectFlowDraft(draftKey);
       setOpenProjectFlowAdds(prev=>({...prev,[draftKey]:false}));
       await load();
-      setMessage("일간 할 일을 추가했습니다.");
+      setMessage(inserted>0 ? `실행 항목 ${inserted}건을 추가했습니다.` : "같은 실행 항목이 이미 있어 추가하지 않았습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function repeatProjectDaily(weekly:any,topic:string,projectId?:string,draftExtra="") {
+    if(!weekly?.id) return;
+    const rootProjectId=projectId||kpiProjectId(weekly)||weekly.id;
+    const draftKey=projectFlowDraftKey("daily",rootProjectId,draftExtra);
+    const lines=projectFlowLinesFromText(projectFlowDrafts[draftKey]??"");
+    const parsed=lines[0] ? parseProjectFlowDailyLine(lines[0]) : null;
+    const title=parsed?.title?.trim();
+    if(!title) return setMessage("반복 생성할 실행 항목명을 먼저 입력해주세요.");
+    const project=entries.find((entry:any)=>entry.id===rootProjectId)??kpiProjectFromList(weekly);
+    setSaving(true); setMessage("");
+    try {
+      const inserted=await insertProjectFlowItems("daily",Array.from({length:3},()=>({
+        title,
+        workDate:selectedDailyDate,
+        dateUnknown:true,
+      })),{
+        project,
+        weekly,
+        topic:topic||parseKpiProjectTopic(weekly.admin_note)||"기본 흐름",
+        sortOrder:nextProjectFlowSortOrder(projectDailyEntriesForWeekly(weekly)),
+        allowInternalDuplicates:true,
+      });
+      clearProjectFlowDraft(draftKey);
+      setOpenProjectFlowAdds(prev=>({...prev,[draftKey]:false}));
+      await load();
+      setMessage(inserted>0 ? `같은 실행 항목 ${inserted}건을 날짜 미정으로 만들었습니다. 각 항목에서 날짜를 정해주세요.` : "같은 날짜 미정 실행 항목이 이미 있어 추가하지 않았습니다.");
     } catch(e:any) {
       setMessage(e.message);
     } finally {
@@ -8655,14 +8798,17 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                 {isAdminView&&(
                                   projectFlowAddIsOpen(dailyDraftKey) ? (
                                     <div className="kpi-topic-inline-add">
-                                      <input
-                                        className="input"
+                                      <textarea
+                                        className="input kpi-topic-paste-input"
+                                        rows={2}
                                         value={projectFlowDrafts[dailyDraftKey]??""}
                                         onChange={event=>setProjectFlowDraft(dailyDraftKey,event.target.value)}
                                         onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectDaily(weekly,topic,mindMapProject.id,weekly.id))}
-                                        placeholder="실행 항목 입력"
+                                        placeholder="실행 항목 입력. 줄마다 붙여넣으면 여러 건이 생성됩니다."
                                       />
                                       <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectDaily(weekly,topic,mindMapProject.id,weekly.id)}>추가</button>
+                                      <button type="button" className="button ghost compact" disabled={saving} onClick={()=>addProjectDaily(weekly,topic,mindMapProject.id,weekly.id)}>붙여넣기</button>
+                                      <button type="button" className="button ghost compact" disabled={saving} onClick={()=>repeatProjectDaily(weekly,topic,mindMapProject.id,weekly.id)}>같은 항목 3개</button>
                                       <button type="button" className="button ghost compact" disabled={saving} onClick={()=>closeProjectFlowAdd(dailyDraftKey)}>취소</button>
                                     </div>
                                   ) : (
@@ -8701,14 +8847,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                             <div className="kpi-topic-weekly-cell">
                               {weeklyAddOpen ? (
                                 <div className="kpi-topic-inline-add">
-                                  <input
-                                    className="input"
+                                  <textarea
+                                    className="input kpi-topic-paste-input"
+                                    rows={2}
                                     value={projectFlowDrafts[weeklyDraftKey]??""}
                                     onChange={event=>setProjectFlowDraft(weeklyDraftKey,event.target.value)}
                                     onKeyDown={event=>handleProjectFlowDraftKeyDown(event,()=>addProjectWeekly(mindMapProject,topic,topic))}
-                                    placeholder={`${topic} 주요 업무 입력`}
+                                    placeholder={`${topic} 주요 업무 입력. 줄마다 붙여넣으면 여러 건이 생성됩니다.`}
                                   />
                                   <button type="button" className="button compact" disabled={saving} onClick={()=>addProjectWeekly(mindMapProject,topic,topic)}>추가</button>
+                                  <button type="button" className="button ghost compact" disabled={saving} onClick={()=>addProjectWeekly(mindMapProject,topic,topic)}>붙여넣기</button>
                                   <button type="button" className="button ghost compact" disabled={saving} onClick={()=>closeProjectFlowAdd(weeklyDraftKey)}>취소</button>
                                 </div>
                               ) : (
@@ -8890,11 +9038,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             <div className="modal-header"><h2 className="card-title" style={{margin:0}}>KPI 수정</h2><button className="modal-close" onClick={()=>setEditingKpi(null)}>×</button></div>
             <div className="form-row"><label className="label">내용</label><input className="input" value={editKpiDraft.title} onChange={e=>setEditKpiDraft({...editKpiDraft,title:e.target.value})} /></div>
             <div className="form-row">
-              <label className="label">구분 (이동)</label>
+              <label className="label">이동 위치</label>
               <select className="select" value={editKpiDraft.scope} onChange={e=>setEditKpiDraft({...editKpiDraft,scope:e.target.value as "daily"|"weekly"|"monthly",parentId:""})}>
-                <option value="monthly">월간 목표</option>
-                <option value="weekly">주간 목표</option>
-                <option value="daily">데일리</option>
+                <option value="monthly">월간 프로젝트</option>
+                <option value="weekly">주요 업무</option>
+                <option value="daily">실행 항목</option>
               </select>
             </div>
             <div className="form-row">
@@ -8915,7 +9063,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             )}
             {editKpiDraft.scope==="weekly"&&(
               <div className="form-row">
-                <label className="label">연결 월간 KPI</label>
+                <label className="label">연결 프로젝트</label>
                 <select className="select" value={editKpiDraft.parentId} onChange={e=>setEditKpiDraft({...editKpiDraft,parentId:e.target.value})}>
                   <option value="">연결 없음</option>
                   {quickMonthlyGoals.map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
@@ -8924,7 +9072,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             )}
             {editKpiDraft.scope==="daily"&&(
               <div className="form-row">
-                <label className="label">연결 주간 KPI</label>
+                <label className="label">연결 주요 업무</label>
                 <select className="select" value={editKpiDraft.parentId} onChange={e=>setEditKpiDraft({...editKpiDraft,parentId:e.target.value})}>
                   <option value="">연결 없음</option>
                   {editedDailyWeeklyGoals().map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}

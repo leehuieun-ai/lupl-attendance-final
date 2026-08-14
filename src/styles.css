@@ -3719,6 +3719,12 @@ body { overflow-x: hidden; }
   border-radius: 7px;
   font-size: 13px;
 }
+.kpi-topic-inline-add .kpi-topic-paste-input {
+  min-height: 44px;
+  resize: vertical;
+  line-height: 1.35;
+  padding-top: 10px;
+}
 .kpi-topic-flow-group {
   min-width: 0;
   display: grid;
@@ -4088,7 +4094,7 @@ body { overflow-x: hidden; }
 .kpi-topic-inline-add {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0,1fr) auto auto;
+  grid-template-columns: minmax(0,1fr) repeat(4,auto);
   gap: 7px;
   align-items: center;
 }
