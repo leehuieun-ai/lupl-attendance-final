@@ -6542,8 +6542,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       notionUrl:project?projectNotionUrl(project):"",
       adminNote:project?stripKpiAdminMeta(project.admin_note??""):"",
     });
-    setProjectEditorWeeklyPlan("");
     setProjectEditorPlanTopic(topics[0]??"기본 흐름");
+    const plan=project
+      ? uniqueKpiLines(allWeeklyEntries
+          .filter((entry:any)=>entry.parent_id===project.id)
+          .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0))
+          .map((entry:any)=>entry.title))
+          .join("\n")
+      : "";
+    setProjectEditorWeeklyPlan(plan);
   }
   useEffect(()=>{
     if(!isAdminView||projectEditorId||operatingProjectGoals.length===0) return;
@@ -6685,6 +6692,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setFocusProjectId(savedProjectId||"all");
       setActiveProjectDetailId(savedProjectId||"all");
       setProjectDetailEditorOpen(true);
+      setProjectEditorPlanTopic(selectedPlanTopic);
       await load();
       setProjectEditorId(savedProjectId||"");
       setProjectEditorWeeklyPlan("");
@@ -6927,7 +6935,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(error) throw error;
       clearProjectFlowDraft(draftKey);
       setOpenProjectFlowAdds(prev=>({...prev,[draftKey]:false}));
-      setProjectEditorPlanTopic(topic);
+      setProjectEditorPlanTopic(topic.trim());
       setActiveProjectDetailId(project.id);
       setEntries(prev=>prev.map((entry:any)=>entry.id===project.id ? {...entry,admin_note:nextAdminNote,updated_at:new Date().toISOString()} : entry));
       await load();
@@ -7915,8 +7923,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 onDragLeave={draggingKpi&&isAdminView?()=>setDropTargetId(null):undefined}
                 onDrop={draggingKpi&&isAdminView?event=>{
                   event.preventDefault();
+                  event.stopPropagation();
                   const entry=entries.find((item:any)=>item.id===draggingKpi.id);
-                  moveKpiIntoProjectStage(draggingKpi.id,"weekly",mindMapProject,topicForKpi(entry)||mindMapTopicNames[0]||"기본 흐름");
+                  moveKpiIntoProjectStage(draggingKpi.id,"weekly",mindMapProject,topicForKpi(entry)||projectEditorPlanTopic||"기본 흐름");
                 }:undefined}
               >
                 <div>
@@ -7990,14 +7999,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       <small>줄마다 적고 완료를 누르면 연결 직원에게 주간 KPI로 배정됩니다.</small>
                     </div>
                     <div className="kpi-project-plan-toolbar">
-                      <select
-                        className="select compact"
-                        value={projectEditorPlanTopic}
-                        onChange={event=>setProjectEditorPlanTopic(event.target.value)}
-                        aria-label="AI 초안 주제"
-                      >
-                        {projectPlanTopicOptions(mindMapProject).map((topic:string)=><option key={topic} value={topic}>{topic}</option>)}
-                      </select>
+                      <label className="kpi-project-plan-topic-select">
+                        <span>주제</span>
+                        <select value={projectEditorPlanTopic} onChange={event=>setProjectEditorPlanTopic(event.target.value)}>
+                          {projectPlanTopicOptions(mindMapProject).map((topic:string)=><option key={topic} value={topic}>{topic}</option>)}
+                        </select>
+                      </label>
                       <button className="button ghost compact" disabled={saving} onClick={suggestProjectWeeklyPlan}>
                         <i className="ti ti-sparkles" aria-hidden="true"></i>AI 초안
                       </button>
