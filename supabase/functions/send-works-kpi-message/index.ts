@@ -176,6 +176,15 @@ function employeeIdsFromKpiNote(note: string | null | undefined) {
   return Array.from(new Set(String(note ?? "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig) ?? []));
 }
 
+function kpiAssignedToEmployee(item: any, employeeId: string) {
+  if (!item || !employeeId) return false;
+  if (item.employee_id === employeeId || item.mentor_employee_id === employeeId) return true;
+  const connectedEmployeeIds = employeeIdsFromKpiNote(item.admin_note);
+  if (connectedEmployeeIds.includes(employeeId)) return true;
+  const hasExplicitAssignee = !!item.employee_id || !!item.mentor_employee_id || connectedEmployeeIds.length > 0;
+  return !hasExplicitAssignee && item.created_by === employeeId;
+}
+
 function worksChannelIdFor(eventType: WorksEventType) {
   if (eventType.startsWith("leave_")) return env("NAVER_WORKS_SCHEDULE_CHANNEL_ID");
   return env("NAVER_WORKS_KPI_CHANNEL_ID");
@@ -427,10 +436,9 @@ Deno.serve(async (req) => {
 
     const workDate = kstParts(log.check_in_time).stamp;
     const isoDate = `20${workDate.slice(0, 2)}-${workDate.slice(2, 4)}-${workDate.slice(4, 6)}`;
-    const { data: kpis } = await userClient
+    const { data: kpis } = await serviceClient
       .from("kpi_entries")
-      .select("id, title, status, sort_order, admin_note")
-      .or(`employee_id.eq.${employee.id},employee_id.is.null`)
+      .select("id, title, status, sort_order, admin_note, employee_id, mentor_employee_id, created_by")
       .eq("work_date", isoDate)
       .eq("scope", "daily")
       .eq("is_active", true)
@@ -440,6 +448,8 @@ Deno.serve(async (req) => {
       String(item.title ?? "").trim() !== "기본 데일리 업무"
       && !String(item.admin_note ?? "").includes("[next-kpi-draft]")
       && !String(item.admin_note ?? "").includes("[next-kpi-deferred]")
+      && !String(item.admin_note ?? "").includes("[kpi-date-unknown]")
+      && kpiAssignedToEmployee(item, employee.id)
     );
     const message = buildMessage(eventType, employee.name, log, visibleKpis);
     const channelId = worksChannelIdFor(eventType);
