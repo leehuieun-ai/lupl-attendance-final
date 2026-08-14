@@ -5293,6 +5293,26 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function parseKpiProjectTopic(note?:string|null) {
     return parseKpiProjectTopics(note)[0]??"";
   }
+  function kpiDateIsUnknown(entry:any) {
+    return /\[kpi-date-unknown\]/.test(String(entry?.admin_note??""));
+  }
+  function stripKpiDateUnknown(note?:string|null) {
+    return String(note??"").replace(/\[kpi-date-unknown\]\s*/g,"").trim();
+  }
+  function withKpiDateUnknownMeta(note:string,unknown:boolean) {
+    const body=stripKpiDateUnknown(note);
+    return [unknown ? "[kpi-date-unknown]" : "", body].filter(Boolean).join("\n");
+  }
+  function kpiDefaultTopicHidden(project:any) {
+    return /\[kpi-hide-default-topic\]/.test(String(project?.admin_note??""));
+  }
+  function stripKpiDefaultTopicHidden(note?:string|null) {
+    return String(note??"").replace(/\[kpi-hide-default-topic\]\s*/g,"").trim();
+  }
+  function withKpiDefaultTopicHiddenMeta(note:string,hidden:boolean) {
+    const body=stripKpiDefaultTopicHidden(note);
+    return [hidden ? "[kpi-hide-default-topic]" : "", body].filter(Boolean).join("\n");
+  }
   function stripKpiProjectPeriod(note?:string|null) {
     return String(note??"").replace(/\[프로젝트기간:\d{4}-\d{2}-\d{2}~\d{4}-\d{2}-\d{2}\]\s*/,"").trim();
   }
@@ -5306,7 +5326,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return String(note??"").replace(/\[프로젝트주제:[^\]\n]+\]\s*/g,"").trim();
   }
   function stripKpiAdminMeta(note?:string|null) {
-    return stripKpiProjectTopics(stripKpiConnectedEmployees(stripKpiNotionUrl(stripKpiProjectPeriod(note))));
+    return stripKpiDefaultTopicHidden(stripKpiDateUnknown(stripKpiProjectTopics(stripKpiConnectedEmployees(stripKpiNotionUrl(stripKpiProjectPeriod(note))))));
   }
   function withKpiProjectPeriod(note:string,start?:string,end?:string) {
     const body=stripKpiProjectPeriod(note);
@@ -5378,6 +5398,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function personName(id?:string|null) {
     if(!id) return "전체";
     return employeeMap.get(id)?.name ?? entries.find((entry:any)=>entry.employee_id===id)?.employee_name ?? "직원";
+  }
+  function kpiFlowDateLabel(entry:any,fallback="날짜 미정") {
+    if(kpiDateIsUnknown(entry)) return fallback;
+    return String(entry?.work_date??"").slice(5)||fallback;
   }
   function kpiRoleLine(entry:any) {
     const project=kpiProjectFromList(entry)??entry;
@@ -6176,11 +6200,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     ...mindMapDailyGroups.flatMap((group:any)=>group.entries),
     ...mindMapUnlinkedDaily,
   ] : [];
+  const mindMapHasDefaultTopicEntries=mindMapProject ? [
+    ...mindMapAllWeeklyGoals,
+    ...mindMapAllDailyOpen,
+  ].some((entry:any)=>!parseKpiProjectTopic(entry.admin_note)) : false;
   const mindMapTopicNames=mindMapProject ? Array.from(new Set([
     ...parseKpiProjectTopics(mindMapProject.admin_note),
     ...mindMapAllWeeklyGoals.map((entry:any)=>parseKpiProjectTopic(entry.admin_note)).filter(Boolean),
     ...mindMapAllDailyOpen.map((entry:any)=>parseKpiProjectTopic(entry.admin_note)).filter(Boolean),
-    "기본 흐름",
+    ...(!kpiDefaultTopicHidden(mindMapProject)||mindMapHasDefaultTopicEntries ? ["기본 흐름"] : []),
   ])).filter(Boolean) : [];
   const mindMapTopicDraftKey=mindMapProject ? projectFlowDraftKey("topic",mindMapProject.id) : "";
   const mindMapWeeklyDraftKey=mindMapProject ? projectFlowDraftKey("weekly",mindMapProject.id) : "";
@@ -6205,7 +6233,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return Array.from(new Set([
       ...parseKpiProjectTopics(project?.admin_note),
       projectEditorPlanTopic,
-      "기본 흐름",
+      ...(!kpiDefaultTopicHidden(project) ? ["기본 흐름"] : []),
     ].filter(Boolean)));
   }
   function projectFlowSortValue(entry:any) {
@@ -6508,7 +6536,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       >
         <b>{entry.title}</b>
         <span className="kpi-flow-inline-meta">
-          <em>{String(entry.work_date??"").slice(5)||"날짜 미정"}</em>
+          <em>{kpiFlowDateLabel(entry)}</em>
           <em>{personListLabel(dailyFlowAssigneeIds(entry,weeklyOverride),"담당 미정")}</em>
           {entry.status==="done"&&<strong>완료</strong>}
         </span>
@@ -6549,7 +6577,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           >
             <small>{entry.scope==="weekly"?"주간 완료":entry.scope==="daily"?"데일리 완료":"월간 완료"}</small>
             <b>{entry.title}</b>
-            <span>{String(entry.work_date??"").slice(5)||"기간"} · {personName(entry.employee_id)}</span>
+            <span>{kpiFlowDateLabel(entry,"기간")} · {personName(entry.employee_id)}</span>
           </button>
         ))}
         {entriesForReview.length>3&&(
@@ -6623,7 +6651,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                         <div className="kpi-review-daily-stack">
                           {dailies.length>0 ? dailies.map((daily:any)=>(
                             <button type="button" className={`kpi-review-mini-node daily${highlightKpiId===daily.id?" kpi-focus-pulse":""}`} key={`review-daily-${daily.id}`} data-operating-kpi-id={daily.id} onClick={()=>focusKpiEntry(daily,{preservePeriod:true})}>
-                              <small>{String(daily.work_date??"").slice(5)} · {personName(daily.employee_id)}</small>
+                              <small>{kpiFlowDateLabel(daily)} · {personName(daily.employee_id)}</small>
                               <b>{daily.title}</b>
                             </button>
                           )) : <p className="kpi-ops-empty compact">완료된 데일리 없음</p>}
@@ -6637,7 +6665,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       <div className="kpi-review-daily-stack">
                         {topicUnlinkedDailies.map((daily:any)=>(
                           <button type="button" className={`kpi-review-mini-node daily${highlightKpiId===daily.id?" kpi-focus-pulse":""}`} key={`review-unlinked-${daily.id}`} data-operating-kpi-id={daily.id} onClick={()=>focusKpiEntry(daily,{preservePeriod:true})}>
-                            <small>{String(daily.work_date??"").slice(5)} · {personName(daily.employee_id)}</small>
+                            <small>{kpiFlowDateLabel(daily)} · {personName(daily.employee_id)}</small>
                             <b>{daily.title}</b>
                           </button>
                         ))}
@@ -7176,10 +7204,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const currentTopics=parseKpiProjectTopics(currentProject.admin_note);
     const nextTopics=Array.from(new Set([
       ...currentTopics.map((topic:string)=>topic===oldTopic?nextTopic:topic),
-      ...(currentTopics.includes(oldTopic)||oldTopic==="기본 흐름"?[]:[nextTopic]),
+      ...(currentTopics.includes(oldTopic)?[]:[nextTopic]),
     ].filter(Boolean)));
     const affectedEntries=projectLinkedEntries(currentProject)
-      .filter((entry:any)=>entry.id!==currentProject.id&&parseKpiProjectTopic(entry.admin_note)===oldTopic);
+      .filter((entry:any)=>entry.id!==currentProject.id&&(parseKpiProjectTopic(entry.admin_note)===oldTopic||(oldTopic==="기본 흐름"&&!parseKpiProjectTopic(entry.admin_note))));
     const nextAdminNote=withKpiProjectTopicListMeta(currentProject.admin_note??"",nextTopics);
     setSaving(true); setMessage("");
     try {
@@ -7209,13 +7237,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   async function deleteProjectTopic(project:any,topic:string) {
     if(!project?.id||!topic) return;
-    if(topic==="기본 흐름") return setMessage("기본 흐름은 삭제할 수 없습니다.");
-    if(!window.confirm(`${topic} 주제를 삭제할까요? 연결된 주간/데일리는 기본 흐름으로 이동합니다.`)) return;
     const currentProject=entries.find((entry:any)=>entry.id===project.id)??project;
     const nextTopics=parseKpiProjectTopics(currentProject.admin_note).filter((item:string)=>item!==topic);
+    const fallbackTopic=topic==="기본 흐름" ? nextTopics[0] : "기본 흐름";
     const affectedEntries=projectLinkedEntries(currentProject)
-      .filter((entry:any)=>entry.id!==currentProject.id&&parseKpiProjectTopic(entry.admin_note)===topic);
-    const nextAdminNote=withKpiProjectTopicListMeta(currentProject.admin_note??"",nextTopics);
+      .filter((entry:any)=>entry.id!==currentProject.id&&(parseKpiProjectTopic(entry.admin_note)===topic||(topic==="기본 흐름"&&!parseKpiProjectTopic(entry.admin_note))));
+    if(topic==="기본 흐름"&&affectedEntries.length>0&&!fallbackTopic) {
+      return setMessage("기본 흐름 안의 업무를 다른 주제로 옮기거나 새 주제를 만든 뒤 삭제해주세요.");
+    }
+    if(!window.confirm(`${topic} 주제를 삭제할까요? 연결된 주간/데일리는 ${fallbackTopic||"목록에서 숨김"}으로 이동합니다.`)) return;
+    const nextAdminNote=withKpiDefaultTopicHiddenMeta(withKpiProjectTopicListMeta(currentProject.admin_note??"",nextTopics),topic==="기본 흐름"||kpiDefaultTopicHidden(currentProject));
     setSaving(true); setMessage("");
     try {
       const projectUpdate=await supabase.from("kpi_entries").update({
@@ -7226,7 +7257,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(projectUpdate.error) throw projectUpdate.error;
       for(const entry of affectedEntries) {
         const result=await supabase.from("kpi_entries").update({
-          admin_note:withKpiProjectTopicMeta(entry.admin_note??"","기본 흐름"),
+          admin_note:fallbackTopic ? withKpiProjectTopicMeta(entry.admin_note??"",fallbackTopic) : entry.admin_note??"",
           updated_by:currentEmployee.id,
           updated_at:new Date().toISOString(),
         }).eq("id",entry.id);
@@ -7467,24 +7498,28 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   async function updateKpiWorkDate(entry:any,nextDate:string) {
     const date=String(nextDate??"").slice(0,10);
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-    if(!entry?.id||!date) return;
+    const dateUnknown=!date;
+    if(date&&!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    if(!entry?.id) return;
+    const workDate=date||String(entry.work_date??selectedDailyDate).slice(0,10)||selectedDailyDate;
+    const nextAdminNote=withKpiDateUnknownMeta(entry.admin_note??"",dateUnknown);
     if(!canManageKpi(entry)) return setMessage("본인 KPI만 날짜를 변경할 수 있습니다.");
     setSaving(true); setMessage("");
     try {
       let result=await supabase.from("kpi_entries").update({
-        work_date:date,
-        due_date:entry.scope==="daily" ? date : entry.due_date??null,
+        work_date:workDate,
+        due_date:entry.scope==="daily" ? (dateUnknown ? null : workDate) : entry.due_date??null,
+        admin_note:nextAdminNote,
         updated_by:currentEmployee.id,
         updated_at:new Date().toISOString(),
       }).eq("id",entry.id);
-      if(result.error&&/due_date|updated_by|schema cache/i.test(result.error.message)){
-        result=await supabase.from("kpi_entries").update({work_date:date,updated_at:new Date().toISOString()}).eq("id",entry.id);
+      if(result.error&&/admin_note|due_date|updated_by|schema cache/i.test(result.error.message)){
+        result=await supabase.from("kpi_entries").update({work_date:workDate,updated_at:new Date().toISOString()}).eq("id",entry.id);
       }
       if(result.error) throw result.error;
-      if(entry.scope==="daily") {
-        setMonth(date.slice(0,7));
-        setQuickDailyDate(date);
+      if(entry.scope==="daily"&&!dateUnknown) {
+        setMonth(workDate.slice(0,7));
+        setQuickDailyDate(workDate);
       }
       await load();
       setMessage("데일리 KPI 날짜를 변경했습니다.");
@@ -7594,7 +7629,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const projectPeriod=kpiProjectPeriod(entry);
     setEditingKpi(entry);
     const assigneeIds=editableAssigneeIdsFromEntry(entry);
-    setEditKpiDraft({title:entry.title??"",admin_note:stripKpiAdminMeta(entry.admin_note??""),scope:entry.scope??"daily",status:entry.status??"pending",parentId:entry.parent_id??"",employeeId:assigneeIds[0]??"",mentorEmployeeId:"",connectedEmployeeIds:assigneeIds.slice(1),projectStart:projectPeriod?.start??"",projectEnd:projectPeriod?.end??"",notionUrl:parseKpiNotionUrl(entry.admin_note??""),workDate:String(entry.work_date??selectedDailyDate).slice(0,10)});
+    setEditKpiDraft({title:entry.title??"",admin_note:stripKpiAdminMeta(entry.admin_note??""),scope:entry.scope??"daily",status:entry.status??"pending",parentId:entry.parent_id??"",employeeId:assigneeIds[0]??"",mentorEmployeeId:"",connectedEmployeeIds:assigneeIds.slice(1),projectStart:projectPeriod?.start??"",projectEnd:projectPeriod?.end??"",notionUrl:parseKpiNotionUrl(entry.admin_note??""),workDate:kpiDateIsUnknown(entry)?"":String(entry.work_date??selectedDailyDate).slice(0,10)});
   }
   function nextDateForEditingKpi() {
     const base=String(editingKpi?.work_date??editKpiDraft.workDate??selectedDailyDate).slice(0,10);
@@ -7620,13 +7655,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const connectedEmployeeIds=assigneeIds.slice(1);
     const baseNote=isAdminView?(newScope==="monthly"?withKpiProjectMeta(editKpiDraft.admin_note.trim(),editKpiDraft.projectStart,editKpiDraft.projectEnd,editKpiDraft.notionUrl,connectedEmployeeIds):withKpiConnectedEmployeesMeta(editKpiDraft.admin_note.trim(),connectedEmployeeIds)):"";
     const existingTopic=parseKpiProjectTopic(editingKpi.admin_note??"");
-    const note=existingTopic&&newScope!=="monthly" ? withKpiProjectTopicMeta(baseNote,existingTopic) : baseNote;
+    const topicNote=existingTopic&&newScope!=="monthly" ? withKpiProjectTopicMeta(baseNote,existingTopic) : baseNote;
+    const note=withKpiDateUnknownMeta(topicNote,!editKpiDraft.workDate);
     const historyEntry={at:new Date().toISOString(),by:currentEmployee.id,from:previousTitle,to:title,note};
     const changeLog=Array.isArray(editingKpi.change_log)?[...editingKpi.change_log,historyEntry]:[historyEntry];
     setSaving(true); setMessage("");
     try {
       const newParentId=editKpiDraft.parentId||null;
-      const newWorkDate=editKpiDraft.workDate|| (newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart);
+      const newWorkDate=editKpiDraft.workDate||String(editingKpi.work_date??"").slice(0,10)|| (newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart);
       const newStatus=editKpiDraft.status||editingKpi.status||"pending";
       const assignedEmployee=employees.find((employee:any)=>employee.id===primaryEmployeeId);
       let result=await supabase.from("kpi_entries").update({
@@ -8487,8 +8523,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                             <span>주요 업무 {topicWeekly.length} · 실행 항목 {topicWeekly.reduce((sum:number,weekly:any)=>sum+((mindMapDailyGroups.find((group:any)=>group.weekly.id===weekly.id)?.entries??[]).length),0)+topicUnlinkedDaily.length}</span>
                             {isAdminView&&(
                               <div className="kpi-topic-flow-actions" onClick={event=>event.stopPropagation()}>
-                                <button type="button" title="주제 수정" disabled={saving||topic==="기본 흐름"} onClick={()=>setProjectFlowEditingTopic({projectId:mindMapProject.id,topic,value:topic})}><i className="ti ti-edit" aria-hidden="true"></i></button>
-                                <button type="button" title="주제 삭제" disabled={saving||topic==="기본 흐름"} onClick={()=>deleteProjectTopic(mindMapProject,topic)}><i className="ti ti-trash" aria-hidden="true"></i></button>
+                                <button type="button" title="주제 수정" disabled={saving} onClick={()=>setProjectFlowEditingTopic({projectId:mindMapProject.id,topic,value:topic})}><i className="ti ti-edit" aria-hidden="true"></i></button>
+                                <button type="button" title="주제 삭제" disabled={saving} onClick={()=>deleteProjectTopic(mindMapProject,topic)}><i className="ti ti-trash" aria-hidden="true"></i></button>
                               </div>
                             )}
                           </>
@@ -9202,7 +9238,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           <input
                             className="kpi-daily-date-input"
                             type="date"
-                            value={String(entry.work_date??selectedDailyDate).slice(0,10)}
+                            value={kpiDateIsUnknown(entry)?"":String(entry.work_date??selectedDailyDate).slice(0,10)}
                             title="데일리 KPI 날짜 변경"
                             disabled={saving}
                             onClick={event=>event.stopPropagation()}
