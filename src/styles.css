@@ -3309,6 +3309,13 @@ body { overflow-x: hidden; }
 .kpi-project-editor-savebar b { display: block; color: #172b4d; font-size: 13px; font-weight: 650; }
 .kpi-project-editor-savebar span { display: block; margin-top: 2px; color: #626f86; font-size: 12px; font-weight: 420; line-height: 1.45; }
 .kpi-project-editor-savebar-actions { display: inline-flex; justify-content: flex-end; gap: 8px; align-items: center; flex-wrap: wrap; }
+.kpi-project-editor-card.detail-editor .kpi-project-editor-savebar {
+  padding: 8px 9px;
+}
+.kpi-project-editor-card.detail-editor .kpi-project-editor-savebar span {
+  margin-top: 1px;
+  line-height: 1.3;
+}
 .kpi-design-showcase,
 .kpi-option-label,
 .kpi-perdoo-board,
@@ -3680,8 +3687,62 @@ body { overflow-x: hidden; }
   border-color: color-mix(in srgb,var(--employee-color,#0c66e4) 18%,#d0d7de);
   background: #fafbfc;
 }
+.kpi-project-editor-card.detail-editor.plan-closed {
+  grid-template-columns: minmax(0,1fr);
+}
 .kpi-project-editor-card.detail-editor > section {
   align-content: start;
+}
+.kpi-project-editor-card.detail-editor .kpi-project-editor-main {
+  gap: 8px;
+}
+.kpi-project-editor-card.detail-editor .kpi-project-editor-title {
+  padding-bottom: 7px;
+}
+.kpi-project-editor-card.detail-editor .form-row {
+  gap: 5px;
+}
+.kpi-project-editor-card.detail-editor .input,
+.kpi-project-editor-card.detail-editor .select {
+  min-height: 42px;
+}
+.kpi-project-editor-card.detail-editor .compact-textarea {
+  min-height: 74px;
+}
+.kpi-project-editor-card.detail-editor .kpi-connected-employee-grid {
+  max-height: 126px;
+  grid-template-columns: repeat(auto-fit,minmax(128px,1fr));
+}
+.kpi-project-plan-toggle {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #dfe1e6;
+  border-radius: 8px;
+  background: #fff;
+  color: #172b4d;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.kpi-project-plan-toggle span {
+  font-size: 13px;
+  font-weight: 560;
+}
+.kpi-project-plan-toggle b {
+  border-radius: 999px;
+  background: color-mix(in srgb,var(--employee-color,#0c66e4) 9%,#fff);
+  color: color-mix(in srgb,var(--employee-color,#0c66e4) 75%,#172b4d);
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 620;
+}
+.kpi-project-plan-toggle:hover {
+  border-color: #85b8ff;
+  background: #f7fbff;
 }
 .kpi-topic-flow-table {
   --employee-color: #0c66e4;

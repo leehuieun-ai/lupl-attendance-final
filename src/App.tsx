@@ -4870,6 +4870,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   });
   const [projectEditorWeeklyPlan,setProjectEditorWeeklyPlan]=useState(initialKpiUiState.projectEditorWeeklyPlan??"");
   const [projectEditorPlanTopic,setProjectEditorPlanTopic]=useState(initialKpiUiState.projectEditorPlanTopic??"기본 흐름");
+  const [projectEditorPlanOpen,setProjectEditorPlanOpen]=useState(false);
   const [openProjectFlowAdds,setOpenProjectFlowAdds]=useState<Record<string,boolean>>(initialKpiUiState.openProjectFlowAdds??{});
   const [projectFlowEditingTopic,setProjectFlowEditingTopic]=useState<{projectId:string;topic:string;value:string}|null>(initialKpiUiState.projectFlowEditingTopic??null);
   const [draggingProjectTopic,setDraggingProjectTopic]=useState<{projectId:string;topic:string;index:number}|null>(null);
@@ -5194,8 +5195,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   function projectFlowAssigneeIdsForInsert(project:any,source:any) {
     const sourceIds=source?kpiEntryAssigneeIds(source):[];
-    const projectIds=project?projectAssignedEmployeeIds(project):[];
-    return sortKpiEmployeeIds(sourceIds.length>0 ? sourceIds : projectIds);
+    const projectIds=project?projectDirectAssigneeIds(project):[];
+    return sortKpiEmployeeIds(projectIds.length>0 ? projectIds : sourceIds);
   }
   function projectFlowInsertDuplicateKey(scope:"weekly"|"daily",parentId:string|null,title:string,workDate:string,dateUnknown:boolean,assigneeIds:string[]) {
     return [
@@ -5676,6 +5677,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(kpiEntryAssigneeIds(entry).includes(employeeId)) return true;
     return !entry.employee_id&&!entry.mentor_employee_id&&projectConnectedEmployeeIds(entry).length===0&&entry.created_by===employeeId;
   }
+  function projectDirectAssigneeIds(project:any) {
+    const ids=Array.from(new Set([
+      project?.employee_id,
+      ...projectConnectedEmployeeIds(project),
+    ].filter(Boolean)));
+    return sortKpiEmployeeIds(ids.filter((id:any)=>isKpiProjectParticipantVisible(id,project)));
+  }
   function projectAssignedEmployeeIds(project:any,list:any[]=entries) {
     const ids=Array.from(new Set([
       project?.employee_id,
@@ -5814,7 +5822,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return period ? employeeWorksInDateRange(employee,period.start,period.end) : employeeWorksOnDate(employee,today);
   }
   function projectParticipantIds(project:any) {
-    return projectAssignedEmployeeIds(project);
+    return projectDirectAssigneeIds(project);
   }
   function personListLabel(ids:any[],fallback="담당 미정") {
     const names=sortKpiEmployeeIds(ids).map((id:any)=>personName(id)).filter(Boolean);
@@ -6995,6 +7003,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     setSaving(true); setMessage("");
     try {
       const currentProject=projectEditorId ? entries.find((entry:any)=>entry.id===projectEditorId) : null;
+      const previousProjectAssigneeIds=currentProject ? projectDirectAssigneeIds(currentProject) : [];
       const existingTopics=projectEditorId ? parseKpiProjectTopics(currentProject?.admin_note) : [];
       const nextTopics=Array.from(new Set<string>(([...existingTopics,selectedPlanTopic].filter(Boolean)) as string[]));
       const projectMetaNote=withKpiProjectMeta(projectEditorDraft.adminNote.trim(),start,end,projectEditorDraft.notionUrl,connectedIds);
@@ -7088,6 +7097,33 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(weeklyRows.length>0) {
         const weeklyResult=await insertKpiEntryRows(weeklyRows);
         if(weeklyResult.error) throw weeklyResult.error;
+      }
+      const nextAssigneeKey=assigneeIds.join("|");
+      const previousAssigneeKey=previousProjectAssigneeIds.join("|");
+      const childEntriesToSync=entries.filter((entry:any)=>{
+        if(!savedProjectId||entry.id===savedProjectId) return false;
+        if(!["weekly","daily"].includes(entry.scope)) return false;
+        if(kpiProjectId(entry)!==savedProjectId) return false;
+        const currentKey=kpiEntryAssigneeIds(entry).join("|");
+        return currentKey===""||currentKey===previousAssigneeKey||currentKey===nextAssigneeKey;
+      });
+      for(const entry of childEntriesToSync) {
+        const entryPrimary=assigneeIds[0]??"";
+        const entryEmployee=entryPrimary ? (employeeMap.get(entryPrimary)??assignableEmployees.find((employee:any)=>employee.id===entryPrimary)) : null;
+        const entryPatch={
+          employee_id:entryPrimary||null,
+          employee_name:entryEmployee?.name??(entryPrimary?entry.employee_name:null),
+          mentor_employee_id:null,
+          admin_note:withKpiConnectedEmployeesMeta(entry.admin_note??"",assigneeIds.slice(1)),
+          updated_by:currentEmployee.id,
+          updated_at:new Date().toISOString(),
+        };
+        let childResult=await supabase.from("kpi_entries").update(entryPatch).eq("id",entry.id);
+        if(childResult.error&&optionalKpiColumnError(childResult.error)){
+          const {mentor_employee_id,admin_note,updated_by,...fallbackPatch}=entryPatch as any;
+          childResult=await supabase.from("kpi_entries").update(fallbackPatch).eq("id",entry.id);
+        }
+        if(childResult.error) throw childResult.error;
       }
       setActiveProjectDetailId(savedProjectId||"all");
       setProjectDetailEditorOpen(true);
@@ -8566,7 +8602,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 </div>
               </article>
               {isAdminView&&projectDetailEditorOpen&&(
-                <section className="kpi-project-editor-card detail-editor" style={kpiLinkedStyle(mindMapProject)}>
+                <section className={`kpi-project-editor-card detail-editor ${projectEditorPlanOpen?"plan-open":"plan-closed"}`} style={kpiLinkedStyle(mindMapProject)}>
                   <section className="kpi-project-editor-main">
                     <div className="kpi-project-editor-title">
                       <span>프로젝트 수정</span>
@@ -8609,6 +8645,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       <span className="label">프로젝트 세부 내용</span>
                       <textarea className="textarea compact-textarea" value={projectEditorDraft.adminNote} onChange={event=>setProjectEditorDraft({...projectEditorDraft,adminNote:event.target.value})} placeholder="운영 목적, 산출물, 주의할 점, 직원에게 전달할 내용을 적어주세요." />
                     </label>
+                    <button type="button" className="kpi-project-plan-toggle" onClick={()=>setProjectEditorPlanOpen(open=>!open)}>
+                      <span>AI 초안 만들기</span>
+                      <b>{projectEditorPlanOpen?"접기":"열기"}</b>
+                    </button>
                     <div className="kpi-project-editor-savebar">
                       <div>
                         <b>프로젝트 정보 저장</b>
@@ -8620,7 +8660,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       </div>
                     </div>
                   </section>
-                  <section className="kpi-project-editor-plan">
+                  {projectEditorPlanOpen&&<section className="kpi-project-editor-plan">
                     <div className="kpi-project-editor-title">
                       <span>월간 → 주간 나누기</span>
                       <b>주간 업무 직접 추가 / AI 초안</b>
@@ -8649,7 +8689,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                       <b>{personListLabel(projectEditorAssigneeIds(),"연결 직원 미정")}</b>
                       <small>완료 및 배정 후 아래 주제별 업무 흐름에 주간 KPI가 표시됩니다.</small>
                     </div>
-                  </section>
+                  </section>}
                 </section>
               )}
               <section className="kpi-topic-flow-table" style={kpiLinkedStyle(mindMapProject)}>
