@@ -8880,7 +8880,18 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           const dailyForWeekly=mindMapDailyGroups.find((group:any)=>group.weekly.id===weekly.id)?.entries??[];
                           const dailyDraftKey=projectFlowDraftKey("daily",mindMapProject.id,weekly.id);
                           return (
-                            <div className="kpi-topic-flow-row" key={weekly.id}>
+                            <div
+                              className={`kpi-topic-flow-row${dropTargetId===`weekly-row-${weekly.id}`?" drop-target":""}`}
+                              key={weekly.id}
+                              onDragOver={draggingKpi&&draggingKpi.id!==weekly.id&&draggingKpi.scope==="weekly"?event=>{event.preventDefault();setDropTargetId(`weekly-row-${weekly.id}`);}:undefined}
+                              onDragLeave={draggingKpi?.scope==="weekly"?()=>setDropTargetId(null):undefined}
+                              onDrop={draggingKpi&&draggingKpi.id!==weekly.id&&draggingKpi.scope==="weekly"?event=>{
+                                event.preventDefault();
+                                event.stopPropagation();
+                                const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
+                                if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,weekly.id);
+                              }:undefined}
+                            >
                               <div
                                 className={`kpi-topic-weekly-cell${dropTargetId===`weekly-cell-${weekly.id}`?" drop-target":""}`}
                                 onDragOver={draggingKpi&&(draggingKpi.id!==weekly.id)&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily")?event=>{event.preventDefault();setDropTargetId(`weekly-cell-${weekly.id}`);}:undefined}
@@ -8889,7 +8900,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                   event.preventDefault();
                                   event.stopPropagation();
                                   const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
-                                  if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,topic);
+                                  if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,draggingKpi.scope==="weekly"?weekly.id:null);
                                 }:undefined}
                               >
                                 <div

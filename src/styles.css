@@ -3940,6 +3940,10 @@ body { overflow-x: hidden; }
   grid-template-columns: minmax(260px,.86fr) minmax(340px,1.2fr);
   border-bottom: 1px solid #edf1f7;
 }
+.kpi-topic-flow-row.drop-target {
+  background: color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 5%,#fff);
+  box-shadow: inset 3px 0 0 color-mix(in srgb,var(--topic-color,var(--employee-color,#0c66e4)) 55%,#85b8ff);
+}
 .kpi-topic-flow-row:last-child {
   border-bottom: 0;
 }
