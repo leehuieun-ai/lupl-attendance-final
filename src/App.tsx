@@ -5522,6 +5522,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const weekDailyEntries=scheduledDailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
   const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&kpiProjectOverlapsMonth(entry,month));
+  const monthlyGoalIds=monthlyGoals.map((goal:any)=>goal.id).join("|");
+  useEffect(()=>{
+    if(focusProjectId!=="all"&&!monthlyGoals.some((goal:any)=>goal.id===focusProjectId)) {
+      setFocusProjectId("all");
+    }
+  },[focusProjectId,monthlyGoalIds]);
   const parentGoalOptions=(list:any[])=>isAdminView
     ? list
     : list.filter((goal:any)=>goal?.scope==="monthly"
@@ -5998,7 +6004,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     existingDailyRoutineEntry??syntheticDailyRoutineEntry,
     ...selectedDayEntries.filter((entry:any)=>!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry)),
   ].filter(Boolean)
-    .filter(entryMatchesOperatingScope)
+    .filter(entryAssignedToOperatingEmployee)
     .sort((a:any,b:any)=>(isDailyRoutineEntry(a)?0:1)-(isDailyRoutineEntry(b)?0:1)||(a.status==="done"?1:0)-(b.status==="done"?1:0)||(a.sort_order??0)-(b.sort_order??0));
   const operatingActionDailyEntries=operatingDailyEntries.filter((entry:any)=>!isDailyRoutineEntry(entry));
   const operatingTodoEntries=operatingActionDailyEntries.filter((entry:any)=>entry.status!=="done");
