@@ -4796,6 +4796,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [month,setMonth]=useState(initialKpiUiState.month??todayIso().slice(0,7));
   const [employees,setEmployees]=useState<any[]>([]);
   const [entries,setEntries]=useState<any[]>([]);
+  const [scoreEntries,setScoreEntries]=useState<any[]>([]);
   const [message,setMessage]=useState("");
   const [saving,setSaving]=useState(false);
   const [goalDraft,setGoalDraft]=useState({scope:"monthly",employee_id:"",parent_id:"",title:""});
@@ -4994,6 +4995,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     }
     const loadedEntries=await ensureDefaultDailyKpis(kpiEmployeeRows,entryResult.data??[]);
     const visibleEntries=isAdminView ? loadedEntries : loadedEntries.filter((entry:any)=>entryVisibleToCurrentEmployee(entry,loadedEntries));
+    setScoreEntries(loadedEntries);
     setEntries(visibleEntries);
     setEmployees(kpiEmployeeRows);
     setRnrEntries(rnrResult.data??[]);
@@ -5218,7 +5220,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
 
   const employeeMap=new Map<string,any>();
   employees.forEach((employee:any)=>employeeMap.set(employee.id,employee));
-  entries.forEach((entry:any)=>{
+  [...scoreEntries,...entries].forEach((entry:any)=>{
     if(entry.employee_id&&!employeeMap.has(entry.employee_id)) {
       employeeMap.set(entry.employee_id,{id:entry.employee_id,name:entry.employee_name||"직원",employee_no:""});
     }
@@ -5233,8 +5235,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return employeeHasCheckInOnDate(employee.id,dateIso);
   }
   function employeeCanAppearInDailyAccumulation(employee:any,dateIso=selectedDailyDate) {
-    if(!employeeCountsInDailyAccumulation(employee,dateIso)) return false;
-    return isAdminView || employee.id===currentEmployee.id;
+    return employeeCountsInDailyAccumulation(employee,dateIso);
   }
   const dailyAccumulationEmployeeIds=new Set(Array.from(employeeMap.values())
     .filter((employee:any)=>employeeCanAppearInDailyAccumulation(employee,selectedDailyDate))
@@ -5383,6 +5384,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!period) return String(entry.work_date??"").slice(0,7)===monthKey;
     return dateRangesOverlap(monthStartIso(monthKey),monthEndIso(monthKey),period.start,period.end);
   }
+  const scoreEntryList=scoreEntries.length>0 ? scoreEntries : entries;
+  const scoreDailyEntries=scoreEntryList.filter((entry:any)=>entry.scope==="daily");
   const dailyEntries=entries.filter((entry:any)=>entry.scope==="daily");
   const allWeeklyEntries=entries.filter((entry:any)=>entry.scope==="weekly");
   const monthDailyEntries=dailyEntries.filter((entry:any)=>entry.work_date>=monthStart&&entry.work_date<=monthEnd);
@@ -5588,7 +5591,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const kpiAccumulationLabel=kpiView==="daily" ? "일간 KPI 누적" : kpiView==="weekly" ? "주간 KPI 누적" : kpiView==="monthly" ? "월간 KPI 누적" : kpiView==="quarterly" ? `${currentQuarter}분기 KPI 누적` : `${currentYear}년 KPI 누적`;
   const kpiAccumulationShortLabel=kpiView==="daily" ? "일간 누적" : kpiView==="weekly" ? "주간 누적" : kpiView==="monthly" ? "월간 누적" : kpiView==="quarterly" ? "분기 누적" : "연간 누적";
   const kpiViewRangeLabel=kpiViewStart===kpiViewEnd ? kpiViewStart : `${kpiViewStart} ~ ${kpiViewEnd}`;
-  const periodScoreEntries=dailyEntries.filter((entry:any)=>
+  const periodScoreEntries=scoreDailyEntries.filter((entry:any)=>
     entry.work_date>=kpiViewStart
     && entry.work_date<=kpiViewEnd
     && !isDailyRoutineEntry(entry)
