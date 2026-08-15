@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Session } from "@supabase/supabase-js";
-import { supabase } from "./lib/supabase";
+import { supabase, supabaseConfigured, supabaseConfigMessage } from "./lib/supabase";
 import { getDeviceFingerprint } from "./lib/device";
 import { getCurrentPositionFast, getPublicIp, distanceMeters } from "./lib/geo";
 import {
@@ -1588,6 +1588,7 @@ function ConsentDetailToggle({ title, open, onToggle, children }: { title:string
 }
 
 export default function App() {
+  if(!supabaseConfigured) return <LocalSupabaseConfigPage />;
   const [session, setSession] = useState<Session | null>(null);
   const [employee, setEmployee] = useState<any | null>(null);
   const [consent, setConsent] = useState<any | null>(null);
@@ -1918,6 +1919,25 @@ export default function App() {
       {currentPrivacyConsent && !validWorkTimeConsent && <WorkTimeConsentModal employee={employee} onDone={load} />}
       {!validAdminPledgeConsent && <AdminConfidentialityModal employee={employee} onDone={load} />}
     </div>
+  );
+}
+
+function LocalSupabaseConfigPage() {
+  return (
+    <main className="local-config-page">
+      <section className="local-config-card">
+        <span>LOCAL SETUP</span>
+        <h1>로컬 Supabase 설정이 필요합니다</h1>
+        <p>{supabaseConfigMessage}</p>
+        <div>
+          <b>필요한 파일</b>
+          <code>.env.local</code>
+        </div>
+        <pre>{`VITE_SUPABASE_URL=https://프로젝트.supabase.co
+VITE_SUPABASE_ANON_KEY=public-anon-key`}</pre>
+        <small>환경변수를 넣은 뒤 로컬 개발 서버를 다시 시작하면 로그인 화면과 데이터가 정상 표시됩니다.</small>
+      </section>
+    </main>
   );
 }
 
@@ -4878,6 +4898,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [showDoneKpi,setShowDoneKpi]=useState(false);
   const [projectFlowMineOnly,setProjectFlowMineOnly]=useState(Boolean(initialKpiUiState.projectFlowMineOnly));
   const [lastKpiStatusChange,setLastKpiStatusChange]=useState<any|null>(null);
+  const [openWorkloadEmployeeId,setOpenWorkloadEmployeeId]=useState("");
+  const [selectedWorkloadEntryIds,setSelectedWorkloadEntryIds]=useState<Record<string,string[]>>({});
   const [kpiTreeGoal,setKpiTreeGoal]=useState<any|null>(null);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
@@ -6344,6 +6366,127 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     };
   }
   const boardTotalCounts=boardCountSummary(null);
+  function employeeVisibleForWorkload(employee:any) {
+    return !!employee?.id
+      && isEmployeeActive(employee)
+      && employeeWorksOnDate(employee,selectedDailyDate)
+      && !employeeLongAbsenceForKpi(employee,selectedDailyDate)
+      && (!isTestEmployee(employee)||employee.id===currentEmployee.id);
+  }
+  function kpiEntryInWorkloadRange(entry:any) {
+    if(!entry||entry.scope==="monthly") return false;
+    if(kpiDateIsUnknown(entry)) return entry.scope==="weekly";
+    const date=String(entry.work_date??"").slice(0,10);
+    if(entry.scope==="daily") return date>=selectedDailyDate&&date<=weekEnd;
+    if(entry.scope==="weekly") return date>=monthStart&&date<=monthEnd;
+    return date>=monthStart&&date<=monthEnd;
+  }
+  function kpiEntryOpenForWorkload(entry:any) {
+    return entry?.status!=="done"&&entry?.status!=="missed";
+  }
+  function entryAssignedToWorkloadEmployee(entry:any,employeeId:string) {
+    return kpiEntryAssigneeIds(entry).includes(employeeId);
+  }
+  function workloadProjectLabel(entry:any) {
+    const projectId=kpiProjectId(entry);
+    const project=projectId ? operatingProjectGoals.find((goal:any)=>goal.id===projectId) : null;
+    if(project?.title) return project.title;
+    if(entry.scope==="weekly") return "프로젝트 미연결";
+    const weekly=parentWeeklyGoalForDaily(entry);
+    return weekly?.title??"개인 업무";
+  }
+  function workloadForEmployee(employee:any) {
+    const employeeId=employee?.id;
+    const ownedProjects=operatingProjectGoals.filter((project:any)=>project.employee_id===employeeId);
+    const participantProjects=operatingProjectGoals.filter((project:any)=>
+      project.employee_id!==employeeId&&projectDirectAssigneeIds(project).includes(employeeId)
+    );
+    const workEntries=entries.filter((entry:any)=>
+      entry.scope!=="monthly"
+      && entry.is_active!==false
+      && kpiEntryOpenForWorkload(entry)
+      && !isDailyRoutineEntry(entry)
+      && !isNextKpiDraftEntry(entry)
+      && !isNextKpiDeferredEntry(entry)
+      && kpiEntryInWorkloadRange(entry)
+      && entryAssignedToWorkloadEmployee(entry,employeeId)
+    ).sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0));
+    const majorEntries=workEntries.filter((entry:any)=>entry.scope==="weekly");
+    const actionEntries=workEntries.filter((entry:any)=>entry.scope==="daily");
+    const todayEntries=actionEntries.filter((entry:any)=>!kpiDateIsUnknown(entry)&&entry.work_date===selectedDailyDate&&entry.status!=="done");
+    const weekEntries=actionEntries.filter((entry:any)=>!kpiDateIsUnknown(entry)&&entry.work_date>=weekStart&&entry.work_date<=weekEnd&&entry.status!=="done");
+    const score=scoreForEmployee(employeeId);
+    const projectCount=ownedProjects.length+participantProjects.length;
+    let statusLabel="적정";
+    let statusTone="ok";
+    if(weekEntries.length>=8||todayEntries.length>=4||workEntries.length>=16) {
+      statusLabel="조정 필요";
+      statusTone="warning";
+    } else if(projectCount>=4||workEntries.length>=10||weekEntries.length>=5) {
+      statusLabel="업무 비중 높음";
+      statusTone="busy";
+    } else if(projectCount<=1&&workEntries.length<=4&&todayEntries.length===0) {
+      statusLabel="여유 있음";
+      statusTone="light";
+    }
+    return {
+      employee,
+      ownedProjects,
+      participantProjects,
+      workEntries,
+      ownerProjectCount:ownedProjects.length,
+      participantProjectCount:participantProjects.length,
+      projectCount,
+      workCount:workEntries.length,
+      majorCount:majorEntries.length,
+      actionCount:actionEntries.length,
+      todayCount:todayEntries.length,
+      weekCount:weekEntries.length,
+      doneCount:0,
+      rate:score.rate,
+      statusLabel,
+      statusTone,
+    };
+  }
+  const kpiWorkloadRows=Array.from(employeeMap.values())
+    .filter(employeeVisibleForWorkload)
+    .sort(sortEmployeesByEmployeeNo)
+    .map(workloadForEmployee);
+  const kpiWorkloadByEmployeeId=new Map(kpiWorkloadRows.map((row:any)=>[row.employee.id,row]));
+  function toggleWorkloadEntrySelection(employeeId:string,entryId:string) {
+    setSelectedWorkloadEntryIds(prev=>{
+      const current=prev[employeeId]??[];
+      const next=current.includes(entryId) ? current.filter(id=>id!==entryId) : [...current,entryId];
+      return {...prev,[employeeId]:next};
+    });
+  }
+  function setWorkloadEntrySelection(employeeId:string,ids:string[]) {
+    setSelectedWorkloadEntryIds(prev=>({...prev,[employeeId]:ids}));
+  }
+  async function deleteSelectedWorkloadEntries(employeeId:string) {
+    const ids=(selectedWorkloadEntryIds[employeeId]??[]).filter(Boolean);
+    if(ids.length===0) return setMessage("삭제할 업무를 선택해주세요.");
+    if(!window.confirm(`선택한 KPI ${ids.length}건을 삭제할까요?`)) return;
+    setSaving(true); setMessage("");
+    try {
+      let result=await supabase.from("kpi_entries").update({
+        is_active:false,
+        updated_by:currentEmployee.id,
+        updated_at:new Date().toISOString(),
+      }).in("id",ids);
+      if(result.error&&/updated_by|schema cache/i.test(result.error.message)){
+        result=await supabase.from("kpi_entries").update({is_active:false,updated_at:new Date().toISOString()}).in("id",ids);
+      }
+      if(result.error) throw result.error;
+      setSelectedWorkloadEntryIds(prev=>({...prev,[employeeId]:[]}));
+      await load();
+      setMessage(`선택한 KPI ${ids.length}건을 삭제했습니다.`);
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
   const upcomingAssignedDailyEntries=!isAdminView ? dailyEntries
     .filter((entry:any)=>
       !isDailyRoutineEntry(entry)
@@ -6950,10 +7093,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(projectEditorDraft.ownerId&&!optionMap.has(projectEditorDraft.ownerId)) {
       optionMap.set(projectEditorDraft.ownerId,{id:projectEditorDraft.ownerId,name:personName(projectEditorDraft.ownerId),employee_no:""});
     }
+    const selectedIds=new Set<string>([
+      currentEmployee.id,
+      projectEditorDraft.ownerId,
+      ...projectEditorDraft.connectedEmployeeIds,
+      ...quickEmployeeIds,
+    ].filter(Boolean));
     const base=Array.from(optionMap.values())
       .filter((employee:any)=>isEmployeeActive(employee))
       .sort(sortEmployeesByEmployeeNo);
-    const scoped=base;
+    const scoped=base.filter((employee:any)=>employeeWorksOnDate(employee,selectedDailyDate)||selectedIds.has(employee.id));
     const seedIds=Array.from(new Set([
       currentEmployee.id,
       projectEditorDraft.ownerId,
@@ -6975,12 +7124,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       ...seeded,
     ].filter((employee:any)=>{
       if(!employee?.id||seen.has(employee.id)) return false;
+      if(!employeeWorksOnDate(employee,selectedDailyDate)&&!selectedIds.has(employee.id)) return false;
+      if(employeeLongAbsenceForKpi(employee,selectedDailyDate)&&!selectedIds.has(employee.id)) return false;
       seen.add(employee.id);
       return true;
     }).sort(sortEmployeesByEmployeeNo);
   }
   function isKpiVisibleEmployeeOnDate(employee:any,dateIso=selectedDailyDate) {
-    return isEmployeeActive(employee)&&employeeWorksOnDate(employee,dateIso)&&(!isTestEmployee(employee)||employee?.id===currentEmployee.id);
+    return isEmployeeActive(employee)&&employeeWorksOnDate(employee,dateIso)&&!employeeLongAbsenceForKpi(employee,dateIso)&&(!isTestEmployee(employee)||employee?.id===currentEmployee.id);
   }
   function isKpiVisibleEmployee(employee:any) {
     return isKpiVisibleEmployeeOnDate(employee,selectedDailyDate);
@@ -8166,25 +8317,6 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             <button className="button ghost compact" disabled={saving} onClick={restoreLastKpiStatus}>되돌리기 Ctrl+Z</button>
           </div>
         )}
-        {isAdminView&&(
-          <div className="kpi-assignee-picker">
-            <div>
-              <span>담당자 지정</span>
-              <b>{quickTargetLabel()}</b>
-            </div>
-            <button type="button" className={quickEmployeeIds.length===0?"active":""} onClick={()=>setQuickTargets([])}>전체</button>
-            {assignableKpiEmployees(monthStart,monthEnd).map((employee:any)=>(
-              <button
-                type="button"
-                key={employee.id}
-                className={quickEmployeeIds.includes(employee.id)?"active":""}
-                onClick={()=>toggleQuickEmployee(employee.id)}
-              >
-                {employee.name}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="kpi-period-switchbar">
           <div className="kpi-view-tabs" role="tablist" aria-label="KPI 보기">
             {[
@@ -8275,6 +8407,110 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             );
           }) : <p className="body-text">이번 달 KPI 기록이 아직 없습니다.</p>}
         </div>
+        {isAdminView&&(
+          <section className="kpi-workload-panel">
+            <div className="kpi-workload-head">
+              <div>
+                <span>업무 분배</span>
+                <b>직원별 담당 현황</b>
+                <small>책임/참여 프로젝트와 이번 주 업무량을 함께 봅니다.</small>
+              </div>
+              <em>{kpiWorkloadRows.length}명</em>
+            </div>
+            <div className="kpi-workload-grid">
+              {kpiWorkloadRows.length>0 ? kpiWorkloadRows.map((row:any)=>{
+                const isOpen=openWorkloadEmployeeId===row.employee.id;
+                const selectedIds=selectedWorkloadEntryIds[row.employee.id]??[];
+                const projectList=[...row.ownedProjects,...row.participantProjects].filter((project:any)=>entryProgress(project)<100);
+                return (
+                  <div
+                    className={`kpi-workload-item${isOpen?" open":""}`}
+                    key={row.employee.id}
+                    style={{"--workload-color":kpiEmployeeColor(row.employee.id)} as React.CSSProperties}
+                  >
+                    <button
+                      type="button"
+                      className={`kpi-workload-row ${row.statusTone}${focusEmployeeId===row.employee.id?" active":""}`}
+                      onClick={()=>{
+                        setFocusEmployeeId(row.employee.id);
+                        setQuickTargets([row.employee.id]);
+                        setOpenWorkloadEmployeeId(current=>current===row.employee.id?"":row.employee.id);
+                      }}
+                    >
+                      <span className="kpi-workload-person">
+                        <b>{row.employee.name}</b>
+                        <small>{row.employee.employee_no||row.employee.department||"직원"}</small>
+                        <em className={`kpi-workload-status ${row.statusTone}`}>{row.statusLabel}</em>
+                      </span>
+                      <small className="kpi-workload-detail">책임 {row.ownerProjectCount} · 참여 {row.participantProjectCount} · 주요 업무 {row.majorCount} · 실행 항목 {row.actionCount}</small>
+                      <span className="kpi-workload-metrics">
+                        <span><b>{row.workCount}</b><small>맡은 업무</small></span>
+                        <span><b>{row.projectCount}</b><small>프로젝트</small></span>
+                        <span><b>{row.todayCount}/{row.weekCount}</b><small>오늘/주간</small></span>
+                        <span><b>{row.rate}%</b><small>완료율</small></span>
+                      </span>
+                    </button>
+                    {isOpen&&(
+                      <div className="kpi-workload-detail-panel" onClick={event=>event.stopPropagation()}>
+                        <div className="kpi-workload-detail-head">
+                          <div>
+                            <b>{row.employee.name} 맡은 업무</b>
+                            <small>현재 집계에 포함된 프로젝트와 미완료 KPI입니다.</small>
+                          </div>
+                          <div className="kpi-workload-detail-actions">
+                            <button type="button" className="button ghost compact" disabled={row.workEntries.length===0} onClick={()=>setWorkloadEntrySelection(row.employee.id,row.workEntries.map((entry:any)=>entry.id))}>전체 선택</button>
+                            <button type="button" className="button ghost compact" disabled={selectedIds.length===0} onClick={()=>setWorkloadEntrySelection(row.employee.id,[])}>선택 해제</button>
+                            <button type="button" className="button danger ghost compact" disabled={saving||selectedIds.length===0} onClick={()=>deleteSelectedWorkloadEntries(row.employee.id)}>선택 삭제 {selectedIds.length>0?`${selectedIds.length}건`:""}</button>
+                          </div>
+                        </div>
+                        <div className="kpi-workload-detail-columns">
+                          <div>
+                            <span>프로젝트</span>
+                            {projectList.length>0 ? (
+                              <div className="kpi-workload-project-list">
+                                {projectList.map((project:any)=>(
+                                  <button
+                                    type="button"
+                                    key={`${row.employee.id}-${project.id}`}
+                                    style={{"--item-color":kpiProjectColor(project)} as React.CSSProperties}
+                                    onClick={()=>setActiveProjectDetailId(project.id)}
+                                  >
+                                    <b>{project.title}</b>
+                                    <small>{project.employee_id===row.employee.id?"책임":"참여"} · 진행 {entryProgress(project)}%</small>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : <p className="kpi-ops-empty compact">연결된 프로젝트가 없습니다.</p>}
+                          </div>
+                          <div>
+                            <span>업무</span>
+                            {row.workEntries.length>0 ? (
+                              <div className="kpi-workload-entry-list">
+                                {row.workEntries.map((entry:any)=>(
+                                  <label key={`${row.employee.id}-${entry.id}`} style={{"--item-color":kpiProjectColor(entry)} as React.CSSProperties}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedIds.includes(entry.id)}
+                                      onChange={()=>toggleWorkloadEntrySelection(row.employee.id,entry.id)}
+                                    />
+                                    <span>
+                                      <b>{entry.title}</b>
+                                      <small>{entry.scope==="weekly"?"주요 업무":"실행 항목"} · {workloadProjectLabel(entry)} · {kpiDateIsUnknown(entry)?"날짜 미정":String(entry.work_date??"").slice(5,10)}</small>
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            ) : <p className="kpi-ops-empty compact">현재 맡은 미완료 업무가 없습니다.</p>}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }) : <p className="kpi-ops-empty">표시할 직원이 없습니다.</p>}
+            </div>
+          </section>
+        )}
         <div className="kpi-my-board-head">
           <div>
             <span>내 보드</span>
