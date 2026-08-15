@@ -1,7 +1,7 @@
 -- 2026-08-15 leave integrity repair
--- Supabase SQL Editor에서 1회 실행하세요. 반복 실행해도 같은 결과가 되도록 작성했습니다.
+-- Run once in Supabase SQL Editor. Safe to rerun: inserts/updates are guarded.
 
--- 1) 승인된 연차/반차/시간차/휴가 신청 중 amount_days 또는 amount_hours가 비어 있는 과거 데이터 보정
+-- 1) Backfill missing approved leave amounts.
 with normalized_leave as (
   select
     ar.id,
@@ -13,14 +13,14 @@ with normalized_leave as (
   from public.attendance_requests ar
   join public.employees e on e.id = ar.employee_id
   where ar.status = 'approved'
-    and ar.request_type in ('annual','half_am','half_pm','hourly','special','substitute','compensatory','comp_leave_use')
+    and ar.request_type in ('annual', 'half_am', 'half_pm', 'hourly', 'special', 'substitute', 'compensatory', 'comp_leave_use')
 ), calculated_leave as (
   select
     id,
     request_type,
     case
-      when request_type in ('half_am','half_pm') then 0.5::numeric
-      when request_type in ('hourly','comp_leave_use') then coalesce(nullif(amount_hours,0) / 8, nullif(amount_days,0), 0)::numeric
+      when request_type in ('half_am', 'half_pm') then 0.5::numeric
+      when request_type in ('hourly', 'comp_leave_use') then coalesce(nullif(amount_hours, 0) / 8, nullif(amount_days, 0), 0)::numeric
       when bounded_start > bounded_end then 0::numeric
       else greatest(0, (
         select count(*)::numeric
@@ -29,21 +29,22 @@ with normalized_leave as (
       ))
     end as fixed_days,
     case
-      when request_type in ('half_am','half_pm') then 4::numeric
-      when request_type in ('hourly','comp_leave_use') then coalesce(nullif(amount_hours,0), nullif(amount_days,0) * 8, 0)::numeric
+      when request_type in ('half_am', 'half_pm') then 4::numeric
+      when request_type in ('hourly', 'comp_leave_use') then coalesce(nullif(amount_hours, 0), nullif(amount_days, 0) * 8, 0)::numeric
       else null::numeric
     end as fixed_hours
   from normalized_leave
 )
 update public.attendance_requests ar
-set amount_days = case
-      when ar.amount_days is null or ar.amount_days <= 0 then c.fixed_days
-      else ar.amount_days
-    end,
-    amount_hours = case
-      when c.fixed_hours is not null and (ar.amount_hours is null or ar.amount_hours <= 0) then c.fixed_hours
-      else ar.amount_hours
-    end
+set
+  amount_days = case
+    when ar.amount_days is null or ar.amount_days <= 0 then c.fixed_days
+    else ar.amount_days
+  end,
+  amount_hours = case
+    when c.fixed_hours is not null and (ar.amount_hours is null or ar.amount_hours <= 0) then c.fixed_hours
+    else ar.amount_hours
+  end
 from calculated_leave c
 where ar.id = c.id
   and (
@@ -52,8 +53,8 @@ where ar.id = c.id
     or (c.fixed_hours is not null and (ar.amount_hours is null or ar.amount_hours <= 0))
   );
 
--- 2) 승인된 추가근무인데 대체휴가 적립 기록이 없는 경우 보정
-insert into public.leave_adjustments(
+-- 2) Insert missing comp-time earned adjustments for approved overtime.
+insert into public.leave_adjustments (
   employee_id,
   adjustment_type,
   adjustment_days,
@@ -68,7 +69,7 @@ select
   c.converted_days,
   'comp_time_requests',
   c.id,
-  coalesce(c.reason, '추가근무 대체휴가 적립 자동 보정'),
+  coalesce(nullif(c.reason, ''), 'Approved overtime comp-time repair'),
   c.reviewed_by
 from public.comp_time_requests c
 where c.status = 'approved'
@@ -81,7 +82,7 @@ where c.status = 'approved'
       and a.adjustment_type = 'comp_time_earned'
   );
 
--- 3) 반려된 추가근무인데 적립 기록이 남아 있는 경우 제거
+-- 3) Remove comp-time earned adjustments that still point to rejected overtime.
 delete from public.leave_adjustments a
 using public.comp_time_requests c
 where a.source_type = 'comp_time_requests'
@@ -89,8 +90,12 @@ where a.source_type = 'comp_time_requests'
   and a.adjustment_type = 'comp_time_earned'
   and c.status = 'rejected';
 
--- 4) leave_adjustments는 있는데 원본 추가근무/휴가 신청이 없는 경우 제거
-delete from public.leave_adjustments a
+-- 4) Preserve orphan adjustments as manual review rows instead of deleting them.
+update public.leave_adjustments a
+set
+  source_type = 'manual_adjust',
+  source_id = null,
+  reason = trim(both ' ' from concat('[확인 필요] 원본 추가근무 신청 없음 - 기존 적립 보존. ', coalesce(a.reason, '')))
 where a.source_type = 'comp_time_requests'
   and not exists (
     select 1
@@ -98,7 +103,11 @@ where a.source_type = 'comp_time_requests'
     where c.id = a.source_id
   );
 
-delete from public.leave_adjustments a
+update public.leave_adjustments a
+set
+  source_type = 'manual_adjust',
+  source_id = null,
+  reason = trim(both ' ' from concat('[확인 필요] 원본 휴가 신청 없음 - 기존 조정 보존. ', coalesce(a.reason, '')))
 where a.source_type = 'attendance_requests'
   and not exists (
     select 1
@@ -106,25 +115,22 @@ where a.source_type = 'attendance_requests'
     where r.id = a.source_id
   );
 
--- 5) 승인된 휴가인데 직원 근무 일정에는 휴가/근무 안 함으로 반영되지 않는 경우 보정
+-- 5) Add unavailable schedule events for approved leave within employee contract dates.
 with approved_leave as (
   select
-    ar.id,
     ar.employee_id,
     ar.request_type,
-    greatest(ar.start_date, coalesce(e.contract_start, e.work_start_date, e.joined_at, ar.start_date)) as start_date,
-    least(ar.end_date, coalesce(e.contract_end, ar.end_date)) as end_date,
+    ar.start_date,
+    ar.end_date,
     ar.reviewed_by
   from public.attendance_requests ar
   join public.employees e on e.id = ar.employee_id
   where ar.status = 'approved'
-    and ar.request_type in ('annual','half_am','half_pm','hourly','sick','official','special','substitute','compensatory','comp_leave_use')
-), schedule_rows as (
-  select *
-  from approved_leave
-  where start_date <= end_date
+    and ar.request_type in ('annual', 'half_am', 'half_pm', 'hourly', 'sick', 'official', 'special', 'substitute', 'compensatory', 'comp_leave_use')
+    and ar.start_date >= coalesce(e.contract_start, e.work_start_date, e.joined_at, ar.start_date)
+    and ar.end_date <= coalesce(e.contract_end, ar.end_date)
 )
-insert into public.employee_schedule_events(
+insert into public.employee_schedule_events (
   employee_id,
   title,
   event_type,
@@ -133,7 +139,7 @@ insert into public.employee_schedule_events(
   note,
   created_by
 )
-select
+select distinct on (s.employee_id, s.start_date, s.end_date)
   s.employee_id,
   case s.request_type
     when 'annual' then '승인 휴가: 연차'
@@ -148,7 +154,7 @@ select
   s.end_date,
   'attendance_requests 승인 내역 기준 자동 보정',
   s.reviewed_by
-from schedule_rows s
+from approved_leave s
 where not exists (
   select 1
   from public.employee_schedule_events ev
@@ -156,14 +162,20 @@ where not exists (
     and ev.event_type = 'unavailable'
     and ev.start_date = s.start_date
     and ev.end_date = s.end_date
-);
+)
+order by s.employee_id, s.start_date, s.end_date, s.request_type;
 
--- 6) 보정 후 남은 의심 건수 확인
+-- 6) Final audit. All rows should be 0 except manual_adjust_needs_review,
+-- which intentionally preserves orphan adjustments for admin review.
 select 'approved_leave_missing_amount' as check_name, count(*)::int as remaining_count
 from public.attendance_requests
 where status = 'approved'
-  and request_type in ('annual','half_am','half_pm','hourly','special','substitute','compensatory','comp_leave_use')
-  and (amount_days is null or amount_days <= 0)
+  and request_type in ('annual', 'half_am', 'half_pm', 'hourly', 'special', 'substitute', 'compensatory', 'comp_leave_use')
+  and (
+    amount_days is null
+    or amount_days <= 0
+    or (request_type in ('hourly', 'comp_leave_use') and (amount_hours is null or amount_hours <= 0))
+  )
 union all
 select 'approved_comp_without_adjustment', count(*)::int
 from public.comp_time_requests c
@@ -188,10 +200,15 @@ from public.leave_adjustments a
 where a.source_type = 'comp_time_requests'
   and not exists (select 1 from public.comp_time_requests c where c.id = a.source_id)
 union all
+select 'manual_adjust_needs_review', count(*)::int
+from public.leave_adjustments a
+where a.source_type = 'manual_adjust'
+  and a.reason like '[확인 필요]%'
+union all
 select 'approved_leave_without_schedule_event', count(*)::int
 from public.attendance_requests ar
 where ar.status = 'approved'
-  and ar.request_type in ('annual','half_am','half_pm','hourly','sick','official','special','substitute','compensatory','comp_leave_use')
+  and ar.request_type in ('annual', 'half_am', 'half_pm', 'hourly', 'sick', 'official', 'special', 'substitute', 'compensatory', 'comp_leave_use')
   and not exists (
     select 1
     from public.employee_schedule_events ev
@@ -199,4 +216,13 @@ where ar.status = 'approved'
       and ev.event_type = 'unavailable'
       and ev.start_date <= ar.end_date
       and ev.end_date >= ar.start_date
+  )
+union all
+select 'leave_outside_contract_period', count(*)::int
+from public.attendance_requests ar
+join public.employees e on e.id = ar.employee_id
+where ar.status = 'approved'
+  and (
+    (e.contract_start is not null and ar.end_date < e.contract_start)
+    or (e.contract_end is not null and ar.start_date > e.contract_end)
   );
