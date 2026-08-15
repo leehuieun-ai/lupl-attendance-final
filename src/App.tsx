@@ -5242,7 +5242,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       .map(item=>({
         title:String(item.title??"").trim(),
         workDate:String(item.workDate??(scope==="weekly"?weekStart:selectedDailyDate)).slice(0,10),
-        dateUnknown:scope==="daily"&&item.dateUnknown===true,
+        dateUnknown:item.dateUnknown===true,
       }))
       .filter(item=>item.title);
     if(cleanItems.length===0) return 0;
@@ -5270,7 +5270,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       seenKeys.add(key);
       const topicNote=withProjectFlowTopicForProject("",options.project,options.topic||"기본 흐름");
       const assigneeNote=withKpiConnectedEmployeesMeta(topicNote,connectedIds);
-      const adminNote=scope==="daily" ? withKpiDateUnknownMeta(assigneeNote,item.dateUnknown) : assigneeNote;
+      const adminNote=withKpiDateUnknownMeta(assigneeNote,item.dateUnknown);
       return [{
         employee_id:assigneeIds[0]??null,
         employee_name:assigneeIds[0] ? personName(assigneeIds[0]) : "전체",
@@ -5280,7 +5280,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         title:item.title,
         description:null,
         source_rnr_entry_id:null,
-        due_date:scope==="daily" ? (item.dateUnknown ? null : item.workDate) : null,
+        due_date:item.dateUnknown ? null : item.workDate,
         project_start:null,
         project_end:null,
         mentor_employee_id:null,
@@ -5468,6 +5468,17 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const body=stripKpiDateUnknown(note);
     return [unknown ? "[kpi-date-unknown]" : "", body].filter(Boolean).join("\n");
   }
+  function normalizedKpiDate(value:any) {
+    const date=String(value??"").slice(0,10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "";
+  }
+  function kpiEffectiveWorkDate(entry:any) {
+    if(kpiDateIsUnknown(entry)) return "";
+    return normalizedKpiDate(entry?.due_date)||normalizedKpiDate(entry?.work_date);
+  }
+  function kpiEffectiveDateForSort(entry:any) {
+    return kpiEffectiveWorkDate(entry)||"9999-12-31";
+  }
   function kpiDefaultTopicHidden(project:any) {
     return /\[kpi-hide-default-topic\]/.test(String(project?.admin_note??""));
   }
@@ -5549,10 +5560,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const dailyEntries=entries.filter((entry:any)=>entry.scope==="daily");
   const allWeeklyEntries=entries.filter((entry:any)=>entry.scope==="weekly");
   const scheduledDailyEntries=dailyEntries.filter((entry:any)=>!kpiDateIsUnknown(entry));
-  const monthDailyEntries=scheduledDailyEntries.filter((entry:any)=>entry.work_date>=monthStart&&entry.work_date<=monthEnd);
-  const selectedDayEntries=scheduledDailyEntries.filter((entry:any)=>entry.work_date===selectedDailyDate);
-  const weekDailyEntries=scheduledDailyEntries.filter((entry:any)=>entry.work_date>=weekStart&&entry.work_date<=weekEnd);
-  const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&entry.work_date>=weekStart&&entry.work_date<=weekEnd);
+  const monthDailyEntries=scheduledDailyEntries.filter((entry:any)=>kpiEntryWithinRange(entry,monthStart,monthEnd));
+  const selectedDayEntries=scheduledDailyEntries.filter((entry:any)=>kpiEffectiveWorkDate(entry)===selectedDailyDate);
+  const weekDailyEntries=scheduledDailyEntries.filter((entry:any)=>kpiEntryWithinRange(entry,weekStart,weekEnd));
+  const weeklyGoals=entries.filter((entry:any)=>entry.scope==="weekly"&&kpiEntryWithinRange(entry,weekStart,weekEnd));
   const monthlyGoals=entries.filter((entry:any)=>entry.scope==="monthly"&&kpiProjectOverlapsMonth(entry,month));
   const monthlyGoalIds=monthlyGoals.map((goal:any)=>goal.id).join("|");
   useEffect(()=>{
@@ -5574,8 +5585,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return employeeMap.get(id)?.name ?? entries.find((entry:any)=>entry.employee_id===id)?.employee_name ?? "직원";
   }
   function kpiFlowDateLabel(entry:any,fallback="날짜 미정") {
-    if(kpiDateIsUnknown(entry)) return fallback;
-    return String(entry?.work_date??"").slice(5)||fallback;
+    const date=kpiEffectiveWorkDate(entry);
+    return date ? date.slice(5) : fallback;
   }
   function kpiRoleLine(entry:any) {
     const project=kpiProjectFromList(entry)??entry;
@@ -5659,7 +5670,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return kpiProjectSeedColor(rootId);
   }
   function kpiEntryWithinRange(entry:any,start:string,end:string) {
-    const date=String(entry?.work_date??"").slice(0,10);
+    const date=kpiEffectiveWorkDate(entry);
     return /^\d{4}-\d{2}-\d{2}$/.test(date)&&date>=start&&date<=end;
   }
   function scorableDailyKpis(list:any[]) {
@@ -6293,17 +6304,17 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     };
   },[dailyLogResize]);
   function kpiDateDistanceFromSelected(entry:any) {
-    const date=String(entry?.work_date??"").slice(0,10);
+    const date=kpiEffectiveWorkDate(entry);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return Number.MAX_SAFE_INTEGER;
     return Math.abs(dateFromIso(date).getTime()-dateFromIso(selectedDailyDate).getTime());
   }
   const operatingProgressEntries=[
-    ...allWeeklyEntries.filter((entry:any)=>entry.status!=="done"&&entry.work_date>=monthStart&&entry.work_date<=monthEnd&&entryMatchesOperatingScope(entry)),
+    ...allWeeklyEntries.filter((entry:any)=>entry.status!=="done"&&kpiEntryWithinRange(entry,monthStart,monthEnd)&&entryMatchesOperatingScope(entry)),
     ...monthDailyEntries.filter((entry:any)=>entry.status!=="done"&&entry.parent_id&&entryMatchesOperatingScope(entry)&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry)),
-  ].sort((a:any,b:any)=>kpiDateDistanceFromSelected(a)-kpiDateDistanceFromSelected(b)||String(b.work_date??"").localeCompare(String(a.work_date??""))||(a.sort_order??0)-(b.sort_order??0));
+  ].sort((a:any,b:any)=>kpiDateDistanceFromSelected(a)-kpiDateDistanceFromSelected(b)||kpiEffectiveDateForSort(b).localeCompare(kpiEffectiveDateForSort(a))||(a.sort_order??0)-(b.sort_order??0));
   const operatingMonthDoneEntries=monthDailyEntries
     .filter((entry:any)=>entry.status==="done"&&entryMatchesOperatingScope(entry)&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry))
-    .sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??""))||(b.sort_order??0)-(a.sort_order??0));
+    .sort((a:any,b:any)=>kpiEffectiveDateForSort(b).localeCompare(kpiEffectiveDateForSort(a))||(b.sort_order??0)-(a.sort_order??0));
   const operatingProjectGoals=monthlyGoals
     .sort((a:any,b:any)=>projectFlowSortValue(a)-projectFlowSortValue(b)||String(a.work_date??"").localeCompare(String(b.work_date??""))||String(a.created_at??"").localeCompare(String(b.created_at??"")));
   const operatingRnrCandidates=(()=>{
@@ -6377,7 +6388,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function kpiEntryInWorkloadRange(entry:any) {
     if(!entry||entry.scope==="monthly") return false;
     if(kpiDateIsUnknown(entry)) return entry.scope==="weekly";
-    const date=String(entry.work_date??"").slice(0,10);
+    const date=kpiEffectiveWorkDate(entry);
     if(entry.scope==="daily") return date>=selectedDailyDate&&date<=weekEnd;
     if(entry.scope==="weekly") return date>=monthStart&&date<=monthEnd;
     return date>=monthStart&&date<=monthEnd;
@@ -6411,11 +6422,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       && !isNextKpiDeferredEntry(entry)
       && kpiEntryInWorkloadRange(entry)
       && entryAssignedToWorkloadEmployee(entry,employeeId)
-    ).sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0));
+    ).sort((a:any,b:any)=>kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0));
     const majorEntries=workEntries.filter((entry:any)=>entry.scope==="weekly");
     const actionEntries=workEntries.filter((entry:any)=>entry.scope==="daily");
-    const todayEntries=actionEntries.filter((entry:any)=>!kpiDateIsUnknown(entry)&&entry.work_date===selectedDailyDate&&entry.status!=="done");
-    const weekEntries=actionEntries.filter((entry:any)=>!kpiDateIsUnknown(entry)&&entry.work_date>=weekStart&&entry.work_date<=weekEnd&&entry.status!=="done");
+    const todayEntries=actionEntries.filter((entry:any)=>kpiEffectiveWorkDate(entry)===selectedDailyDate&&entry.status!=="done");
+    const weekEntries=actionEntries.filter((entry:any)=>kpiEntryWithinRange(entry,weekStart,weekEnd)&&entry.status!=="done");
     const score=scoreForEmployee(employeeId);
     const projectCount=ownedProjects.length+participantProjects.length;
     let statusLabel="적정";
@@ -6475,7 +6486,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(range==="all") return true;
     if(kpiDateIsUnknown(entry)) return false;
     const bounds=workloadSummaryRangeBounds(range);
-    const date=String(entry.work_date??"").slice(0,10);
+    const date=kpiEffectiveWorkDate(entry);
     return !!bounds&&date>=bounds.start&&date<=bounds.end;
   }
   function workloadSummaryForEmployee(employee:any) {
@@ -6502,8 +6513,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const todayEntries=entries.filter((entry:any)=>
       entry.scope==="daily"
       && entry.is_active!==false
-      && !kpiDateIsUnknown(entry)
-      && entry.work_date===selectedDailyDate
+      && kpiEffectiveWorkDate(entry)===selectedDailyDate
       && entry.status!=="done"
       && !isDailyRoutineEntry(entry)
       && !isNextKpiDraftEntry(entry)
@@ -6513,9 +6523,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const weekDueEntries=entries.filter((entry:any)=>
       entry.scope==="daily"
       && entry.is_active!==false
-      && !kpiDateIsUnknown(entry)
-      && entry.work_date>=weekStart
-      && entry.work_date<=weekEnd
+      && kpiEntryWithinRange(entry,weekStart,weekEnd)
       && entry.status!=="done"
       && !isDailyRoutineEntry(entry)
       && !isNextKpiDraftEntry(entry)
@@ -6585,31 +6593,31 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       && !isNextKpiDeferredEntry(entry)
       && entry.status!=="done"
       && entryDirectlyAssignedToEmployee(entry,currentEmployee.id)
-      && (kpiDateIsUnknown(entry)||String(entry.work_date??"").slice(0,10)>selectedDailyDate)
+      && (kpiDateIsUnknown(entry)||kpiEffectiveWorkDate(entry)>selectedDailyDate)
     )
     .sort((a:any,b:any)=>{
       const aUnknown=kpiDateIsUnknown(a);
       const bUnknown=kpiDateIsUnknown(b);
       if(aUnknown!==bUnknown) return aUnknown?1:-1;
-      return String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0);
+      return kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0);
     })
     .slice(0,5) : [];
   const activeProjectDetail=activeProjectDetailId==="all"?null:operatingProjectGoals.find((goal:any)=>goal.id===activeProjectDetailId)??null;
   const mindMapProject=activeProjectDetail;
   const mindMapAllWeeklyGoals=mindMapProject?allWeeklyEntries
     .filter((entry:any)=>kpiProjectId(entry)===mindMapProject.id)
-    .sort((a:any,b:any)=>(a.sort_order??0)-(b.sort_order??0)||String(a.work_date??"").localeCompare(String(b.work_date??""))):[];
+    .sort((a:any,b:any)=>(a.sort_order??0)-(b.sort_order??0)||kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))):[];
   const mindMapWeeklyGoals=mindMapAllWeeklyGoals.filter((entry:any)=>!showDoneKpi||entry.status!=="done");
   const mindMapDoneEntries=mindMapProject?dailyEntries
     .filter((entry:any)=>entry.status==="done"&&kpiProjectId(entry)===mindMapProject.id&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry))
-    .sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??"")))
+    .sort((a:any,b:any)=>kpiEffectiveDateForSort(b).localeCompare(kpiEffectiveDateForSort(a)))
     .slice(0,80):[];
   const mindMapReviewEntries=mindMapProject?[
     ...mindMapAllWeeklyGoals.filter((entry:any)=>entry.status==="done"),
     ...mindMapDoneEntries,
-  ].sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??""))||(b.sort_order??0)-(a.sort_order??0)): [];
+  ].sort((a:any,b:any)=>kpiEffectiveDateForSort(b).localeCompare(kpiEffectiveDateForSort(a))||(b.sort_order??0)-(a.sort_order??0)): [];
   const mindMapMonthGroups=Array.from(mindMapDoneEntries.reduce((map:Map<string,Map<string,any[]>>,entry:any)=>{
-    const monthKey=String(entry.work_date??"").slice(0,7)||month;
+    const monthKey=kpiEffectiveWorkDate(entry).slice(0,7)||month;
     const employeeKey=entry.employee_id??"team";
     if(!map.has(monthKey)) map.set(monthKey,new Map());
     const employeeMapForMonth=map.get(monthKey)!;
@@ -6620,11 +6628,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     weekly,
     entries:dailyEntries
       .filter((entry:any)=>entry.parent_id===weekly.id&&(!showDoneKpi||entry.status!=="done")&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry))
-      .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0)),
+      .sort((a:any,b:any)=>kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0)),
   })) : [];
   const mindMapUnlinkedDaily=mindMapProject ? dailyEntries
     .filter((entry:any)=>kpiProjectId(entry)===mindMapProject.id&&!parentWeeklyGoalForDaily(entry)&&(!showDoneKpi||entry.status!=="done")&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry))
-    .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0))
+    .sort((a:any,b:any)=>kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0))
     : [];
   const mindMapAllDailyOpen=mindMapProject ? [
     ...mindMapDailyGroups.flatMap((group:any)=>group.entries),
@@ -6686,14 +6694,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return Number.isFinite(value) ? value : 0;
   }
   function sortProjectFlowEntries(list:any[]) {
-    return [...list].sort((a:any,b:any)=>projectFlowSortValue(a)-projectFlowSortValue(b)||String(a.work_date??"").localeCompare(String(b.work_date??""))||String(a.created_at??"").localeCompare(String(b.created_at??"")));
+    return [...list].sort((a:any,b:any)=>projectFlowSortValue(a)-projectFlowSortValue(b)||kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||String(a.created_at??"").localeCompare(String(b.created_at??"")));
   }
   function nextProjectFlowSortOrder(list:any[]) {
     const max=list.reduce((value:number,entry:any)=>Math.max(value,projectFlowSortValue(entry)),0);
     return max+1000;
   }
   function flowDateForScope(entry:any,scope:"daily"|"weekly"|"monthly") {
-    const date=String(entry?.work_date??"").slice(0,10);
+    const date=kpiEffectiveWorkDate(entry)||String(entry?.work_date??"").slice(0,10);
     const valid=/^\d{4}-\d{2}-\d{2}$/.test(date);
     if(scope==="daily") return valid ? date : selectedDailyDate;
     if(scope==="weekly") return valid ? date : weekStart;
@@ -6840,21 +6848,21 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const projectEditorFlowProject=projectEditorId?monthlyGoals.find((goal:any)=>goal.id===projectEditorId):null;
   const projectEditorFlowAllWeeklyGoals=projectEditorFlowProject?allWeeklyEntries
     .filter((entry:any)=>kpiProjectId(entry)===projectEditorFlowProject.id)
-    .sort((a:any,b:any)=>(a.sort_order??0)-(b.sort_order??0)||String(a.work_date??"").localeCompare(String(b.work_date??""))):[];
+    .sort((a:any,b:any)=>(a.sort_order??0)-(b.sort_order??0)||kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))):[];
   const projectEditorFlowWeeklyGoals=projectEditorFlowAllWeeklyGoals.filter((entry:any)=>!showDoneKpi||entry.status!=="done");
   const projectEditorFlowDoneEntries=projectEditorFlowProject?[
     ...projectEditorFlowAllWeeklyGoals.filter((entry:any)=>entry.status==="done"),
     ...dailyEntries.filter((entry:any)=>entry.status==="done"&&kpiProjectId(entry)===projectEditorFlowProject.id&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry)),
-  ].sort((a:any,b:any)=>String(b.work_date??"").localeCompare(String(a.work_date??""))||(b.sort_order??0)-(a.sort_order??0)): [];
+  ].sort((a:any,b:any)=>kpiEffectiveDateForSort(b).localeCompare(kpiEffectiveDateForSort(a))||(b.sort_order??0)-(a.sort_order??0)): [];
   const projectEditorFlowDailyGroups=projectEditorFlowProject ? projectEditorFlowWeeklyGoals.map((weekly:any)=>({
     weekly,
     entries:dailyEntries
       .filter((entry:any)=>entry.parent_id===weekly.id&&(!showDoneKpi||entry.status!=="done")&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry))
-      .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0)),
+      .sort((a:any,b:any)=>kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0)),
   })) : [];
   const projectEditorFlowUnlinkedDaily=projectEditorFlowProject ? dailyEntries
     .filter((entry:any)=>kpiProjectId(entry)===projectEditorFlowProject.id&&!parentWeeklyGoalForDaily(entry)&&(!showDoneKpi||entry.status!=="done")&&!isDailyRoutineEntry(entry)&&!isNextKpiDraftEntry(entry)&&!isNextKpiDeferredEntry(entry))
-    .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0)) : [];
+    .sort((a:any,b:any)=>kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0)) : [];
   function dailyEmployeeGroupKey(contextKey:string,employeeId?:string|null) {
     return `${contextKey}:${employeeId||"team"}`;
   }
@@ -6880,7 +6888,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(!isAdminView&&!map.has(currentEmployee.id)) map.set(currentEmployee.id,[]);
     return Array.from(map.entries()).map(([employeeId,items]:any)=>({
       employeeId,
-      entries:items.sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0)),
+      entries:items.sort((a:any,b:any)=>kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0)),
       total:items.length,
       done:items.filter((entry:any)=>entry.status==="done").length,
       rate:items.length>0 ? Math.round((items.filter((entry:any)=>entry.status==="done").length/items.length)*100) : 0,
@@ -7057,7 +7065,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       if(weekly?.id) relatedWeeklyMap.set(weekly.id,weekly);
     });
     const relatedWeeklies=Array.from(relatedWeeklyMap.values())
-      .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0));
+      .sort((a:any,b:any)=>kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0));
     const topics=Array.from(new Set([
       ...parseKpiProjectTopics(project?.admin_note),
       ...relatedWeeklies.map((weekly:any)=>topicForKpi(weekly)),
@@ -7253,7 +7261,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const plan=project
       ? uniqueKpiLines(allWeeklyEntries
           .filter((entry:any)=>entry.parent_id===project.id)
-          .sort((a:any,b:any)=>String(a.work_date??"").localeCompare(String(b.work_date??""))||(a.sort_order??0)-(b.sort_order??0))
+          .sort((a:any,b:any)=>kpiEffectiveDateForSort(a).localeCompare(kpiEffectiveDateForSort(b))||(a.sort_order??0)-(b.sort_order??0))
           .map((entry:any)=>entry.title))
           .join("\n")
       : "";
@@ -7505,13 +7513,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return quickWeeklyParentId&&quickDailyWeeklyGoals.some((goal:any)=>goal.id===quickWeeklyParentId) ? quickWeeklyParentId : "";
   }
   function editedDailyWeeklyGoals() {
-    const date=String(editKpiDraft.workDate||editingKpi?.work_date||selectedDailyDate).slice(0,10);
+    const date=String(editKpiDraft.workDate||kpiEffectiveWorkDate(editingKpi)||selectedDailyDate).slice(0,10);
     const start=/^\d{4}-\d{2}-\d{2}$/.test(date) ? weekStartIso(date) : weekStart;
     const end=/^\d{4}-\d{2}-\d{2}$/.test(date) ? weekEndIso(date) : weekEnd;
     const targetEmployeeId=editKpiDraft.employeeId||editingKpi?.employee_id||(!isAdminView?currentEmployee.id:"");
     const targetEmployeeIds=isAdminView ? editKpiAssigneeIds() : [targetEmployeeId].filter(Boolean);
     const visible=parentGoalOptions(allWeeklyEntries.filter((goal:any)=>{
-      const goalDate=String(goal?.work_date??"").slice(0,10);
+      const goalDate=kpiEffectiveWorkDate(goal);
       return /^\d{4}-\d{2}-\d{2}$/.test(goalDate)&&goalDate>=start&&goalDate<=end;
     })).filter((goal:any)=>isAdminView
       ? targetEmployeeIds.length===0||targetEmployeeIds.some((id:string)=>weeklyGoalAcceptsEmployee(goal,id))||goal.id===editKpiDraft.parentId
@@ -7598,6 +7606,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const weeklyAssigneeIds=groupedWeeklyAssignees ? targetEmployees.map((employee:any)=>employee.id).filter(Boolean) : [];
     const targetRows=groupedWeeklyAssignees ? [targetEmployees[0]] : targetEmployees.length>0 ? targetEmployees : [null];
     const workDate=options.work_date??(scope==="monthly" ? monthStart : scope==="weekly" ? weekStart : selectedDailyDate);
+    const dueDate=options.due_date??(["weekly","daily"].includes(scope) ? workDate : null);
     const parentId=scope==="weekly" ? ((options.parent_id??quickMonthlyParentId)||null) : scope==="daily" ? ((options.parent_id??selectedDailyParentId())||null) : null;
     const baseSortOrder=Number.isFinite(Number(options.sort_order)) ? Number(options.sort_order) : entries.filter((entry:any)=>entry.scope===scope).length+1;
     const payloads=titles.flatMap((title,titleIndex)=>targetRows.map((target:any,rowIndex)=>({
@@ -7609,7 +7618,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       title,
       description:options.description??null,
       source_rnr_entry_id:options.source_rnr_entry_id??null,
-      due_date:options.due_date??null,
+      due_date:dueDate,
       project_start:scope==="monthly" ? (options.project_start??(isAdminView?quickProjectPeriod.start:null)) : null,
       project_end:scope==="monthly" ? (options.project_end??(isAdminView?quickProjectPeriod.end:null)) : null,
       admin_note:options.admin_note??(
@@ -7866,7 +7875,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(lines.length===0) return setMessage("추가할 주요 업무를 입력해주세요.");
     setSaving(true); setMessage("");
     try {
-      const inserted=await insertProjectFlowItems("weekly",lines.map(title=>({title,workDate:weekStart})),{
+      const items=lines.map(line=>parseProjectFlowDailyLine(line));
+      const inserted=await insertProjectFlowItems("weekly",items,{
         project,
         topic:targetTopic,
         sortOrder:nextProjectFlowSortOrder(projectWeeklyEntriesForTopic(project,targetTopic)),
@@ -8125,7 +8135,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     try {
       let result=await supabase.from("kpi_entries").update({
         work_date:workDate,
-        due_date:entry.scope==="daily" ? (dateUnknown ? null : workDate) : entry.due_date??null,
+        due_date:["daily","weekly"].includes(entry.scope) ? (dateUnknown ? null : workDate) : entry.due_date??null,
         admin_note:nextAdminNote,
         updated_by:currentEmployee.id,
         updated_at:new Date().toISOString(),
@@ -8135,7 +8145,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       }
       if(result.error) throw result.error;
       await load();
-      setMessage("데일리 KPI 날짜를 변경했습니다.");
+      setMessage("KPI 날짜를 변경했습니다.");
     } catch(e:any) {
       setMessage(e.message);
     } finally {
@@ -8242,10 +8252,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const projectPeriod=kpiProjectPeriod(entry);
     setEditingKpi(entry);
     const assigneeIds=editableAssigneeIdsFromEntry(entry);
-    setEditKpiDraft({title:entry.title??"",admin_note:stripKpiAdminMeta(entry.admin_note??""),scope:entry.scope??"daily",status:entry.status??"pending",parentId:entry.parent_id??"",employeeId:assigneeIds[0]??"",mentorEmployeeId:"",connectedEmployeeIds:assigneeIds.slice(1),projectStart:projectPeriod?.start??"",projectEnd:projectPeriod?.end??"",notionUrl:parseKpiNotionUrl(entry.admin_note??""),workDate:kpiDateIsUnknown(entry)?"":String(entry.work_date??selectedDailyDate).slice(0,10)});
+    setEditKpiDraft({title:entry.title??"",admin_note:stripKpiAdminMeta(entry.admin_note??""),scope:entry.scope??"daily",status:entry.status??"pending",parentId:entry.parent_id??"",employeeId:assigneeIds[0]??"",mentorEmployeeId:"",connectedEmployeeIds:assigneeIds.slice(1),projectStart:projectPeriod?.start??"",projectEnd:projectPeriod?.end??"",notionUrl:parseKpiNotionUrl(entry.admin_note??""),workDate:kpiEffectiveWorkDate(entry)});
   }
   function nextDateForEditingKpi() {
-    const base=String(editingKpi?.work_date??editKpiDraft.workDate??selectedDailyDate).slice(0,10);
+    const base=String(editKpiDraft.workDate||kpiEffectiveWorkDate(editingKpi)||selectedDailyDate).slice(0,10);
     return addIsoDays(/^\d{4}-\d{2}-\d{2}$/.test(base)?base:selectedDailyDate,1);
   }
   function moveEditingKpiToTomorrow() {
@@ -8276,6 +8286,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     try {
       const newParentId=editKpiDraft.parentId||null;
       const newWorkDate=editKpiDraft.workDate||String(editingKpi.work_date??"").slice(0,10)|| (newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart);
+      const newDueDate=newScope==="monthly" ? null : (editKpiDraft.workDate||null);
       const newStatus=editKpiDraft.status||editingKpi.status||"pending";
       const assignedEmployee=employees.find((employee:any)=>employee.id===primaryEmployeeId);
       let result=await supabase.from("kpi_entries").update({
@@ -8284,6 +8295,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         status:newStatus,
         parent_id:newParentId,
         work_date:newWorkDate,
+        due_date:newDueDate,
         employee_id:primaryEmployeeId||null,
         employee_name:assignedEmployee?.name??(primaryEmployeeId?editingKpi.employee_name:null),
         mentor_employee_id:null,
@@ -8294,7 +8306,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         change_log:changeLog,
         updated_at:new Date().toISOString(),
       }).eq("id",editingKpi.id);
-      if(result.error&&/mentor_employee_id|employee_name|project_start|project_end|admin_note|updated_by|change_log|schema cache/i.test(result.error.message)){
+      if(result.error&&/mentor_employee_id|employee_name|project_start|project_end|admin_note|due_date|updated_by|change_log|schema cache/i.test(result.error.message)){
         result=await supabase.from("kpi_entries").update({title,scope:newScope,status:newStatus,parent_id:newParentId,work_date:newWorkDate,updated_at:new Date().toISOString()}).eq("id",editingKpi.id);
       }
       if(result.error) throw result.error;
@@ -8636,7 +8648,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                     />
                                     <span>
                                       <b>{entry.title}</b>
-                                      <small>{entry.scope==="weekly"?"주요 업무":"실행 항목"} · {workloadProjectLabel(entry)} · {kpiDateIsUnknown(entry)?"날짜 미정":String(entry.work_date??"").slice(5,10)}</small>
+                                      <small>{entry.scope==="weekly"?"주요 업무":"실행 항목"} · {workloadProjectLabel(entry)} · {kpiFlowDateLabel(entry)}</small>
                                     </span>
                                   </label>
                                 ))}
@@ -10078,7 +10090,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           <input
                             className="kpi-daily-date-input"
                             type="date"
-                            value={kpiDateIsUnknown(entry)?"":String(entry.work_date??selectedDailyDate).slice(0,10)}
+                            value={kpiEffectiveWorkDate(entry)}
                             title="데일리 KPI 날짜 변경"
                             disabled={saving}
                             onClick={event=>event.stopPropagation()}
