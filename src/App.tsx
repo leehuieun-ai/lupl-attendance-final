@@ -4900,6 +4900,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [lastKpiStatusChange,setLastKpiStatusChange]=useState<any|null>(null);
   const [openWorkloadEmployeeId,setOpenWorkloadEmployeeId]=useState("");
   const [selectedWorkloadEntryIds,setSelectedWorkloadEntryIds]=useState<Record<string,string[]>>({});
+  const [workloadSummaryRange,setWorkloadSummaryRange]=useState<"month"|"week"|"day"|"all">("month");
   const [kpiTreeGoal,setKpiTreeGoal]=useState<any|null>(null);
   const [rnrEntries,setRnrEntries]=useState<any[]>([]);
   const [guideOpen,setGuideOpen]=useState(false);
@@ -6448,10 +6449,100 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       statusTone,
     };
   }
+  const workloadSummaryRangeLabels:Record<"month"|"week"|"day"|"all",string>={
+    month:"이번 달",
+    week:"이번 주",
+    day:"오늘",
+    all:"전체 기간",
+  };
+  function workloadSummaryRangeBounds(range:"month"|"week"|"day"|"all") {
+    if(range==="day") return {start:selectedDailyDate,end:selectedDailyDate};
+    if(range==="week") return {start:weekStart,end:weekEnd};
+    if(range==="month") return {start:monthStart,end:monthEnd};
+    return null;
+  }
+  function projectInWorkloadSummaryRange(project:any,range:"month"|"week"|"day"|"all") {
+    if(range==="all") return true;
+    const bounds=workloadSummaryRangeBounds(range);
+    if(!bounds) return true;
+    const period=kpiProjectPeriod(project);
+    if(period) return dateRangesOverlap(bounds.start,bounds.end,period.start,period.end);
+    const workDate=String(project?.work_date??"").slice(0,10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(workDate) ? workDate>=bounds.start&&workDate<=bounds.end : true;
+  }
+  function kpiEntryInWorkloadSummaryRange(entry:any,range:"month"|"week"|"day"|"all") {
+    if(!entry||entry.scope==="monthly") return false;
+    if(range==="all") return true;
+    if(kpiDateIsUnknown(entry)) return false;
+    const bounds=workloadSummaryRangeBounds(range);
+    const date=String(entry.work_date??"").slice(0,10);
+    return !!bounds&&date>=bounds.start&&date<=bounds.end;
+  }
+  function workloadSummaryForEmployee(employee:any) {
+    const employeeId=employee?.id;
+    const ownedProjects=operatingProjectGoals.filter((project:any)=>
+      project.employee_id===employeeId&&projectInWorkloadSummaryRange(project,workloadSummaryRange)
+    );
+    const participantProjects=operatingProjectGoals.filter((project:any)=>
+      project.employee_id!==employeeId
+      && projectDirectAssigneeIds(project).includes(employeeId)
+      && projectInWorkloadSummaryRange(project,workloadSummaryRange)
+    );
+    const assignedEntries=entries.filter((entry:any)=>
+      entry.scope!=="monthly"
+      && entry.is_active!==false
+      && !isDailyRoutineEntry(entry)
+      && !isNextKpiDraftEntry(entry)
+      && !isNextKpiDeferredEntry(entry)
+      && kpiEntryInWorkloadSummaryRange(entry,workloadSummaryRange)
+      && entryAssignedToWorkloadEmployee(entry,employeeId)
+    );
+    const majorEntries=assignedEntries.filter((entry:any)=>entry.scope==="weekly");
+    const actionEntries=assignedEntries.filter((entry:any)=>entry.scope==="daily");
+    const todayEntries=entries.filter((entry:any)=>
+      entry.scope==="daily"
+      && entry.is_active!==false
+      && !kpiDateIsUnknown(entry)
+      && entry.work_date===selectedDailyDate
+      && entry.status!=="done"
+      && !isDailyRoutineEntry(entry)
+      && !isNextKpiDraftEntry(entry)
+      && !isNextKpiDeferredEntry(entry)
+      && entryAssignedToWorkloadEmployee(entry,employeeId)
+    );
+    const weekDueEntries=entries.filter((entry:any)=>
+      entry.scope==="daily"
+      && entry.is_active!==false
+      && !kpiDateIsUnknown(entry)
+      && entry.work_date>=weekStart
+      && entry.work_date<=weekEnd
+      && entry.status!=="done"
+      && !isDailyRoutineEntry(entry)
+      && !isNextKpiDraftEntry(entry)
+      && !isNextKpiDeferredEntry(entry)
+      && entryAssignedToWorkloadEmployee(entry,employeeId)
+    );
+    const completedCount=assignedEntries.filter((entry:any)=>entry.status==="done").length;
+    const rate=assignedEntries.length>0?Math.round((completedCount/assignedEntries.length)*100):0;
+    return {
+      employee,
+      ownerProjectCount:ownedProjects.length,
+      participantProjectCount:participantProjects.length,
+      majorCount:majorEntries.length,
+      actionCount:actionEntries.length,
+      todayCount:todayEntries.length,
+      weekDueCount:weekDueEntries.length,
+      rate,
+    };
+  }
   const kpiWorkloadRows=Array.from(employeeMap.values())
     .filter(employeeVisibleForWorkload)
     .sort(sortEmployeesByEmployeeNo)
     .map(workloadForEmployee);
+  const kpiWorkloadSummaryRows=Array.from(employeeMap.values())
+    .filter(employeeVisibleForWorkload)
+    .sort(sortEmployeesByEmployeeNo)
+    .map(workloadSummaryForEmployee);
   const kpiWorkloadByEmployeeId=new Map(kpiWorkloadRows.map((row:any)=>[row.employee.id,row]));
   function toggleWorkloadEntrySelection(employeeId:string,entryId:string) {
     setSelectedWorkloadEntryIds(prev=>{
@@ -6605,8 +6696,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const date=String(entry?.work_date??"").slice(0,10);
     const valid=/^\d{4}-\d{2}-\d{2}$/.test(date);
     if(scope==="daily") return valid ? date : selectedDailyDate;
-    if(scope==="weekly") return weekStartIso(valid ? date : selectedDailyDate);
-    return monthStartIso((valid ? date : monthStart).slice(0,7));
+    if(scope==="weekly") return valid ? date : weekStart;
+    return valid ? date : monthStart;
   }
   function projectWeeklyEntriesForTopic(project:any,topic:string) {
     if(!project?.id) return [];
@@ -8417,6 +8508,56 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               </div>
               <em>{kpiWorkloadRows.length}명</em>
             </div>
+            <section className="kpi-workload-summary-card">
+              <div className="kpi-workload-summary-head">
+                <div>
+                  <b>업무 분배 현황</b>
+                  <small>기준: {workloadSummaryRange==="month"?`${month.slice(0,4)}년 ${Number(month.slice(5,7))}월`:workloadSummaryRangeLabels[workloadSummaryRange]}</small>
+                </div>
+                <div className="kpi-workload-summary-tabs">
+                  {(Object.keys(workloadSummaryRangeLabels) as Array<"month"|"week"|"day"|"all">).map(key=>(
+                    <button
+                      type="button"
+                      key={key}
+                      className={workloadSummaryRange===key?"active":""}
+                      onClick={()=>setWorkloadSummaryRange(key)}
+                    >
+                      {workloadSummaryRangeLabels[key]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="kpi-workload-summary-table-wrap">
+                <table className="kpi-workload-summary-table">
+                  <thead>
+                    <tr>
+                      <th>직원</th>
+                      <th>총괄 프로젝트</th>
+                      <th>참여 프로젝트</th>
+                      <th>주요 업무</th>
+                      <th>실행 항목</th>
+                      <th>오늘 할 일</th>
+                      <th>이번 주 마감</th>
+                      <th>완료율</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kpiWorkloadSummaryRows.map((row:any)=>(
+                      <tr key={`summary-${row.employee.id}`}>
+                        <th>{row.employee.name}</th>
+                        <td>{row.ownerProjectCount}</td>
+                        <td>{row.participantProjectCount}</td>
+                        <td>{row.majorCount}</td>
+                        <td>{row.actionCount}</td>
+                        <td>{row.todayCount}</td>
+                        <td>{row.weekDueCount}</td>
+                        <td><b>{row.rate}%</b></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
             <div className="kpi-workload-grid">
               {kpiWorkloadRows.length>0 ? kpiWorkloadRows.map((row:any)=>{
                 const isOpen=openWorkloadEmployeeId===row.employee.id;
@@ -8532,7 +8673,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <div className="kpi-project-editor-title">
                 <span>관리자</span>
                 <b>프로젝트 수정</b>
-                <small>프로젝트 기간, 담당자, 연결 직원을 여기서만 수정합니다.</small>
+                <small>프로젝트 기간, 책임, 참여 직원을 여기서만 수정합니다.</small>
               </div>
               <button type="button" className={`kpi-project-editor-item ${projectEditorId===""?"active":""}`} onClick={()=>hydrateProjectEditor(null)}>
                 <i className="ti ti-plus" aria-hidden="true"></i>
@@ -8555,7 +8696,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <div className="kpi-project-editor-title">
                 <span>월간 프로젝트</span>
                 <b>{projectEditorDraft.title||"프로젝트 기본 정보"}</b>
-                <small>저장하면 월간 프로젝트 카드와 노션 연결 버튼, 연결 직원 정보가 같이 반영됩니다.</small>
+                <small>저장하면 월간 프로젝트 카드와 노션 연결 버튼, 참여 직원 정보가 같이 반영됩니다.</small>
               </div>
               <label className="form-row">
                 <span className="label">프로젝트명</span>
@@ -8567,9 +8708,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               </div>
               <div className="grid two">
                 <label className="form-row">
-                  <span className="label">담당자</span>
+                  <span className="label">책임</span>
                   <select className="select" value={projectEditorDraft.ownerId} onChange={event=>setProjectEditorDraft({...projectEditorDraft,ownerId:event.target.value})}>
-                    <option value="">담당자 미정</option>
+                    <option value="">책임 미정</option>
                     {assignableKpiEmployees().map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
                   </select>
                 </label>
@@ -8579,7 +8720,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 </label>
               </div>
               <div className="form-row">
-                <span className="label">연결 직원</span>
+                <span className="label">참여 직원</span>
                 <div className="kpi-connected-employee-grid">
                   {assignableKpiEmployees().map((employee:any)=>(
                     <label key={employee.id}>
@@ -8596,7 +8737,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <div className="kpi-project-editor-savebar">
                 <div>
                   <b>프로젝트 정보 저장</b>
-                  <span>기간, 담당자, 연결 직원, 노션 페이지가 월간 프로젝트 카드에 반영됩니다.</span>
+                  <span>기간, 책임, 참여 직원, 노션 페이지가 월간 프로젝트 카드에 반영됩니다.</span>
                 </div>
                 <div className="kpi-project-editor-savebar-actions">
                   {projectEditorId&&selectedProject&&<button className="button danger ghost compact" disabled={saving} onClick={()=>deleteKpiProject(selectedProject)}>삭제</button>}
@@ -8610,7 +8751,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <div className="kpi-project-editor-title">
                 <span>주간 업무 직접 추가 / AI 초안</span>
                 <b>월간 → 주간 나누기</b>
-                <small>AI를 쓰지 않아도 줄마다 직접 적고 완료를 누르면 연결 직원에게 주간 KPI로 배정됩니다.</small>
+                <small>AI를 쓰지 않아도 줄마다 직접 적고 완료를 누르면 책임/참여 직원에게 주간 KPI로 배정됩니다.</small>
               </div>
               <div className="kpi-project-plan-toolbar">
                 <button className="button ghost compact" disabled={saving} onClick={suggestProjectWeeklyPlan}>
@@ -8628,7 +8769,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               />
               <div className="kpi-project-editor-preview">
                 <span>전달 대상</span>
-                <b>{personListLabel(projectEditorAssigneeIds(),"연결 직원 미정")}</b>
+                <b>{personListLabel(projectEditorAssigneeIds(),"참여 직원 미정")}</b>
                 <small>아래 흐름 편집에서 월간, 주간, 오늘 할 일 연결을 드래그로 고칠 수 있습니다.</small>
               </div>
             </section>
@@ -8650,7 +8791,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     >
                       <b>{projectEditorFlowProject.title}</b>
                       <span>기간 {projectMonthPeriodLabel(projectEditorFlowProject)}</span>
-                      <span>담당 {personListLabel(projectParticipantIds(projectEditorFlowProject),"담당자 미정")}</span>
+                      <span>책임/참여 {personListLabel(projectParticipantIds(projectEditorFlowProject),"미정")}</span>
                       {projectNotionUrl(projectEditorFlowProject)&&<span className="kpi-notion-link" role="link" tabIndex={0} onClick={event=>{event.stopPropagation();window.open(projectNotionUrl(projectEditorFlowProject),"_blank","noopener,noreferrer");}}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</span>}
                     </button>
                   </section>
@@ -8905,7 +9046,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     <div>
                       <b>{goal.title}</b>
                       <span>기간 {projectMonthPeriodLabel(goal)}</span>
-                      <span>담당 {personListLabel(participantIds,"담당자 미정")}</span>
+                      <span>책임/참여 {personListLabel(participantIds,"미정")}</span>
                     </div>
                     <strong>{summary.rate}%</strong>
                     <small className="kpi-project-stat-line">
@@ -8972,13 +9113,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 <div>
                   <span>선택한 프로젝트 흐름 보기</span>
                   <b>{mindMapProject.title}</b>
-                  <small>기간 {projectMonthPeriodLabel(mindMapProject)} · 담당자 {personName(mindMapProject.employee_id)||"미정"} · 연결 직원 {personListLabel(projectConnectedEmployeeIds(mindMapProject),"없음")}</small>
+                  <small>기간 {projectMonthPeriodLabel(mindMapProject)} · 책임 {personName(mindMapProject.employee_id)||"미정"} · 참여 {personListLabel(projectConnectedEmployeeIds(mindMapProject),"없음")}</small>
                   {projectNotionUrl(mindMapProject)&&<button type="button" className="kpi-notion-link" onClick={()=>window.open(projectNotionUrl(mindMapProject),"_blank","noopener,noreferrer")}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</button>}
                 </div>
                 <div className="kpi-project-detail-tools">
-                  <label className={`kpi-hide-done-toggle${showDoneKpi?" active":""}`}>
-                    <input type="checkbox" checked={showDoneKpi} onChange={event=>setShowDoneKpi(event.target.checked)} />
-                    <span>완료 숨기기</span>
+                  <label className={`kpi-hide-done-toggle${!showDoneKpi?" active":""}`}>
+                    <input type="checkbox" checked={!showDoneKpi} onChange={event=>setShowDoneKpi(!event.target.checked)} />
+                    <span>완료 포함</span>
                   </label>
                   {!isAdminView&&(
                     <div className="kpi-flow-filter-toggle" role="group" aria-label="프로젝트 흐름 보기">
@@ -8999,7 +9140,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     <div className="kpi-project-editor-title">
                       <span>프로젝트 수정</span>
                       <b>{projectEditorDraft.title||"프로젝트 기본 정보"}</b>
-                      <small>기간, 담당자, 연결 직원, 노션 페이지를 수정합니다.</small>
+                      <small>기간, 책임, 참여 직원, 노션 페이지를 수정합니다.</small>
                     </div>
                     <div className="kpi-project-editor-line title-owner">
                       <label className="form-row">
@@ -9007,9 +9148,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                         <input className="input" value={projectEditorDraft.title} onChange={event=>setProjectEditorDraft({...projectEditorDraft,title:event.target.value})} placeholder="예: 영산대학교 캡스톤 디자인 과정 운영" />
                       </label>
                       <label className="form-row">
-                        <span className="label">담당자</span>
+                        <span className="label">책임</span>
                         <select className="select" value={projectEditorDraft.ownerId} onChange={event=>setProjectEditorDraft({...projectEditorDraft,ownerId:event.target.value})}>
-                          <option value="">담당자 미정</option>
+                          <option value="">책임 미정</option>
                           {assignableKpiEmployees().map((employee:any)=><option key={employee.id} value={employee.id}>{employee.name}{employee.department||employee.position?` · ${employee.department??""} ${employee.position??""}`:""}</option>)}
                         </select>
                       </label>
@@ -9024,7 +9165,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     </div>
                     <div className="kpi-project-editor-line people-note">
                       <div className="form-row">
-                        <span className="label">연결 직원</span>
+                        <span className="label">참여 직원</span>
                         <div className="kpi-connected-employee-grid">
                           {assignableKpiEmployees().map((employee:any)=>(
                             <label key={employee.id} className={projectEditorDraft.connectedEmployeeIds.includes(employee.id)?"checked":""}>
@@ -9058,7 +9199,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     <div className="kpi-project-editor-title">
                       <span>월간 → 주간 나누기</span>
                       <b>주간 업무 직접 추가 / AI 초안</b>
-                      <small>줄마다 적고 완료를 누르면 연결 직원에게 주간 KPI로 배정됩니다.</small>
+                      <small>줄마다 적고 완료를 누르면 책임/참여 직원에게 주간 KPI로 배정됩니다.</small>
                     </div>
                     <div className="kpi-project-plan-toolbar">
                       <label className="kpi-project-plan-topic-select">
@@ -9080,7 +9221,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     />
                     <div className="kpi-project-editor-preview">
                       <span>전달 대상</span>
-                      <b>{personListLabel(projectEditorAssigneeIds(),"연결 직원 미정")}</b>
+                      <b>{personListLabel(projectEditorAssigneeIds(),"참여 직원 미정")}</b>
                       <small>완료 및 배정 후 아래 주제별 업무 흐름에 주간 KPI가 표시됩니다.</small>
                     </div>
                   </section>}
@@ -9369,7 +9510,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   >
                     <b>{goal.title}</b>
                     <span>{projectMonthPeriodLabel(goal)} · 진행 {summary.rate}%</span>
-                    <small>담당/연결 {personListLabel(projectParticipantIds(goal),"담당자 미정")}</small>
+                    <small>책임/참여 {personListLabel(projectParticipantIds(goal),"미정")}</small>
                     <small>오늘 {summary.todayCount} · 주간 {summary.weeklyCount} · 완료 {summary.done}/{summary.total}</small>
                     {projectNotionUrl(goal)&&<span className="kpi-notion-link" role="link" tabIndex={0} onClick={event=>{event.stopPropagation();window.open(projectNotionUrl(goal),"_blank","noopener,noreferrer");}}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</span>}
                   </button>
@@ -9669,7 +9810,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           </div>
           <button type="button" className={`kpi-filter-pill ${showDoneKpi?"active":""}`} onClick={()=>setShowDoneKpi(v=>!v)}>
             <i className={`ti ${showDoneKpi?"ti-eye-off":"ti-eye"}`} aria-hidden="true"></i>
-            {showDoneKpi?"완료 숨김":"완료 표시 중"}
+            {showDoneKpi?"완료 숨김":"완료 포함"}
           </button>
         </div>
         <div className="kpi-mentor-strip">
@@ -9679,7 +9820,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
             <small>{focusEmployeeId==="all"?"전체 직원":personName(focusEmployeeId)}</small>
           </div>
           <div>
-            <span>사수/연결 직원</span>
+            <span>책임/참여 직원</span>
             <b>{selectedProject?(kpiRoleLine(selectedProject)||"담당자/사수 미지정"):"프로젝트를 선택하면 담당자와 사수가 보입니다"}</b>
             <small>{selectedProjectParticipants.length>0?selectedProjectParticipants.join(" · "):"연결된 주간·데일리 담당자가 아직 없습니다"}</small>
           </div>
