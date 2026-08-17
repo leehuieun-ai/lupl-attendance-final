@@ -3007,7 +3007,9 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     if(!isAdmin) return setMsg("GitHub Issue 전송은 관리자 승인이 필요합니다.");
     const target=visible.filter(row=>!["done","dismissed"].includes(row.status));
     if(target.length===0) return setMsg("GitHub Issue로 보낼 개선 요청이 없습니다.");
-    setMsg(""); setGithubBusy(true); setGithubIssue(null); setGithubIssues([]);
+    const imageRequestCount=target.filter((row:any)=>hasImprovementImageAttachment(row.attachments)).length;
+    setMsg(imageRequestCount>0?`첨부 이미지 ${imageRequestCount}건을 함께 분석한 뒤 GitHub Issue로 전송합니다.`:"GitHub Issue로 전송합니다.");
+    setGithubBusy(true); setGithubIssue(null); setGithubIssues([]);
     try {
       const {data:sessionData}=await supabase.auth.getSession();
       const token=sessionData.session?.access_token;
@@ -3043,7 +3045,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
       await load();
       setGithubIssues(createdIssues);
       setGithubIssue(createdIssues[0]??null);
-      setMsg(createdIssues.length===1?`GitHub Issue #${createdIssues[0]?.number} 생성 완료`:`GitHub Issue ${createdIssues.length}개 생성 완료`);
+      setMsg(createdIssues.length===1?`이미지 분석과 함께 GitHub Issue #${createdIssues[0]?.number} 생성 완료`:`이미지 분석과 함께 GitHub Issue ${createdIssues.length}개 생성 완료`);
     } catch(error:any) {
       setMsg(error.message||String(error));
     } finally {
@@ -3082,7 +3084,7 @@ function ImprovementRequestsPage({ currentEmployee, menuOptions }: { currentEmpl
     <section className="card improvement-page">
       <div className="section-head">
         <div><h2 className="card-title" style={{marginBottom:4}}><i className="ti ti-notes" aria-hidden="true"></i>개선 요청함</h2><p className="subtle" style={{margin:0}}>{isAdmin?"앱에서 바로 남긴 개선 메모가 쌓입니다. 처리한 항목은 개선완료로 정리합니다.":"내가 남긴 개선 요청과 처리 상태를 확인합니다."}</p></div>
-        <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.length===0||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"보내는 중":"GitHub Issue로 보내기"}</button>{isAdmin&&<button className="button ghost" onClick={backfillImageSummaries} disabled={imageBackfillBusy}><i className="ti ti-photo-scan" aria-hidden="true"></i>{imageBackfillBusy?"재분석 중":"기존 이미지 재분석"}</button>}{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={scopedRows.filter(row=>!isGithubSentRequest(row)).every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
+        <div className="actions"><button className="button secondary" onClick={createGithubIssue} disabled={isAdmin&&(githubBusy||visible.length===0||visible.every(row=>["done","dismissed"].includes(row.status)))}><i className="ti ti-brand-github" aria-hidden="true"></i>{githubBusy?"이미지 분석·전송 중":"이미지 분석 후 GitHub 전송"}</button>{isAdmin&&<button className="button ghost" onClick={backfillImageSummaries} disabled={imageBackfillBusy}><i className="ti ti-photo-scan" aria-hidden="true"></i>{imageBackfillBusy?"재분석 중":"기존 전송 이미지 재분석"}</button>}{isAdmin&&<button className="button ghost" onClick={markActiveDone} disabled={scopedRows.filter(row=>!isGithubSentRequest(row)).every(row=>["done","dismissed"].includes(row.status))}><i className="ti ti-checklist" aria-hidden="true"></i>전체 완료</button>}</div>
       </div>
       {msg&&<div className={`alert ${msg.includes("변경했습니다")||msg.includes("생성 완료")||msg.includes("재분석 완료")||msg.includes("관리자 승인")||msg.includes("수정했습니다")?"success":"error"}`}>{msg}</div>}
       {githubIssues.length>0&&<div className="alert success github-created-links">{githubIssues.map(issue=><a key={issue.number} href={issue.html_url} target="_blank" rel="noreferrer">GitHub Issue #{issue.number} 열기</a>)}</div>}
@@ -5468,6 +5470,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const body=stripKpiDateUnknown(note);
     return [unknown ? "[kpi-date-unknown]" : "", body].filter(Boolean).join("\n");
   }
+  function kpiWorkloadHidden(entry:any) {
+    return /\[kpi-workload-hidden\]/.test(String(entry?.admin_note??""));
+  }
+  function stripKpiWorkloadHidden(note?:string|null) {
+    return String(note??"").replace(/\[kpi-workload-hidden\]\s*/g,"").trim();
+  }
+  function withKpiWorkloadHiddenMeta(note:string,hidden:boolean) {
+    const body=stripKpiWorkloadHidden(note);
+    return [hidden ? "[kpi-workload-hidden]" : "", body].filter(Boolean).join("\n");
+  }
   function normalizedKpiDate(value:any) {
     const date=String(value??"").slice(0,10);
     return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "";
@@ -5502,7 +5514,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return String(note??"").replace(/\[프로젝트주제:[^\]\n]+\]\s*/g,"").trim();
   }
   function stripKpiAdminMeta(note?:string|null) {
-    return stripKpiDefaultTopicHidden(stripKpiDateUnknown(stripKpiProjectTopics(stripKpiConnectedEmployees(stripKpiNotionUrl(stripKpiProjectPeriod(note))))));
+    return stripKpiWorkloadHidden(stripKpiDefaultTopicHidden(stripKpiDateUnknown(stripKpiProjectTopics(stripKpiConnectedEmployees(stripKpiNotionUrl(stripKpiProjectPeriod(note)))))));
   }
   function withKpiProjectPeriod(note:string,start?:string,end?:string) {
     const body=stripKpiProjectPeriod(note);
@@ -6416,6 +6428,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const workEntries=entries.filter((entry:any)=>
       entry.scope!=="monthly"
       && entry.is_active!==false
+      && !kpiWorkloadHidden(entry)
       && kpiEntryOpenForWorkload(entry)
       && !isDailyRoutineEntry(entry)
       && !isNextKpiDraftEntry(entry)
@@ -6502,6 +6515,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const assignedEntries=entries.filter((entry:any)=>
       entry.scope!=="monthly"
       && entry.is_active!==false
+      && !kpiWorkloadHidden(entry)
       && !isDailyRoutineEntry(entry)
       && !isNextKpiDraftEntry(entry)
       && !isNextKpiDeferredEntry(entry)
@@ -6513,6 +6527,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const todayEntries=entries.filter((entry:any)=>
       entry.scope==="daily"
       && entry.is_active!==false
+      && !kpiWorkloadHidden(entry)
       && kpiEffectiveWorkDate(entry)===selectedDailyDate
       && entry.status!=="done"
       && !isDailyRoutineEntry(entry)
@@ -6523,6 +6538,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const weekDueEntries=entries.filter((entry:any)=>
       entry.scope==="daily"
       && entry.is_active!==false
+      && !kpiWorkloadHidden(entry)
       && kpiEntryWithinRange(entry,weekStart,weekEnd)
       && entry.status!=="done"
       && !isDailyRoutineEntry(entry)
@@ -6564,22 +6580,27 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   }
   async function deleteSelectedWorkloadEntries(employeeId:string) {
     const ids=(selectedWorkloadEntryIds[employeeId]??[]).filter(Boolean);
-    if(ids.length===0) return setMessage("삭제할 업무를 선택해주세요.");
-    if(!window.confirm(`선택한 KPI ${ids.length}건을 삭제할까요?`)) return;
+    if(ids.length===0) return setMessage("숨길 업무를 선택해주세요.");
+    if(!window.confirm(`선택한 KPI ${ids.length}건을 업무 분배 현황에서 숨길까요?\nKPI 기록 자체는 삭제되지 않습니다.`)) return;
     setSaving(true); setMessage("");
     try {
-      let result=await supabase.from("kpi_entries").update({
-        is_active:false,
-        updated_by:currentEmployee.id,
-        updated_at:new Date().toISOString(),
-      }).in("id",ids);
-      if(result.error&&/updated_by|schema cache/i.test(result.error.message)){
-        result=await supabase.from("kpi_entries").update({is_active:false,updated_at:new Date().toISOString()}).in("id",ids);
+      for(const id of ids) {
+        const entry=entries.find((row:any)=>row.id===id);
+        const patch={
+          admin_note:withKpiWorkloadHiddenMeta(entry?.admin_note??"",true),
+          updated_by:currentEmployee.id,
+          updated_at:new Date().toISOString(),
+        };
+        let result=await supabase.from("kpi_entries").update(patch).eq("id",id);
+        if(result.error&&/updated_by|schema cache/i.test(result.error.message)){
+          const {updated_by,...fallbackPatch}=patch;
+          result=await supabase.from("kpi_entries").update(fallbackPatch).eq("id",id);
+        }
+        if(result.error) throw result.error;
       }
-      if(result.error) throw result.error;
       setSelectedWorkloadEntryIds(prev=>({...prev,[employeeId]:[]}));
       await load();
-      setMessage(`선택한 KPI ${ids.length}건을 삭제했습니다.`);
+      setMessage(`선택한 KPI ${ids.length}건을 업무 분배 현황에서 숨겼습니다.`);
     } catch(e:any) {
       setMessage(e.message);
     } finally {
@@ -8613,7 +8634,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           <div className="kpi-workload-detail-actions">
                             <button type="button" className="button ghost compact" disabled={row.workEntries.length===0} onClick={()=>setWorkloadEntrySelection(row.employee.id,row.workEntries.map((entry:any)=>entry.id))}>전체 선택</button>
                             <button type="button" className="button ghost compact" disabled={selectedIds.length===0} onClick={()=>setWorkloadEntrySelection(row.employee.id,[])}>선택 해제</button>
-                            <button type="button" className="button danger ghost compact" disabled={saving||selectedIds.length===0} onClick={()=>deleteSelectedWorkloadEntries(row.employee.id)}>선택 삭제 {selectedIds.length>0?`${selectedIds.length}건`:""}</button>
+                            <button type="button" className="button danger ghost compact" disabled={saving||selectedIds.length===0} onClick={()=>deleteSelectedWorkloadEntries(row.employee.id)}>선택 숨김 {selectedIds.length>0?`${selectedIds.length}건`:""}</button>
                           </div>
                         </div>
                         <div className="kpi-workload-detail-columns">
@@ -9042,7 +9063,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   <div>
                     <b>전체 프로젝트</b>
                     <span>기간 {month}</span>
-                    <span>담당 {focusEmployeeId==="all"?"전체":personName(focusEmployeeId)}</span>
+                    <span>담당 전체</span>
                   </div>
                   <strong>{kpiCompletionRate(selectedActionDayEntries)??0}%</strong>
                   <small>오늘 {boardTotalCounts.today} · 주간 {boardTotalCounts.weekly} · 월간 {boardTotalCounts.monthly} · 전체 {boardTotalCounts.all}</small>
@@ -13411,6 +13432,14 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
     if(r.status==="pending") return true;
     return r.status==="approved"&&r.work_date>="2026-06-24"&&!!compAttendance(r)?.check_out_time;
   });
+  function hasOpenCompRequestOnDate(employeeId:string,dateIso:string) {
+    return compRequests.some((request:any)=>
+      request.employee_id===employeeId
+      && String(request.work_date??"").slice(0,10)===dateIso
+      && ["pending","approved"].includes(String(request.status??""))
+      && !actualCompSettled(request)
+    );
+  }
   const pT=workTimeRequests.filter(r=>r.status==="pending");
   const pA=attendanceCorrectionRequests
     .filter(r=>["pending","objected"].includes(r.status))
@@ -13435,6 +13464,8 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       .map((log:any)=>{
         const employee=empMap[log.employee_id];
         if(!employee) return null;
+        const workDate=localDateStr(log.check_in_time);
+        if(hasOpenCompRequestOnDate(employee.id,workDate)) return null;
         const target=checkoutReminderTarget(log,employee,overrides,compRequests,approvedWorkTimeChanges,requests);
         const overdue=localDateStr(log.check_in_time)<todayIso() || (!!target&&Date.now()>target.getTime()+30*60000);
         if(!overdue) return null;
@@ -13443,7 +13474,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
           employee,
           log,
           kind:"퇴근 미기록",
-          workDate:localDateStr(log.check_in_time),
+          workDate,
           detail:`출근 ${formatDateTime(log.check_in_time)} · 기준 퇴근 ${target?timeOnly(target.toISOString()):"-"}`,
         };
       })
@@ -13452,6 +13483,7 @@ function AdminPage({ currentEmployee, onChanged, view="dashboard", onNavigate }:
       .filter((employee:any)=>!todayLogByEmployee[employee.id]&&!hasPendingAttendanceCorrection(employee.id))
       .map((employee:any)=>{
         const workDate=todayIso();
+        if(hasOpenCompRequestOnDate(employee.id,workDate)) return null;
         if(absences.some((absence:any)=>absence.employee_id===employee.id&&workDate>=absence.start_date&&workDate<=absence.end_date)) return null;
         const info=scheduleInfoForDateWithEvents(employee,workDate,scheduleEvents,overrides,approvedWorkTimeChanges);
         const schedule={...info.schedule,work_start:info.start,work_end:info.end,work_days:info.workday?[dayKeyFromDate(dateFromIso(workDate))]:[]};

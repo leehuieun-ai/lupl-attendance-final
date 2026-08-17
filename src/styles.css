@@ -3962,8 +3962,9 @@ body { overflow-x: hidden; }
 }
 .kpi-topic-add-row {
   display: grid;
-  grid-template-columns: minmax(240px,1fr) auto;
-  gap: 8px;
+  grid-template-columns: minmax(0,1fr) minmax(96px,auto);
+  gap: 10px;
+  align-items: center;
   border-bottom: 1px solid #edf1f7;
   background: color-mix(in srgb,var(--employee-color,#0c66e4) 4%,#fff);
   padding: 10px 12px;
@@ -4055,9 +4056,14 @@ body { overflow-x: hidden; }
 }
 .kpi-topic-add-row .input,
 .kpi-topic-inline-add .input {
-  min-height: 38px;
+  min-width: 0;
+  min-height: 40px;
   border-radius: 7px;
   font-size: 13px;
+}
+.kpi-topic-add-row .button {
+  min-height: 40px;
+  white-space: nowrap;
 }
 .kpi-topic-inline-add .kpi-topic-paste-input {
   min-height: 44px;
