@@ -4892,6 +4892,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [editingKpi,setEditingKpi]=useState<any|null>(null);
   const [editKpiDraft,setEditKpiDraft]=useState({title:"",admin_note:"",scope:"daily" as "daily"|"weekly"|"monthly",status:"pending" as "pending"|"done"|"missed",parentId:"",employeeId:"",mentorEmployeeId:"",connectedEmployeeIds:[] as string[],projectStart:"",projectEnd:"",notionUrl:"",workDate:""});
   const [projectEditorId,setProjectEditorId]=useState(initialKpiUiState.projectEditorId??"");
+  const [projectEditorCreating,setProjectEditorCreating]=useState(false);
   const [projectEditorDraft,setProjectEditorDraft]=useState(initialKpiUiState.projectEditorDraft??{
     title:"",
     projectStart:monthStartIso(todayIso().slice(0,7)),
@@ -7303,6 +7304,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const topics=project?parseKpiProjectTopics(project.admin_note):[];
     const start=period?.start??quickProjectPeriod.start??monthStart;
     const end=period?.end??quickProjectPeriod.end??monthEnd;
+    setProjectEditorCreating(!project);
     setProjectEditorId(project?.id??"");
     setProjectEditorDraft({
       title:project?.title??"",
@@ -7334,9 +7336,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     }
   }
   useEffect(()=>{
-    if(!isAdminView||projectEditorId||operatingProjectGoals.length===0) return;
+    if(!isAdminView||projectEditorCreating||projectEditorId||operatingProjectGoals.length===0) return;
     hydrateProjectEditor(operatingProjectGoals[0]);
-  },[isAdminView,projectEditorId,operatingProjectGoals.length]);
+  },[isAdminView,projectEditorCreating,projectEditorId,operatingProjectGoals.length]);
   function toggleProjectEditorEmployee(id:string) {
     setProjectEditorDraft(draft=>{
       const current=draft.connectedEmployeeIds.includes(id)
@@ -7382,9 +7384,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const selectedPlanTopic=(projectEditorPlanTopic||"기본 흐름").trim()||"기본 흐름";
     setSaving(true); setMessage("");
     try {
-      const currentProject=projectEditorId ? entries.find((entry:any)=>entry.id===projectEditorId) : null;
+      const currentProject=!projectEditorCreating&&projectEditorId ? entries.find((entry:any)=>entry.id===projectEditorId) : null;
       const previousProjectAssigneeIds=currentProject ? projectDirectAssigneeIds(currentProject) : [];
-      const existingTopics=projectEditorId ? parseKpiProjectTopics(currentProject?.admin_note) : [];
+      const existingTopics=currentProject ? parseKpiProjectTopics(currentProject?.admin_note) : [];
       const nextTopics=Array.from(new Set<string>(([...existingTopics,selectedPlanTopic].filter(Boolean)) as string[]));
       const projectMetaNote=withKpiProjectMeta(projectEditorDraft.adminNote.trim(),start,end,projectEditorDraft.notionUrl,connectedIds);
       const adminNote=nextTopics.length>0 ? withKpiProjectTopicListMeta(projectMetaNote,nextTopics) : projectMetaNote;
@@ -7405,9 +7407,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         created_by:currentEmployee.id,
         updated_by:currentEmployee.id,
         updated_at:new Date().toISOString(),
-        ...(projectEditorId ? {} : {sort_order:entries.filter((entry:any)=>entry.scope==="monthly").length+1}),
+        ...(!projectEditorCreating&&projectEditorId ? {} : {sort_order:entries.filter((entry:any)=>entry.scope==="monthly").length+1}),
       };
-      let savedProjectId=projectEditorId;
+      let savedProjectId=!projectEditorCreating ? projectEditorId : "";
       if(savedProjectId) {
         let result=await supabase.from("kpi_entries").update(projectPayload).eq("id",savedProjectId);
         if(result.error&&optionalKpiColumnError(result.error)){
@@ -7507,6 +7509,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       }
       setActiveProjectDetailId(savedProjectId||"all");
       setProjectDetailEditorOpen(true);
+      setProjectEditorCreating(false);
       setProjectEditorPlanTopic(selectedPlanTopic);
       await load();
       setProjectEditorId(savedProjectId||"");
@@ -9250,11 +9253,6 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   {projectNotionUrl(mindMapProject)&&<button type="button" className="kpi-notion-link" onClick={()=>window.open(projectNotionUrl(mindMapProject),"_blank","noopener,noreferrer")}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</button>}
                 </div>
                 <div className="kpi-project-detail-tools">
-                  {isAdminView&&(
-                    <button type="button" className="button compact" onClick={openNewKpiProjectEditor}>
-                      <i className="ti ti-plus" aria-hidden="true"></i>새 프로젝트
-                    </button>
-                  )}
                   <label className={`kpi-hide-done-toggle${!showDoneKpi?" active":""}`}>
                     <input type="checkbox" checked={!showDoneKpi} onChange={event=>setShowDoneKpi(!event.target.checked)} />
                     <span>완료 포함</span>
