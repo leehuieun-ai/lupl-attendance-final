@@ -4462,6 +4462,131 @@ body { overflow-x: hidden; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.change-request-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  border: 1px solid #b8c7e6;
+  border-radius: 999px;
+  background: #f4f7ff;
+  color: #2f4f8f;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.change-request-badge.inline {
+  align-self: center;
+  margin-right: 86px;
+}
+.kpi-change-review-panel {
+  border: 1px solid #d8e2f1;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.kpi-change-review-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #eef2f7;
+  padding-bottom: 9px;
+}
+.kpi-change-review-head div {
+  display: grid;
+  gap: 2px;
+}
+.kpi-change-review-head span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+.kpi-change-review-head b {
+  color: #172033;
+  font-size: 15px;
+  font-weight: 720;
+}
+.kpi-change-review-head small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 430;
+}
+.kpi-change-review-list {
+  display: grid;
+  gap: 8px;
+}
+.kpi-change-review-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 12px;
+  align-items: start;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+.kpi-change-review-row > div:first-child {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.kpi-change-review-row span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+}
+.kpi-change-review-row b {
+  color: #172033;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.kpi-change-review-row dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+.kpi-change-review-row dl div {
+  display: grid;
+  grid-template-columns: 76px minmax(0,1fr);
+  gap: 8px;
+  align-items: center;
+}
+.kpi-change-review-row dt {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+}
+.kpi-change-review-row dd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+}
+.kpi-change-review-row dd em,
+.kpi-change-review-row dd strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-style: normal;
+}
+.kpi-change-review-row dd strong {
+  color: #0f3b78;
+  font-weight: 720;
+}
+.kpi-change-review-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
 .kpi-topic-edit-row {
   min-width: 0;
   display: grid;

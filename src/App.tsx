@@ -1327,6 +1327,9 @@ function optionalKpiColumnError(error:any) {
 function optionalKpiPersistenceError(error:any) {
   return /kpi_entry_comments|kpi_daily_routine_checks|relation .* does not exist|schema cache|column .* does not exist/i.test(String(error?.message??""));
 }
+function optionalKpiChangeRequestError(error:any) {
+  return /kpi_entry_change_requests|relation .* does not exist|schema cache|PGRST205|42P01/i.test(String(error?.message??error?.code??""));
+}
 function readStoredRecord(key:string) {
   try {
     const value=localStorage.getItem(key);
@@ -4878,6 +4881,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [kpiAssigneeDrafts,setKpiAssigneeDrafts]=useState<Record<string,string[]>>({});
   const [openRecordProjectGroups,setOpenRecordProjectGroups]=useState<Record<string,boolean>>({});
   const [kpiTaskComments,setKpiTaskComments]=useState<Record<string,any[]>>(()=>readStoredRecord("lupl_kpi_task_comments"));
+  const [kpiChangeRequests,setKpiChangeRequests]=useState<any[]>([]);
   const [dailyLogItems,setDailyLogItems]=useState<Record<string,any[]>>(()=>readStoredRecord("lupl_kpi_daily_log_items"));
   const [dailyLogDragEntryId,setDailyLogDragEntryId]=useState("");
   const [dailyLogResize,setDailyLogResize]=useState<any|null>(null);
@@ -5031,7 +5035,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   async function load() {
     setMessage("");
     const employeeQuery=supabase.from("employees").select("id,name,employee_no,is_active,employment_status,department,position,works_user_id,joined_at,created_at,work_start_date,contract_start,contract_end,work_end_date,employment_end_date,resigned_at,resignation_date,quit_date,ended_at,work_days,work_start,work_end").order("employee_no",{ascending:true});
-    const [entryResult,employeeResult,rnrResult,attendanceLogResult,leaveResult,scheduleEventResult,scheduleOverrideResult,workTimeChangeResult,compTimeResult]=await Promise.all([
+    const [entryResult,employeeResult,rnrResult,attendanceLogResult,leaveResult,scheduleEventResult,scheduleOverrideResult,workTimeChangeResult,compTimeResult,changeRequestResult]=await Promise.all([
       supabase.from("kpi_entries").select("*").eq("is_active",true).gte("work_date",yearStart).lte("work_date",yearEnd).order("work_date",{ascending:false}).order("sort_order",{ascending:true}),
       employeeQuery,
       supabase.from("rnr_entries").select("*").eq("is_active",true).order("created_at",{ascending:false}).limit(200),
@@ -5041,6 +5045,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       supabase.from("weekly_schedule_overrides").select("*").gte("week_start",yearStart).lte("week_start",yearEnd).order("week_start",{ascending:false}).limit(200),
       supabase.from("work_time_change_requests").select("*").eq("status","approved").order("created_at",{ascending:false}).limit(500),
       supabase.from("comp_time_requests").select("*").in("status",["pending","approved"]).gte("work_date",yearStart).lte("work_date",yearEnd).order("work_date",{ascending:true}),
+      supabase.from("kpi_entry_change_requests").select("*").order("created_at",{ascending:false}).limit(300),
     ]);
     if(entryResult.error) setMessage("KPI 테이블이 아직 반영되지 않았습니다. Supabase SQL 패치를 먼저 실행해주세요.");
     let kpiEmployeeRows:any[]=employeeResult.data??[];
@@ -5064,6 +5069,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     setKpiScheduleOverrides(scheduleOverrideResult.error?[]:scheduleOverrideResult.data??[]);
     setKpiWorkTimeChanges(workTimeChangeResult.error?[]:workTimeChangeResult.data??[]);
     setKpiCompTimeRequests(compTimeResult.error?[]:compTimeResult.data??[]);
+    if(changeRequestResult.error&&!optionalKpiChangeRequestError(changeRequestResult.error)) {
+      setMessage(`KPI 수정 요청을 불러오지 못했습니다: ${changeRequestResult.error.message}`);
+      setKpiChangeRequests([]);
+    } else {
+      setKpiChangeRequests(changeRequestResult.error?[]:changeRequestResult.data??[]);
+    }
   }
   useEffect(()=>{ load(); },[month,currentEmployee.id,isAdminView]);
   useEffect(()=>{
@@ -5793,6 +5804,54 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function canEditKpiEntry(entry:any) {
     if(entry?.scope==="monthly") return isAdminView;
     return canManageKpi(entry);
+  }
+  function canRequestKpiEntryChange(entry:any) {
+    if(isAdminView||!entry?.id) return false;
+    const project=kpiProjectFromList(entry)??(entry.scope==="monthly"?entry:null);
+    if(project?.employee_id===currentEmployee.id) return true;
+    return entryDirectlyAssignedToEmployee(entry,currentEmployee.id);
+  }
+  function canOpenKpiEntryEditor(entry:any) {
+    return canEditKpiEntry(entry)||canRequestKpiEntryChange(entry);
+  }
+  function pendingKpiChangeRequestForEntry(entry:any) {
+    return kpiChangeRequests.find((request:any)=>request?.status==="pending"&&request.entry_id===entry?.id)??null;
+  }
+  function projectPendingKpiChangeRequests(project:any) {
+    if(!project?.id) return [];
+    const linkedIds=new Set(projectLinkedEntries(project).map((entry:any)=>entry.id));
+    linkedIds.add(project.id);
+    return kpiChangeRequests.filter((request:any)=>request?.status==="pending"&&(request.project_id===project.id||linkedIds.has(request.entry_id)));
+  }
+  function kpiChangePatchLabel(key:string) {
+    const labels:Record<string,string>={
+      title:"내용",
+      scope:"구분",
+      status:"상태",
+      parent_id:"연결",
+      work_date:"날짜",
+      due_date:"기한",
+      project_start:"시작일",
+      project_end:"마감일",
+    };
+    return labels[key]??key;
+  }
+  function kpiChangeValueLabel(key:string,value:any) {
+    if(value===null||value===undefined||value==="") return "미정";
+    if(key==="scope") return value==="monthly"?"프로젝트":value==="weekly"?"주요 업무":value==="daily"?"실행 항목":String(value);
+    if(key==="status") return kpiStatusLabel(value);
+    if(key==="parent_id") return entries.find((entry:any)=>entry.id===value)?.title??"연결 없음";
+    return String(value);
+  }
+  function kpiChangeRequestRows(request:any) {
+    const before=request?.before_patch??{};
+    const after=request?.after_patch??{};
+    return Object.keys(after).filter(key=>String(before[key]??"")!==String(after[key]??"")).map(key=>({
+      key,
+      label:kpiChangePatchLabel(key),
+      before:kpiChangeValueLabel(key,before[key]),
+      after:kpiChangeValueLabel(key,after[key]),
+    }));
   }
   function canMoveKpi(entry:any) {
     return isAdminView || entry?.employee_id===currentEmployee.id;
@@ -7071,6 +7130,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           {!isAdminView&&projectFlowEntryIsMine(entry)&&<strong className="mine-badge">내 담당</strong>}
           {entry.status==="done"&&<strong>완료</strong>}
         </span>
+        {pendingKpiChangeRequestForEntry(entry)&&<span className="change-request-badge inline">검토중</span>}
         {renderProjectFlowCardActions(entry)}
       </div>
     );
@@ -8164,7 +8224,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     );
   }
   function renderProjectFlowCardActions(entry:any) {
-    if(!isAdminView||!canEditKpiEntry(entry)) return null;
+    if(!canOpenKpiEntryEditor(entry)) return null;
+    const pendingRequest=pendingKpiChangeRequestForEntry(entry);
+    if(!isAdminView) {
+      return (
+        <div className="kpi-flow-card-actions" onClick={event=>event.stopPropagation()}>
+          <button type="button" title={pendingRequest?"검토 요청 있음":"수정 요청"} disabled={saving} onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
+        </div>
+      );
+    }
     return (
       <div className="kpi-flow-card-actions" onClick={event=>event.stopPropagation()}>
         <button type="button" title="완료" disabled={saving||entry.status==="done"} onClick={()=>updateKpiStatus(entry,"done")}><i className="ti ti-check" aria-hidden="true"></i></button>
@@ -8264,6 +8332,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   async function deleteKpiEntry(entry:any) {
     if(!entry?.id) return;
     if(entry.scope==="monthly") return deleteKpiProject(entry);
+    if(!isAdminView&&canRequestKpiEntryChange(entry)) return setMessage("삭제는 관리자 검토가 필요합니다. 관리자에게 요청해주세요.");
     if(!canManageKpi(entry)) return setMessage("본인 KPI만 삭제할 수 있습니다.");
     if(!window.confirm(`${entry.title} KPI를 삭제할까요?`)) return;
     setSaving(true); setMessage("");
@@ -8346,6 +8415,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     }
   }
   function beginEditKpi(entry:any) {
+    if(!isAdminView&&canRequestKpiEntryChange(entry)) {
+      const projectPeriod=kpiProjectPeriod(entry);
+      setEditingKpi(entry);
+      const assigneeIds=editableAssigneeIdsFromEntry(entry);
+      setEditKpiDraft({title:entry.title??"",admin_note:stripKpiAdminMeta(entry.admin_note??""),scope:entry.scope??"daily",status:entry.status??"pending",parentId:entry.parent_id??"",employeeId:assigneeIds[0]??"",mentorEmployeeId:"",connectedEmployeeIds:assigneeIds.slice(1),projectStart:projectPeriod?.start??"",projectEnd:projectPeriod?.end??"",notionUrl:parseKpiNotionUrl(entry.admin_note??""),workDate:kpiEffectiveWorkDate(entry)});
+      return;
+    }
     if(entry.scope==="monthly"&&!isAdminView) return setMessage("프로젝트 수정은 관리자만 할 수 있습니다.");
     if(!canEditKpiEntry(entry)) return setMessage("본인 KPI만 수정할 수 있습니다.");
     const projectPeriod=kpiProjectPeriod(entry);
@@ -8365,11 +8441,107 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       workDate:nextDateForEditingKpi(),
     });
   }
+  function isEditingKpiChangeRequestMode() {
+    return !!editingKpi&&!isAdminView&&canRequestKpiEntryChange(editingKpi);
+  }
+  function editedKpiChangePatch() {
+    const newScope=editKpiDraft.scope;
+    const newParentId=editKpiDraft.parentId||null;
+    const newWorkDate=editKpiDraft.workDate||String(editingKpi?.work_date??"").slice(0,10)|| (newScope==="daily"?selectedDailyDate:newScope==="weekly"?weekStart:monthStart);
+    const newDueDate=newScope==="monthly" ? null : (editKpiDraft.workDate||null);
+    const patch:any={
+      title:editKpiDraft.title.trim(),
+      scope:newScope,
+      status:editKpiDraft.status||editingKpi?.status||"pending",
+      parent_id:newParentId,
+      work_date:newWorkDate,
+      due_date:newDueDate,
+    };
+    if(newScope==="monthly") {
+      patch.project_start=editKpiDraft.projectStart||null;
+      patch.project_end=editKpiDraft.projectEnd||null;
+    }
+    return patch;
+  }
+  function editedKpiBeforePatch(entry:any) {
+    const patch:any={
+      title:entry?.title??"",
+      scope:entry?.scope??"daily",
+      status:entry?.status??"pending",
+      parent_id:entry?.parent_id??null,
+      work_date:String(entry?.work_date??"").slice(0,10),
+      due_date:entry?.due_date??null,
+      project_start:entry?.project_start??kpiProjectPeriod(entry)?.start??null,
+      project_end:entry?.project_end??kpiProjectPeriod(entry)?.end??null,
+    };
+    return patch;
+  }
+  async function submitKpiChangeRequest(entry:any,afterPatch:any) {
+    const beforePatch=editedKpiBeforePatch(entry);
+    const changedKeys=Object.keys(afterPatch).filter(key=>String(beforePatch[key]??"")!==String(afterPatch[key]??""));
+    if(changedKeys.length===0) return setMessage("변경된 내용이 없습니다.");
+    const project=kpiProjectFromList(entry)??(entry?.scope==="monthly"?entry:null);
+    setSaving(true); setMessage("");
+    try {
+      const {error}=await supabase.from("kpi_entry_change_requests").insert({
+        entry_id:entry.id,
+        project_id:project?.id??null,
+        request_type:"edit",
+        requested_by:currentEmployee.id,
+        before_patch:beforePatch,
+        after_patch:Object.fromEntries(changedKeys.map(key=>[key,afterPatch[key]])),
+        status:"pending",
+      });
+      if(error) {
+        if(optionalKpiChangeRequestError(error)) throw new Error("수정 요청 테이블이 아직 없습니다. supabase/patch_20260818_kpi_entry_change_requests.sql 실행 후 다시 요청해주세요.");
+        throw error;
+      }
+      setEditingKpi(null);
+      await load();
+      setMessage("관리자 검토 요청을 보냈습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function reviewKpiChangeRequest(request:any,status:"approved"|"rejected") {
+    if(!isAdminView||!request?.id) return;
+    const reviewNote=status==="rejected" ? (window.prompt("반려 사유를 적어주세요.")??"") : "";
+    if(status==="rejected"&&reviewNote===null) return;
+    setSaving(true); setMessage("");
+    try {
+      if(status==="approved") {
+        const patch=request.after_patch??{};
+        const result=await updateKpiEntryWithFallback(request.entry_id,{
+          ...patch,
+          updated_by:currentEmployee.id,
+          updated_at:new Date().toISOString(),
+        });
+        if(result.error) throw result.error;
+      }
+      const {error}=await supabase.from("kpi_entry_change_requests").update({
+        status,
+        reviewed_by:currentEmployee.id,
+        review_note:reviewNote,
+        reviewed_at:new Date().toISOString(),
+        updated_at:new Date().toISOString(),
+      }).eq("id",request.id);
+      if(error) throw error;
+      await load();
+      setMessage(status==="approved"?"수정 요청을 검수하고 반영했습니다.":"수정 요청을 반려했습니다.");
+    } catch(e:any) {
+      setMessage(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
   async function saveEditedKpi() {
     if(!editingKpi?.id) return;
     const title=editKpiDraft.title.trim();
     if(!title) return setMessage("KPI 내용을 입력해주세요.");
     if(editKpiDraft.scope==="monthly"&&editKpiDraft.projectStart&&editKpiDraft.projectEnd&&editKpiDraft.projectEnd<editKpiDraft.projectStart) return setMessage("프로젝트 종료일은 시작일 이후로 입력해주세요.");
+    if(!isAdminView&&canRequestKpiEntryChange(editingKpi)) return submitKpiChangeRequest(editingKpi,editedKpiChangePatch());
     const previousTitle=editingKpi.title;
     const newScope=editKpiDraft.scope;
     const assigneeIds=editKpiAssigneeIds();
@@ -9278,6 +9450,45 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   )}
                 </div>
               </article>
+              {isAdminView&&projectPendingKpiChangeRequests(mindMapProject).length>0&&(
+                <section className="kpi-change-review-panel">
+                  <div className="kpi-change-review-head">
+                    <div>
+                      <span>수정 검토</span>
+                      <b>책임자 수정 요청 {projectPendingKpiChangeRequests(mindMapProject).length}건</b>
+                    </div>
+                    <small>검수하면 요청 내용이 실제 KPI에 반영됩니다.</small>
+                  </div>
+                  <div className="kpi-change-review-list">
+                    {projectPendingKpiChangeRequests(mindMapProject).map((request:any)=>{
+                      const entry=entries.find((item:any)=>item.id===request.entry_id);
+                      const rows=kpiChangeRequestRows(request);
+                      return (
+                        <article className="kpi-change-review-row" key={request.id}>
+                          <div>
+                            <span>{personName(request.requested_by)} 요청</span>
+                            <b>{entry?.title??request.after_patch?.title??"KPI 항목"}</b>
+                            {rows.length>0&&(
+                              <dl>
+                                {rows.map(row=>(
+                                  <div key={row.key}>
+                                    <dt>{row.label}</dt>
+                                    <dd><em>{row.before}</em><i className="ti ti-arrow-right" aria-hidden="true"></i><strong>{row.after}</strong></dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            )}
+                          </div>
+                          <div className="kpi-change-review-actions">
+                            <button type="button" className="button compact" disabled={saving} onClick={()=>reviewKpiChangeRequest(request,"approved")}>검수</button>
+                            <button type="button" className="button ghost compact" disabled={saving} onClick={()=>reviewKpiChangeRequest(request,"rejected")}>반려</button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
               {isAdminView&&projectDetailEditorOpen&&(
                 <section className={`kpi-project-editor-card detail-editor ${projectEditorPlanOpen?"plan-open":"plan-closed"}`} style={kpiLinkedStyle(mindMapProject)}>
                   <section className="kpi-project-editor-main">
@@ -9532,6 +9743,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                     {!isAdminView&&projectFlowEntryIsMine(weekly)&&<strong className="mine-badge">내 담당</strong>}
                                     {weekly.status==="done"&&<strong>완료</strong>}
                                   </span>
+                                  {pendingKpiChangeRequestForEntry(weekly)&&<span className="change-request-badge inline">검토중</span>}
                                   {renderProjectFlowCardActions(weekly)}
                                 </div>
                                 {renderKpiAssigneeControl(weekly)}
@@ -9807,7 +10019,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <label className="label">날짜 이동</label>
               <input className="input" type="date" value={editKpiDraft.workDate} onChange={e=>setEditKpiDraft({...editKpiDraft,workDate:e.target.value})} />
             </div>
-            {isAdminView&&editKpiDraft.scope==="monthly"&&(
+            {(isAdminView||isEditingKpiChangeRequestMode())&&editKpiDraft.scope==="monthly"&&(
               <div className="kpi-project-meta-edit">
                 <div className="kpi-period-inputs">
                   <label><span>프로젝트 시작</span><input className="input" type="date" value={editKpiDraft.projectStart} onChange={e=>setEditKpiDraft({...editKpiDraft,projectStart:e.target.value})} /></label>
