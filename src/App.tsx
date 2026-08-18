@@ -7323,6 +7323,16 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       : "";
     setProjectEditorWeeklyPlan(plan);
   }
+  function openNewKpiProjectEditor() {
+    if(!isAdminView) return;
+    hydrateProjectEditor(null);
+    setProjectDetailEditorOpen(true);
+    setProjectEditorPlanOpen(false);
+    setProjectFlowEditingTopic(null);
+    if(activeProjectDetailId==="all"&&operatingProjectGoals[0]) {
+      setActiveProjectDetailId(operatingProjectGoals[0].id);
+    }
+  }
   useEffect(()=>{
     if(!isAdminView||projectEditorId||operatingProjectGoals.length===0) return;
     hydrateProjectEditor(operatingProjectGoals[0]);
@@ -9193,7 +9203,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <b>{mindMapProject ? mindMapProject.title : "전체 프로젝트"}</b>
               <small>프로젝트별 주요 업무와 실행 항목을 한눈에 보고, 내가 맡은 일과 다음 할 일을 확인합니다.</small>
             </div>
-            <em>{mindMapProject ? "세부 보기" : `${operatingProjectGoals.length}개 프로젝트`}</em>
+            <div className="kpi-bottom-mindmap-actions">
+              {isAdminView&&(
+                <button type="button" className="button compact" onClick={openNewKpiProjectEditor}>
+                  <i className="ti ti-plus" aria-hidden="true"></i>새 프로젝트
+                </button>
+              )}
+              <em>{mindMapProject ? "세부 보기" : `${operatingProjectGoals.length}개 프로젝트`}</em>
+            </div>
           </div>
           <div className="kpi-project-detail-layout">
             <aside className="kpi-project-detail-sidebar">
@@ -9233,6 +9250,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   {projectNotionUrl(mindMapProject)&&<button type="button" className="kpi-notion-link" onClick={()=>window.open(projectNotionUrl(mindMapProject),"_blank","noopener,noreferrer")}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 페이지로 가기</button>}
                 </div>
                 <div className="kpi-project-detail-tools">
+                  {isAdminView&&(
+                    <button type="button" className="button compact" onClick={openNewKpiProjectEditor}>
+                      <i className="ti ti-plus" aria-hidden="true"></i>새 프로젝트
+                    </button>
+                  )}
                   <label className={`kpi-hide-done-toggle${!showDoneKpi?" active":""}`}>
                     <input type="checkbox" checked={!showDoneKpi} onChange={event=>setShowDoneKpi(!event.target.checked)} />
                     <span>완료 포함</span>
