@@ -4840,7 +4840,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     catch { initialKpiUiStateRef.current={}; }
   }
   const initialKpiUiState=initialKpiUiStateRef.current??{};
-  const [month,setMonth]=useState(initialKpiUiState.month??todayIso().slice(0,7));
+  const initialKpiToday=todayIso();
+  const initialKpiStateIsToday=initialKpiUiState.stateDate===initialKpiToday;
+  const initialKpiMonth=initialKpiStateIsToday&&initialKpiUiState.month ? initialKpiUiState.month : initialKpiToday.slice(0,7);
+  const initialKpiDailyDate=initialKpiStateIsToday&&isStrictIsoDate(initialKpiUiState.quickDailyDate) ? initialKpiUiState.quickDailyDate : initialKpiToday;
+  const [month,setMonth]=useState(initialKpiMonth);
   const [employees,setEmployees]=useState<any[]>([]);
   const [entries,setEntries]=useState<any[]>([]);
   const [scoreEntries,setScoreEntries]=useState<any[]>([]);
@@ -4852,7 +4856,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const [quickEmployeeIds,setQuickEmployeeIds]=useState<string[]>(initialKpiUiState.quickEmployeeIds??(isAdminView?[]:[currentEmployee.id]));
   const [quickMonthlyParentId,setQuickMonthlyParentId]=useState("");
   const [quickWeeklyParentId,setQuickWeeklyParentId]=useState("");
-  const [quickDailyDate,setQuickDailyDate]=useState(initialKpiUiState.quickDailyDate??todayIso());
+  const [quickDailyDate,setQuickDailyDate]=useState(initialKpiDailyDate);
   const [quickProjectNotionUrl,setQuickProjectNotionUrl]=useState("");
   const [quickProjectPeriod,setQuickProjectPeriod]=useState(()=>{
     const currentMonth=todayIso().slice(0,7);
@@ -5081,6 +5085,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   useEffect(()=>{
     try {
       sessionStorage.setItem(kpiUiStateKey,JSON.stringify({
+        stateDate: today,
         month,
         quickDrafts,
         quickEmployeeId,
@@ -5390,16 +5395,17 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     }
   });
   function employeeCountsInDailyAccumulation(employee:any,dateIso=selectedDailyDate) {
-    if(!employee?.id||!isKpiVisibleEmployeeOnDate(employee,dateIso)) return false;
-    if(employeeLongAbsenceForKpi(employee,dateIso)) return false;
-    return true;
+    return !!employee?.id
+      && isKpiVisibleEmployeeOnDate(employee,dateIso)
+      && !employeeLongAbsenceForKpi(employee,dateIso);
   }
   function employeeCanAppearInDailyAccumulation(employee:any,dateIso=selectedDailyDate) {
     return employeeCountsInDailyAccumulation(employee,dateIso);
   }
-  const dailyAccumulationEmployeeIds=new Set(Array.from(employeeMap.values())
+  const dailyAccumulationPeople=employees
     .filter((employee:any)=>employeeCanAppearInDailyAccumulation(employee,selectedDailyDate))
-    .map((employee:any)=>employee.id));
+    .sort(sortEmployeesByEmployeeNo);
+  const dailyAccumulationEmployeeIds=new Set(dailyAccumulationPeople.map((employee:any)=>employee.id));
   function scoreStripEmployeeVisible(employee:any) {
     if(!employee?.id||!isEmployeeActive(employee)) return false;
     if(employeeLongAbsenceForKpi(employee,selectedDailyDate)) return false;
@@ -5407,9 +5413,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(kpiView==="daily") return isAdminView ? dailyAccumulationEmployeeIds.has(employee.id) : isKpiVisibleEmployeeOnDate(employee,selectedDailyDate);
     return isKpiVisibleEmployee(employee);
   }
-  const scorePeople=Array.from(employeeMap.values())
-    .filter((employee:any)=>employee.id&&scoreStripEmployeeVisible(employee))
-    .sort(sortEmployeesByEmployeeNo);
+  const scorePeople=(isAdminView&&kpiView==="daily"
+    ? dailyAccumulationPeople
+    : Array.from(employeeMap.values()).filter((employee:any)=>employee.id&&scoreStripEmployeeVisible(employee))
+  ).sort(sortEmployeesByEmployeeNo);
   const kpiColorPeople=activeKpiEmployees();
   function employeeSortValue(id:string) {
     const employee=employeeMap.get(id);
@@ -6336,6 +6343,12 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     .sort((a:any,b:any)=>kpiEffectiveDateForSort(b).localeCompare(kpiEffectiveDateForSort(a))||(b.sort_order??0)-(a.sort_order??0));
   const operatingProjectGoals=monthlyGoals
     .sort((a:any,b:any)=>projectFlowSortValue(a)-projectFlowSortValue(b)||String(a.work_date??"").localeCompare(String(b.work_date??""))||String(a.created_at??"").localeCompare(String(b.created_at??"")));
+  const responsibleOperatingProjectGoals=isAdminView
+    ? operatingProjectGoals
+    : operatingProjectGoals.filter((goal:any)=>goal.employee_id===currentEmployee.id);
+  const participantOperatingProjectGoals=!isAdminView
+    ? operatingProjectGoals.filter((goal:any)=>goal.employee_id!==currentEmployee.id&&projectDirectAssigneeIds(goal).includes(currentEmployee.id))
+    : [];
   const operatingRnrCandidates=(()=>{
     const groups=new Map<string,any>();
     operatingMonthDoneEntries.forEach((entry:any)=>{
@@ -9061,7 +9074,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 <span>내 프로젝트</span>
                 <b>월 목표에서 오늘 일까지</b>
               </div>
-              <em>{operatingProjectGoals.length}개</em>
+              <em>{isAdminView?operatingProjectGoals.length:responsibleOperatingProjectGoals.length+participantOperatingProjectGoals.length}개</em>
             </div>
             <div className="kpi-ops-project-list">
               {operatingProjectGoals.length===0&&<p className="kpi-ops-empty">연결된 월간 프로젝트가 없습니다. 월간 KPI를 만들면 여기서 진행 상황을 모아봅니다.</p>}
@@ -9077,14 +9090,15 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   <i><em style={{width:`${Math.max(0,Math.min(100,kpiCompletionRate(selectedActionDayEntries)??0))}%`}}></em></i>
                 </button>
               )}
-              {operatingProjectGoals.map((goal:any)=>{
+              {!isAdminView&&responsibleOperatingProjectGoals.length>0&&<span className="kpi-project-list-label">내가 책임인 프로젝트</span>}
+              {(isAdminView?operatingProjectGoals:responsibleOperatingProjectGoals).map((goal:any)=>{
                 const summary=projectSummary(goal);
                 const participantIds=projectParticipantIds(goal);
                 const notionUrl=projectNotionUrl(goal);
                 return (
                   <button type="button" className={`kpi-ops-project${activeProjectDetailId===goal.id?" active":""}${highlightKpiId===goal.id?" kpi-focus-pulse":""}`} key={goal.id} data-operating-kpi-id={goal.id} style={kpiLinkedStyle(goal)} onClick={()=>setActiveProjectDetailId(goal.id)}>
                     <div>
-                      <b>{goal.title}</b>
+                      <b>{goal.title}{!isAdminView&&<em className="kpi-project-role-badge owner">내 담당</em>}</b>
                       <span>기간 {projectMonthPeriodLabel(goal)}</span>
                       <span>책임/참여 {personListLabel(participantIds,"미정")}</span>
                     </div>
@@ -9097,6 +9111,30 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                   </button>
                 );
               })}
+              {!isAdminView&&participantOperatingProjectGoals.length>0&&<span className="kpi-project-list-label">참여 프로젝트</span>}
+              {!isAdminView&&participantOperatingProjectGoals.map((goal:any)=>{
+                const summary=projectSummary(goal);
+                const participantIds=projectParticipantIds(goal);
+                const notionUrl=projectNotionUrl(goal);
+                return (
+                  <button type="button" className={`kpi-ops-project participant${activeProjectDetailId===goal.id?" active":""}${highlightKpiId===goal.id?" kpi-focus-pulse":""}`} key={`participant-${goal.id}`} data-operating-kpi-id={goal.id} style={kpiLinkedStyle(goal)} onClick={()=>setActiveProjectDetailId(goal.id)}>
+                    <div>
+                      <b>{goal.title}<em className="kpi-project-role-badge participant">참여</em></b>
+                      <span>기간 {projectMonthPeriodLabel(goal)}</span>
+                      <span>책임/참여 {personListLabel(participantIds,"미정")}</span>
+                    </div>
+                    <strong>{summary.rate}%</strong>
+                    <small className="kpi-project-stat-line">
+                      <span>오늘 {summary.todayCount} · 주간 {summary.weeklyCount} · 월간 {summary.monthlyCount} · 전체 {summary.allCount}</span>
+                    </small>
+                    {notionUrl&&<span className="kpi-notion-link" role="link" tabIndex={0} onClick={event=>{event.stopPropagation();window.open(notionUrl,"_blank","noopener,noreferrer");}}><i className="ti ti-brand-notion" aria-hidden="true"></i>노션 바로가기</span>}
+                    <i><em style={{width:`${Math.max(0,Math.min(100,summary.rate))}%`}}></em></i>
+                  </button>
+                );
+              })}
+              {!isAdminView&&responsibleOperatingProjectGoals.length===0&&participantOperatingProjectGoals.length===0&&operatingProjectGoals.length>0&&(
+                <p className="kpi-ops-empty">내가 책임이거나 참여한 프로젝트가 없습니다.</p>
+              )}
             </div>
           </section>
           <section className="kpi-ops-panel kpi-ops-review kpi-ops-daily-log">

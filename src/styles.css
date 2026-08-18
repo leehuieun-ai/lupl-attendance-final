@@ -121,7 +121,7 @@ button { cursor: pointer; }
 .tab.active { background: #fff; color: var(--ink); box-shadow: 0 1px 4px rgba(20,30,60,.1); }
 .tab i { font-size: 16px; }
 
-.count-badge { display: inline-grid; place-items: center; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; background: var(--red); color: #fff; font-size: 11px; font-weight: 800; margin-left: 4px; }
+.count-badge { display: inline-grid; place-items: center; min-width: 19px; height: 19px; padding: 0 5px; border: 1px solid #fecaca; border-radius: 999px; background: #fee2e2; color: #dc2626; font-size: 11px; font-weight: 800; margin-left: 4px; }
 
 .grid { display: grid; gap: 16px; }
 .grid.two { grid-template-columns: repeat(2, minmax(0,1fr)); }
@@ -1277,6 +1277,10 @@ body { overflow-x: hidden; }
 .kpi-ops-project small { grid-column: 1 / -1; }
 .kpi-ops-project > i { grid-column: 1 / -1; height: 5px; border-radius: 999px; background: #edf1f7; overflow: hidden; }
 .kpi-ops-project > i em { display: block; height: 100%; border-radius: inherit; background: var(--employee-color); }
+.kpi-project-list-label { display: block; margin: 4px 0 -2px; color: #44546f; font-size: 12px; font-weight: 620; }
+.kpi-project-role-badge { display: inline-flex; align-items: center; min-height: 20px; margin-left: 7px; padding: 2px 8px; border: 1px solid #d8e0ed; border-radius: 999px; background: #fff; color: #44546f; font-size: 11px; line-height: 1; font-style: normal; font-weight: 620; white-space: nowrap; }
+.kpi-project-role-badge.owner { border-color: #bcd2ff; background: #f7fbff; color: #0c66e4; }
+.kpi-project-role-badge.participant { border-color: #c7e2d4; background: #f4fbf7; color: #216e4e; }
 .kpi-ops-records > div, .kpi-rnr-candidate { border: 1px solid #e2e8f0; border-radius: 8px; background: #fbfdff; padding: 9px 10px; display: grid; gap: 3px; }
 .kpi-ops-records span, .kpi-rnr-title span, .kpi-rnr-candidate span { color: #64748b; font-size: 12px; font-weight: 750; }
 .kpi-ops-records b, .kpi-rnr-candidate b { color: #172033; font-size: 13px; font-weight: 820; line-height: 1.35; overflow-wrap: anywhere; }
