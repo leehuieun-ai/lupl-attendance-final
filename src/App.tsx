@@ -5684,6 +5684,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function weeklyTitleForDaily(entry:any,weeklyOverride?:any|null) {
     return weeklyOverride?.title??parentWeeklyGoalForDaily(entry)?.title??"연결 주간 목표 없음";
   }
+  function projectTitleForDaily(entry:any,weeklyOverride?:any|null) {
+    const weekly=weeklyOverride??parentWeeklyGoalForDaily(entry);
+    const project=weekly?kpiProjectFromList(weekly):kpiProjectFromList(entry);
+    return project?.title??weeklyTitleForDaily(entry,weeklyOverride);
+  }
   function dailyFlowAssigneeIds(entry:any,weeklyOverride?:any|null) {
     const weekly=weeklyOverride??parentWeeklyGoalForDaily(entry);
     const project=weekly?kpiProjectFromList(weekly):kpiProjectFromList(entry);
@@ -6095,7 +6100,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   const dailyLogEmployeeId=operatingEmployeeId??currentEmployee.id;
   const dailyLogEmployee=employeeMap.get(dailyLogEmployeeId)??currentEmployee;
   const dailyLogDateKey=`${dailyLogEmployeeId}:${selectedDailyDate}`;
-  const dailyLogEntryIds=new Set(operatingActionDailyEntries.map((entry:any)=>entry.id));
+  const dailyLogEntryIds=new Set(operatingDailyEntries.map((entry:any)=>entry.id));
   const storedDailyLogItems=Array.isArray(dailyLogItems[dailyLogDateKey]) ? dailyLogItems[dailyLogDateKey].filter((item:any)=>dailyLogEntryIds.has(item.entryId)) : [];
   const dailyLogAttendance=kpiAttendanceLogs
     .filter((log:any)=>log.employee_id===dailyLogEmployeeId&&log.check_in_time&&localDateStr(log.check_in_time)===selectedDailyDate)
@@ -6145,7 +6150,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     const isBreak=!!dailyLogBreakRange&&start<dailyLogBreakRange[1]&&end>dailyLogBreakRange[0];
     return {start,end,isBreak,label:`${minutesToTime(start%(24*60))}-${minutesToTime(end%(24*60))}`};
   });
-  const dailyLogEntryMap=new Map(operatingActionDailyEntries.map((entry:any)=>[entry.id,entry]));
+  const dailyLogEntryMap=new Map(operatingDailyEntries.map((entry:any)=>[entry.id,entry]));
   function isDailyLogBreakMinute(startMinute:number) {
     return !!dailyLogBreakRange&&startMinute<dailyLogBreakRange[1]&&startMinute+DAILY_LOG_SLOT_MINUTES>dailyLogBreakRange[0];
   }
@@ -6962,10 +6967,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         key={entry.id}
         data-operating-kpi-id={entry.id}
         style={routine?undefined:kpiLinkedStyle(entry)}
-        title={routine?undefined:"데일리 로그 시간칸으로 드래그해서 배치"}
-        draggable={!routine}
-        onDragStart={!routine?event=>{setDailyLogDragEntryId(entry.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",entry.id);}:undefined}
-        onDragEnd={!routine?()=>setDailyLogDragEntryId(""):undefined}
+        title="데일리 로그 시간칸으로 드래그해서 배치"
+        draggable
+        onDragStart={event=>{setDailyLogDragEntryId(entry.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",entry.id);}}
+        onDragEnd={()=>setDailyLogDragEntryId("")}
       >
         {routine ? (
           <>
@@ -7004,7 +7009,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               <span>{entry.title}</span>
             </label>
             <small className="kpi-task-meta-lines">
-              <span>{weeklyTitleForDaily(entry)}</span>
+              <span>{projectTitleForDaily(entry)}</span>
             </small>
             {canManageKpi(entry)&&<div className="kpi-task-actions">
               <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
@@ -9027,10 +9032,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     key={entry.id}
                     data-operating-kpi-id={entry.id}
                     style={routine?undefined:kpiLinkedStyle(entry)}
-                    title={routine?undefined:"데일리 로그 시간칸으로 드래그해서 배치"}
-                    draggable={!routine}
-                    onDragStart={!routine?event=>{setDailyLogDragEntryId(entry.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",entry.id);}:undefined}
-                    onDragEnd={!routine?()=>setDailyLogDragEntryId(""):undefined}
+                    title="데일리 로그 시간칸으로 드래그해서 배치"
+                    draggable
+                    onDragStart={event=>{setDailyLogDragEntryId(entry.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",entry.id);}}
+                    onDragEnd={()=>setDailyLogDragEntryId("")}
                   >
                     {routine ? (
                       <>
@@ -9069,7 +9074,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                           <span>{entry.title}</span>
                         </label>
                         <small className="kpi-task-meta-lines">
-                          <span>{weeklyTitleForDaily(entry)}</span>
+                          <span>{projectTitleForDaily(entry)}</span>
                         </small>
                         {canManageKpi(entry)&&<div className="kpi-task-actions">
                           <button className="icon-button" title="수정" onClick={()=>beginEditKpi(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>
@@ -9095,7 +9100,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 {upcomingAssignedDailyEntries.map((entry:any)=>(
                   <button type="button" key={`upcoming-${entry.id}`} style={kpiLinkedStyle(entry)} onClick={()=>focusKpiEntry(entry,{preservePeriod:true})}>
                     <span>{entry.title}</span>
-                    <small>{kpiFlowDateLabel(entry,"날짜 미정")} · {weeklyTitleForDaily(entry)}</small>
+                    <small>{kpiFlowDateLabel(entry,"날짜 미정")} · {projectTitleForDaily(entry)}</small>
                   </button>
                 ))}
               </div>
