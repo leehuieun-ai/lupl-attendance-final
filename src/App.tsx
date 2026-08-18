@@ -123,9 +123,13 @@ const SCHEDULE_EVENT_META: Record<string,{label:string;icon:string}> = {
 };
 const EDITABLE_SCHEDULE_TYPES = ["info","work","am_only","pm_only","unavailable","hidden"];
 const EMPLOYEE_COLORS = ["#2563eb","#059669","#ea580c","#dc2626","#7c3aed","#0891b2","#b45309","#4f46e5","#65a30d","#be185d"];
+const EMPLOYEE_COLOR_OVERRIDES: Record<string,string> = {
+  "26081003": "#0f766e",
+};
 const KPI_PROJECT_COLORS = ["#2563eb","#059669","#f97316","#dc2626","#7c3aed","#0891b2","#b45309","#4f46e5","#65a30d","#be185d","#0f766e","#db2777","#0284c7","#16a34a","#9333ea","#475569"];
 const WORK_TIME_CHANGE_CONSENT_VERSION = "2026-07-work-time-change-process";
 const WORK_TIME_LEGAL_NOTICE_VERSION = "2026-07";
+const CHECKOUT_REMINDERS_ENABLED = false;
 const OVERTIME_COMP_CONSENT_CHECK_TEXT = "추가근무는 사전 신청 및 회사 승인 후 진행하는 것을 원칙으로 하며, 실제 근로 제공 여부가 회사 확인을 통해 인정되는 경우 법정 기준에 따라 추가근무로 처리된다는 설명을 확인했습니다.";
 const OVERTIME_COMP_DETAIL_MAIN_TEXT = [
   "추가근무는 사전 신청 및 회사 승인 후 진행하는 것을 원칙으로 합니다.",
@@ -842,6 +846,7 @@ function compRequestExcludesDinner(request:any) {
   return /저녁\s*휴게\s*제외|저녁시간\s*처리:\s*휴게시간\s*제외/.test(String(request?.reason??""));
 }
 function checkoutReminderTarget(log:any, employee:any, overrides:any[], compRequests:any[], workTimeChanges:any[] = [], leaveRequests:any[] = []) {
+  if(!CHECKOUT_REMINDERS_ENABLED) return null;
   if(!log?.check_in_time||log?.check_out_time) return null;
   const dateIso=localDateStr(log.check_in_time);
   const sched=getScheduleForDate(employee,dateIso,overrides,workTimeChanges);
@@ -889,6 +894,8 @@ function employeeScheduleColor(employeeId:string){
 }
 function employeeColorFromList(employees:any[],employeeId:string){
   const employee=employees.find(e=>e.id===employeeId);
+  const employeeNo=String(employee?.employee_no??"").trim();
+  if(employeeNo&&EMPLOYEE_COLOR_OVERRIDES[employeeNo]) return EMPLOYEE_COLOR_OVERRIDES[employeeNo];
   const seed=String(employee?.employee_no??employee?.id??employeeId);
   return employeeScheduleColor(seed);
 }
