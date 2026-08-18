@@ -6347,7 +6347,11 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     ? operatingProjectGoals
     : operatingProjectGoals.filter((goal:any)=>goal.employee_id===currentEmployee.id);
   const participantOperatingProjectGoals=!isAdminView
-    ? operatingProjectGoals.filter((goal:any)=>goal.employee_id!==currentEmployee.id&&projectDirectAssigneeIds(goal).includes(currentEmployee.id))
+    ? operatingProjectGoals.filter((goal:any)=>
+      goal.employee_id!==currentEmployee.id
+      && projectDirectAssigneeIds(goal).includes(currentEmployee.id)
+      && projectVisibleToEmployee(goal,currentEmployee.id)
+    )
     : [];
   const operatingRnrCandidates=(()=>{
     const groups=new Map<string,any>();
