@@ -4201,15 +4201,16 @@ body { overflow-x: hidden; }
   padding-right: 116px;
 }
 .kpi-topic-flow-table .kpi-flow-node.compact-flow-node {
-  grid-template-columns: minmax(150px,.56fr) minmax(160px,1fr);
+  grid-template-columns: minmax(0,1fr) max-content;
   align-items: center;
-  column-gap: 10px;
+  column-gap: 12px;
 }
 .kpi-topic-flow-table .kpi-flow-node.compact-flow-node b {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .kpi-topic-flow-table .kpi-flow-node b {
   font-size: 13px;
@@ -4225,11 +4226,12 @@ body { overflow-x: hidden; }
 .kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta {
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px 8px;
   align-items: center;
   color: #626f86;
-  justify-content: flex-start;
+  justify-content: flex-end;
+  white-space: nowrap;
 }
 .kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta em,
 .kpi-topic-flow-table .kpi-flow-node .kpi-flow-inline-meta strong {

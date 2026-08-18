@@ -5198,7 +5198,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return openProjectFlowAdds[key]===true || Boolean(projectFlowDrafts[key]);
   }
   function handleProjectFlowDraftKeyDown(event:any,submit:()=>void) {
-    if(event.key==="Enter"&&(event.ctrlKey||event.metaKey)) {
+    if(event.key==="Enter"&&!event.shiftKey) {
       event.preventDefault();
       submit();
     }
@@ -5237,12 +5237,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function projectFlowAssigneeIdsForInsert(project:any,source:any) {
     const sourceIds=source?kpiEntryAssigneeIds(source):[];
     const projectIds=project?projectDirectAssigneeIds(project):[];
-    return sortKpiEmployeeIds(projectIds.length>0 ? projectIds : sourceIds);
+    const fallbackIds=currentEmployee?.id?[currentEmployee.id]:[];
+    return sortKpiEmployeeIds(projectIds.length>0 ? projectIds : sourceIds.length>0 ? sourceIds : fallbackIds);
   }
-  function projectFlowInsertDuplicateKey(scope:"weekly"|"daily",parentId:string|null,title:string,workDate:string,dateUnknown:boolean,assigneeIds:string[]) {
+  function projectFlowInsertDuplicateKey(scope:"weekly"|"daily",parentId:string|null,title:string,workDate:string,dateUnknown:boolean,assigneeIds:string[],topic="") {
     return [
       scope,
       parentId??"",
+      topic.trim().replace(/\s+/g," ").toLowerCase(),
       title.trim().replace(/\s+/g," ").toLowerCase(),
       dateUnknown ? "date-unknown" : workDate,
       sortKpiEmployeeIds(assigneeIds).join(","),
@@ -5274,12 +5276,13 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         String(entry.work_date??"").slice(0,10),
         kpiDateIsUnknown(entry),
         kpiEntryAssigneeIds(entry),
+        topicForKpi(entry),
       ))
     );
     const seenKeys=new Set<string>();
     const baseSortOrder=Number.isFinite(Number(options.sortOrder)) ? Number(options.sortOrder) : entries.filter((entry:any)=>entry.scope===scope&&entry.parent_id===parentId).length+1;
     const payloads=cleanItems.flatMap((item,index)=>{
-      const key=projectFlowInsertDuplicateKey(scope,parentId,item.title,item.workDate,item.dateUnknown,assigneeIds);
+      const key=projectFlowInsertDuplicateKey(scope,parentId,item.title,item.workDate,item.dateUnknown,assigneeIds,options.topic||"기본 흐름");
       if(existingKeys.has(key)) return [];
       if(!options.allowInternalDuplicates&&seenKeys.has(key)) return [];
       seenKeys.add(key);
@@ -6818,6 +6821,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setSaving(false);
     }
   }
+  async function reorderKpiWithinProjectFlow(entry:any,targetEntries:any[],targetId:string,messageText="프로젝트 흐름 순서를 변경했습니다.") {
+    await saveOrderedProjectFlowMove(entry,targetEntries,{},targetId,messageText);
+  }
   async function moveKpiToProjectTopic(entry:any,project:any,topic:string,targetId?:string|null) {
     if(!entry?.id||!project?.id) return;
     const targetTopic=(topic||"기본 흐름").trim()||"기본 흐름";
@@ -7049,8 +7055,10 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
           const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
           const targetProject=weeklyOverride?kpiProjectFromList(weeklyOverride):kpiProjectFromList(entry);
           if(!dragged) return;
-          if(weeklyOverride) moveKpiToDailyFlow(dragged,weeklyOverride,targetProject,topicForKpi(weeklyOverride),entry.id);
-          else if(targetProject) moveKpiToProjectTopic(dragged,targetProject,topicForKpi(entry),entry.id);
+          if(draggingKpi.scope==="daily"&&weeklyOverride&&dragged.parent_id===weeklyOverride.id) reorderKpiWithinProjectFlow(dragged,projectDailyEntriesForWeekly(weeklyOverride),entry.id,"실행 항목 순서를 변경했습니다.");
+          else if(draggingKpi.scope==="daily"&&!weeklyOverride&&targetProject&&dragged.parent_id===entry.parent_id&&topicForKpi(dragged)===topicForKpi(entry)) reorderKpiWithinProjectFlow(dragged,projectDirectDailyEntriesForTopic(targetProject,topicForKpi(entry)),entry.id,"실행 항목 순서를 변경했습니다.");
+          else if(weeklyOverride) moveKpiToDailyFlow(dragged,weeklyOverride,targetProject,topicForKpi(weeklyOverride),entry.id);
+          else if(targetProject&&draggingKpi.scope==="daily") moveKpiToProjectTopic(dragged,targetProject,topicForKpi(entry),entry.id);
           else if(draggingKpi.scope==="daily") reorderKpi(draggingKpi.id,draggingKpi.sortOrder,entry.id,entry.sort_order??0);
         }:undefined}
         onClick={()=>focusKpiEntry(entry,{preservePeriod:true})}
@@ -9482,7 +9490,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                 event.preventDefault();
                                 event.stopPropagation();
                                 const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
-                                if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,weekly.id);
+                                if(dragged&&kpiProjectId(dragged)===mindMapProject.id&&topicForKpi(dragged)===topic) reorderKpiWithinProjectFlow(dragged,projectWeeklyEntriesForTopic(mindMapProject,topic),weekly.id,"주요 업무 순서를 변경했습니다.");
+                                else if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,weekly.id);
                               }:undefined}
                             >
                               <div
@@ -9493,7 +9502,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                   event.preventDefault();
                                   event.stopPropagation();
                                   const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
-                                  if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,draggingKpi.scope==="weekly"?weekly.id:null);
+                                  if(dragged&&draggingKpi.scope==="weekly"&&kpiProjectId(dragged)===mindMapProject.id&&topicForKpi(dragged)===topic) reorderKpiWithinProjectFlow(dragged,projectWeeklyEntriesForTopic(mindMapProject,topic),weekly.id,"주요 업무 순서를 변경했습니다.");
+                                  else if(dragged) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,draggingKpi.scope==="weekly"?weekly.id:null);
                                 }:undefined}
                               >
                                 <div
@@ -9510,7 +9520,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                                     event.preventDefault();
                                     event.stopPropagation();
                                     const dragged=entries.find((item:any)=>item.id===draggingKpi.id);
-                                    if(dragged&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily")) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,weekly.id);
+                                    if(dragged&&draggingKpi.scope==="weekly"&&kpiProjectId(dragged)===mindMapProject.id&&topicForKpi(dragged)===topic) reorderKpiWithinProjectFlow(dragged,projectWeeklyEntriesForTopic(mindMapProject,topic),weekly.id,"주요 업무 순서를 변경했습니다.");
+                                    else if(dragged&&(draggingKpi.scope==="weekly"||draggingKpi.scope==="daily")) moveKpiToWeeklyFlow(dragged,mindMapProject,topic,weekly.id);
                                   }:undefined}
                                   onClick={()=>focusKpiEntry(weekly,{preservePeriod:true})}
                                   onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();focusKpiEntry(weekly,{preservePeriod:true});}}}
