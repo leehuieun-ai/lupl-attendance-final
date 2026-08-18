@@ -5707,16 +5707,19 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(dl.length>0) return kpiCompletionRate(dl)??0;
     return goal.status==="done"?100:0;
   }
+  function majorTaskProgress(goal:any) {
+    return goal?.status==="done" ? 100 : 0;
+  }
   function monthlyProgress(goal:any) {
     const period=kpiProjectPeriod(goal)??{start:monthStart,end:monthEnd};
+    const linkedW=allWeeklyEntries.filter((entry:any)=>entry.parent_id===goal.id&&kpiEntryWithinRange(entry,period.start,period.end));
+    if(linkedW.length>0) return Math.round(linkedW.reduce((sum:number,weekly:any)=>sum+majorTaskProgress(weekly),0)/linkedW.length);
     const projectDailies=scorableDailyKpis(dailyEntries.filter((entry:any)=>
       kpiEntryWithinRange(entry,period.start,period.end)
       && (kpiProjectId(entry)===goal.id || entry.parent_id===goal.id)
     ));
     const directRate=kpiCompletionRate(projectDailies);
     if(directRate!==null) return directRate;
-    const linkedW=allWeeklyEntries.filter((entry:any)=>entry.parent_id===goal.id&&kpiEntryWithinRange(entry,period.start,period.end));
-    if(linkedW.length>0) return Math.round(linkedW.reduce((sum:number,weekly:any)=>sum+weeklyProgress(weekly,period),0)/linkedW.length);
     return goal.status==="done"?100:0;
   }
   function entryProgress(entry:any) {
@@ -6044,6 +6047,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     ));
     const done=projectDailies.filter((entry:any)=>entry.status==="done").length;
     const total=projectDailies.length;
+    const majorDone=projectWeeklies.filter((entry:any)=>entry.status==="done").length;
+    const majorTotal=projectWeeklies.length;
     return {
       weeklyCount:projectWeeklies.length,
       monthlyCount:linkedEntries.filter((entry:any)=>entry.scope==="monthly").length,
@@ -6051,7 +6056,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       todayCount:selectedActionDayEntries.filter((entry:any)=>kpiProjectId(entry)===project.id&&entry.status!=="done").length,
       done,
       total,
-      rate:total>0?Math.round(done/total*100):monthlyProgress(project),
+      rate:majorTotal>0?Math.round(majorDone/majorTotal*100):total>0?Math.round(done/total*100):monthlyProgress(project),
     };
   }
   const routineOwnerId=operatingEmployeeId??currentEmployee.id;
