@@ -6269,7 +6269,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
               key={slot.start}
               className={`kpi-daily-log-row${slot.isBreak?" break":""}${dailyLogDragEntryId&&!slot.isBreak?" drop-ready":""}`}
               style={{height:DAILY_LOG_SLOT_HEIGHT}}
-              onDragOver={event=>{if(dailyLogDragEntryId&&!slot.isBreak) event.preventDefault();}}
+              onDragOver={event=>{if(dailyLogDragEntryId&&!slot.isBreak){event.preventDefault();event.dataTransfer.dropEffect="move";}}}
               onDrop={event=>{event.preventDefault();assignDailyLogEntry(event.dataTransfer.getData("text/plain")||dailyLogDragEntryId,slot.start);}}
             >
               <span>{slot.label}</span>
@@ -6962,8 +6962,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
         key={entry.id}
         data-operating-kpi-id={entry.id}
         style={routine?undefined:kpiLinkedStyle(entry)}
+        title={routine?undefined:"데일리 로그 시간칸으로 드래그해서 배치"}
         draggable={!routine}
-        onDragStart={!routine?event=>{setDailyLogDragEntryId(entry.id);event.dataTransfer.setData("text/plain",entry.id);}:undefined}
+        onDragStart={!routine?event=>{setDailyLogDragEntryId(entry.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",entry.id);}:undefined}
         onDragEnd={!routine?()=>setDailyLogDragEntryId(""):undefined}
       >
         {routine ? (
@@ -7562,13 +7563,35 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
   function selectedDailyParentId() {
     return quickWeeklyParentId&&quickDailyWeeklyGoals.some((goal:any)=>goal.id===quickWeeklyParentId) ? quickWeeklyParentId : "";
   }
-  function editedDailyWeeklyGoals() {
+  function editDailyProjectId(draft=editKpiDraft) {
+    if(!draft.parentId) return "";
+    const parent=entries.find((entry:any)=>entry.id===draft.parentId);
+    if(parent?.scope==="monthly") return parent.id;
+    if(parent?.scope==="weekly") return parent.parent_id??"";
+    return "";
+  }
+  function editedDailyProjectGoals() {
+    const targetEmployeeId=editKpiDraft.employeeId||editingKpi?.employee_id||(!isAdminView?currentEmployee.id:"");
+    const targetEmployeeIds=isAdminView ? editKpiAssigneeIds() : [targetEmployeeId].filter(Boolean);
+    const currentProjectId=editDailyProjectId();
+    const projects=parentGoalOptions(entries.filter((entry:any)=>entry.scope==="monthly"&&entry.is_active!==false));
+    return projects
+      .filter((project:any)=>
+        project.id===currentProjectId
+        || targetEmployeeIds.length===0
+        || targetEmployeeIds.some((id:string)=>projectVisibleToEmployee(project,id))
+      )
+      .sort((a:any,b:any)=>projectFlowSortValue(a)-projectFlowSortValue(b)||String(a.work_date??"").localeCompare(String(b.work_date??"")));
+  }
+  function editedDailyWeeklyGoals(projectId=editDailyProjectId()) {
     const date=String(editKpiDraft.workDate||kpiEffectiveWorkDate(editingKpi)||selectedDailyDate).slice(0,10);
     const start=/^\d{4}-\d{2}-\d{2}$/.test(date) ? weekStartIso(date) : weekStart;
     const end=/^\d{4}-\d{2}-\d{2}$/.test(date) ? weekEndIso(date) : weekEnd;
     const targetEmployeeId=editKpiDraft.employeeId||editingKpi?.employee_id||(!isAdminView?currentEmployee.id:"");
     const targetEmployeeIds=isAdminView ? editKpiAssigneeIds() : [targetEmployeeId].filter(Boolean);
     const visible=parentGoalOptions(allWeeklyEntries.filter((goal:any)=>{
+      if(goal.is_active===false) return false;
+      if(projectId) return goal.parent_id===projectId;
       const goalDate=kpiEffectiveWorkDate(goal);
       return /^\d{4}-\d{2}-\d{2}$/.test(goalDate)&&goalDate>=start&&goalDate<=end;
     })).filter((goal:any)=>isAdminView
@@ -9004,8 +9027,9 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                     key={entry.id}
                     data-operating-kpi-id={entry.id}
                     style={routine?undefined:kpiLinkedStyle(entry)}
+                    title={routine?undefined:"데일리 로그 시간칸으로 드래그해서 배치"}
                     draggable={!routine}
-                    onDragStart={!routine?event=>{setDailyLogDragEntryId(entry.id);event.dataTransfer.setData("text/plain",entry.id);}:undefined}
+                    onDragStart={!routine?event=>{setDailyLogDragEntryId(entry.id);event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",entry.id);}:undefined}
                     onDragEnd={!routine?()=>setDailyLogDragEntryId(""):undefined}
                   >
                     {routine ? (
@@ -9768,15 +9792,41 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
                 </select>
               </div>
             )}
-            {editKpiDraft.scope==="daily"&&(
-              <div className="form-row">
-                <label className="label">연결 주요 업무</label>
-                <select className="select" value={editKpiDraft.parentId} onChange={e=>setEditKpiDraft({...editKpiDraft,parentId:e.target.value})}>
-                  <option value="">연결 없음</option>
-                  {editedDailyWeeklyGoals().map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
-                </select>
-              </div>
-            )}
+            {editKpiDraft.scope==="daily"&&(()=>{
+              const projectId=editDailyProjectId();
+              const weeklyParent=editKpiDraft.parentId ? allWeeklyEntries.find((goal:any)=>goal.id===editKpiDraft.parentId) : null;
+              const weeklyOptions=editedDailyWeeklyGoals(projectId);
+              return (
+                <>
+                  <div className="form-row">
+                    <label className="label">연결 프로젝트</label>
+                    <select
+                      className="select"
+                      value={projectId}
+                      onChange={event=>{
+                        const nextProjectId=event.target.value;
+                        const keepWeekly=weeklyParent&&weeklyParent.parent_id===nextProjectId ? weeklyParent.id : "";
+                        setEditKpiDraft({...editKpiDraft,parentId:keepWeekly||nextProjectId});
+                      }}
+                    >
+                      <option value="">연결 없음</option>
+                      {editedDailyProjectGoals().map((project:any)=><option key={project.id} value={project.id}>{project.title}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-row">
+                    <label className="label">연결 주요 업무</label>
+                    <select
+                      className="select"
+                      value={weeklyParent?.id??""}
+                      onChange={event=>setEditKpiDraft({...editKpiDraft,parentId:event.target.value||projectId})}
+                    >
+                      <option value="">{projectId ? "주요 업무 없이 프로젝트에 직접 연결" : "연결 없음"}</option>
+                      {weeklyOptions.map((g:any)=><option key={g.id} value={g.id}>{g.title}</option>)}
+                    </select>
+                  </div>
+                </>
+              );
+            })()}
             {isAdminView&&(
               <div className="form-row">
                 <label className="label">담당 직원</label>
