@@ -1306,8 +1306,13 @@ const DEFAULT_DAILY_KPI_ITEMS = ["스케줄 정리","웍스 피드백","메일 �
 const DEFAULT_DAILY_KPI_DESCRIPTION = DEFAULT_DAILY_KPI_ITEMS.map(item=>`- ${item}`).join("\n");
 const NEXT_KPI_DRAFT_TAG = "[next-kpi-draft]";
 const NEXT_KPI_DEFERRED_TAG = "[next-kpi-deferred]";
+const KPI_DATE_UNKNOWN_TAG = "[kpi-date-unknown]";
+const DEFAULT_ASSISTANT_MODEL = "5.6 루나";
 function kpiNoteHasTag(entry:any, tag:string) {
   return String(entry?.admin_note??"").includes(tag);
+}
+function isKpiDateUnknownEntry(entry:any) {
+  return kpiNoteHasTag(entry,KPI_DATE_UNKNOWN_TAG);
 }
 function stripKpiNoteTag(note:string|null|undefined, tag:string) {
   return String(note??"").replace(tag,"").replace(/\n{3,}/g,"\n\n").trim();
@@ -2017,7 +2022,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
         question,
         response_text:String(assistant?.reply||errorMessage||"").trim()||"응답 없음",
         status,
-        model:String(assistant?.model||"").trim()||null,
+        model:String(assistant?.model||"").trim()||DEFAULT_ASSISTANT_MODEL,
         actions:Array.isArray(assistant?.actions)?assistant.actions:[],
         followup_questions:Array.isArray(assistant?.questions)?assistant.questions:[],
         page_context:{
@@ -2248,12 +2253,12 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
       const response=await fetch("/api/ai-assistant",{
         method:"POST",
         headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
-        body:JSON.stringify({message:text,today:todayIso(),context}),
+        body:JSON.stringify({message:text,today:todayIso(),context,model:DEFAULT_ASSISTANT_MODEL}),
       });
       const data=await response.json();
       if(!response.ok) throw new Error(data?.error||"AI 비서 응답을 받지 못했습니다.");
       const assistant=data.assistant??{};
-      void saveAssistantInquiryLog(text,{...assistant,model:data.model??assistant.model},"answered");
+      void saveAssistantInquiryLog(text,{...assistant,model:data.model??assistant.model??DEFAULT_ASSISTANT_MODEL},"answered");
       appendAssistant(
         assistant.reply||"요청을 정리했습니다. 아래 항목을 확인해주세요.",
         Array.isArray(assistant.actions)?assistant.actions:[],
@@ -2262,7 +2267,7 @@ function AIAssistantQuickCapture({ employee, currentTab, currentPageTitle, menuO
     } catch(e:any) {
       const fallbackAssistant={
         reply:"지금은 바로 해석하지 못했습니다. 그래도 개선함에는 남길 수 있어요.",
-        model:"local-fallback",
+        model:DEFAULT_ASSISTANT_MODEL,
         actions:[{
         id:`improvement-${Date.now()}`,
         type:"create_improvement",
@@ -3862,7 +3867,7 @@ function HomePage({ employee }: { employee: any }) {
     setAttendanceRuleChecked(true);
     setTodayTasks(taskRows??[]);
     setTodayTaskCompletions(taskCompletionError?[]:taskCompletionRows??[]);
-    setTodayKpis((kpiRows??[]).filter((entry:any)=>!isNextKpiDeferredEntry(entry)));
+    setTodayKpis((kpiRows??[]).filter((entry:any)=>!isKpiDateUnknownEntry(entry)&&!isNextKpiDeferredEntry(entry)));
     setWeeklyKpiOptions(kpiWeeklyRows??[]);
     if(employee.role==="admin"){
       const {data:todoEmployeeRows}=await supabase.from("employees").select("id,name,employee_no,is_active,employment_status").order("employee_no",{ascending:true});
@@ -4036,7 +4041,7 @@ function HomePage({ employee }: { employee: any }) {
     }
   }
   function operationalHomeKpis(list:any[]=todayKpis) {
-    return list.filter((entry:any)=>!isNextKpiDeferredEntry(entry)&&!isDefaultDailyKpiEntry(entry));
+    return list.filter((entry:any)=>!isKpiDateUnknownEntry(entry)&&!isNextKpiDeferredEntry(entry)&&!isDefaultDailyKpiEntry(entry));
   }
   function openCheckInKpiModal(attendanceLogId?:string|null, kpis:any[]=operationalHomeKpis()) {
     const currentText=kpis.map((entry:any,index:number)=>`${index+1}. ${entry.title}`).join("\n");
@@ -4076,7 +4081,7 @@ function HomePage({ employee }: { employee: any }) {
       .eq("is_active",true)
       .order("sort_order",{ascending:true});
     if(error) throw error;
-    return (data??[]).filter((entry:any)=>!isNextKpiDeferredEntry(entry)&&!isDefaultDailyKpiEntry(entry));
+    return (data??[]).filter((entry:any)=>!isKpiDateUnknownEntry(entry)&&!isNextKpiDeferredEntry(entry)&&!isDefaultDailyKpiEntry(entry));
   }
   async function fetchTodayDailyKpis() {
     return fetchDailyKpisFor(todayIso());
@@ -5019,14 +5024,27 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       setMessage(`KPI 댓글을 불러오지 못했습니다: ${commentResult.error.message}`);
     }
     if(!routineResult.error) {
-      const next:Record<string,string[]>={};
+      const checkedByEntry:Record<string,string[]>={};
       (routineResult.data??[]).forEach((row:any)=>{
         if(!row.is_checked) return;
         const key=String(row.kpi_entry_id);
-        next[key]=Array.from(new Set([...(next[key]??[]),row.item].filter(Boolean)));
+        checkedByEntry[key]=Array.from(new Set([...(checkedByEntry[key]??[]),row.item].filter(Boolean)));
       });
-      setDailyRoutineChecks(next);
-      localStorage.setItem("lupl_daily_kpi_routine_checks",JSON.stringify(next));
+      const routineEntries=visibleEntries.filter((entry:any)=>isDailyRoutineEntry(entry));
+      setDailyRoutineChecks(prev=>{
+        const next={...prev};
+        routineEntries.forEach((entry:any)=>{
+          const key=dailyRoutineKey(entry);
+          if(Object.prototype.hasOwnProperty.call(checkedByEntry,key)) {
+            next[key]=checkedByEntry[key];
+          } else if(!Object.prototype.hasOwnProperty.call(next,key)) {
+            next[key]=entry?.status==="done" ? DEFAULT_DAILY_KPI_ITEMS : [];
+          }
+        });
+        Object.entries(checkedByEntry).forEach(([key,value])=>{ next[key]=value; });
+        localStorage.setItem("lupl_daily_kpi_routine_checks",JSON.stringify(next));
+        return next;
+      });
     } else if(!optionalKpiPersistenceError(routineResult.error)) {
       setMessage(`기본 데일리 체크 상태를 불러오지 못했습니다: ${routineResult.error.message}`);
     }
@@ -5490,14 +5508,14 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     return parseKpiProjectTopics(note)[0]??"";
   }
   function kpiDateIsUnknown(entry:any) {
-    return /\[kpi-date-unknown\]/.test(String(entry?.admin_note??""));
+    return isKpiDateUnknownEntry(entry);
   }
   function stripKpiDateUnknown(note?:string|null) {
-    return String(note??"").replace(/\[kpi-date-unknown\]\s*/g,"").trim();
+    return String(note??"").replace(new RegExp(`${KPI_DATE_UNKNOWN_TAG.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\s*`,"g"),"").trim();
   }
   function withKpiDateUnknownMeta(note:string,unknown:boolean) {
     const body=stripKpiDateUnknown(note);
-    return [unknown ? "[kpi-date-unknown]" : "", body].filter(Boolean).join("\n");
+    return [unknown ? KPI_DATE_UNKNOWN_TAG : "", body].filter(Boolean).join("\n");
   }
   function kpiWorkloadHidden(entry:any) {
     return /\[kpi-workload-hidden\]/.test(String(entry?.admin_note??""));
@@ -6064,7 +6082,7 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
     if(result.error&&!optionalKpiPersistenceError(result.error)) {
       setMessage(`기본 데일리 체크 저장 실패: ${result.error.message}`);
     }
-    if(entry.status!==nextStatus) void updateKpiStatus(entry,nextStatus as "pending"|"done");
+    if(entry.status!==nextStatus) await updateKpiStatus(entry,nextStatus as "pending"|"done");
   }
   async function addKpiTaskComment(entry:any) {
     const key=String(entry?.id??"");
@@ -6711,7 +6729,8 @@ function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmploye
       && !isNextKpiDeferredEntry(entry)
       && entry.status!=="done"
       && entryDirectlyAssignedToEmployee(entry,currentEmployee.id)
-      && (kpiDateIsUnknown(entry)||kpiEffectiveWorkDate(entry)>selectedDailyDate)
+      && !kpiDateIsUnknown(entry)
+      && kpiEffectiveWorkDate(entry)>selectedDailyDate
     )
     .sort((a:any,b:any)=>{
       const aUnknown=kpiDateIsUnknown(a);
