@@ -9,7 +9,7 @@ import {
 } from "./lib/leave";
 import { exportRowsToExcel, exportWorkbookToXlsx } from "./lib/exportExcel";
 
-type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "work-map" | "kpi" | "my-documents" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "ai-inquiries" | "admin-settings";
+type Tab = "attendance" | "leave" | "overtime" | "worktime" | "team-schedule" | "my-projects" | "work-map" | "kpi" | "my-documents" | "admin-dashboard" | "approvals" | "employees" | "rnr" | "workplaces" | "schedule" | "payroll" | "reports" | "consents" | "improvements" | "ai-inquiries" | "admin-settings";
 type KpiNavMode = "personal" | "admin";
 type NavMenuItem = {id:Tab;label:string;icon:string;badge?:number;kpiMode?:KpiNavMode};
 type SignedRecordKind = "privacy" | "workTimeConsent" | "adminConfidentiality" | "workTimeRequest" | "attendanceCorrection" | "attendancePolicy" | "leaveRequest" | "compTimeRequest";
@@ -1807,6 +1807,7 @@ export default function App() {
     overtime:"추가근무",
     worktime:"근무 일정 확인",
     "team-schedule":"팀 일정",
+    "my-projects":"내 프로젝트",
     "work-map":"업무 분장표",
     kpi:"KPI",
     "my-documents":"내 문서함",
@@ -1828,6 +1829,7 @@ export default function App() {
     {id:"leave",label:"휴가",icon:"ti-calendar"},
     {id:"overtime",label:"추가근무",icon:"ti-clock-plus"},
     {id:"team-schedule",label:"팀 일정",icon:"ti-calendar-week"},
+    {id:"my-projects",label:"내 프로젝트",icon:"ti-briefcase-2"},
     {id:"kpi",label:"내 KPI",icon:"ti-target-arrow",kpiMode:"personal"},
     {id:"my-documents",label:"내 문서함",icon:"ti-file-certificate"},
   ];
@@ -1911,6 +1913,7 @@ export default function App() {
           {tab==="overtime" && <LeavePage employee={employee} mode="overtime" />}
           {tab==="worktime" && <WorkTimeChangePage employee={employee} />}
           {tab==="team-schedule" && <SettingsPage currentEmployee={employee} section="schedule" readOnly={true} />}
+          {tab==="my-projects" && <MyProjectsPage currentEmployee={employee} />}
           {tab==="work-map" && <PublicWorkMapPage currentEmployee={employee} />}
           {tab==="kpi" && <KpiDashboardPage currentEmployee={employee} mode={isAdmin?kpiNavMode:"personal"} />}
           {tab==="my-documents" && <MyDocumentsPage employee={employee} />}
@@ -4836,6 +4839,216 @@ function HomePage({ employee }: { employee: any }) {
       </div>
     </div>
   );
+}
+
+function MyProjectsPage({ currentEmployee }: { currentEmployee:any }) {
+  const [entries,setEntries]=useState<any[]>([]);
+  const [employees,setEmployees]=useState<any[]>([]);
+  const [selectedProjectId,setSelectedProjectId]=useState("");
+  const [showCompleted,setShowCompleted]=useState(false);
+  const [loading,setLoading]=useState(true);
+  const [message,setMessage]=useState("");
+
+  function parseMetaList(note:any,label:string) {
+    const match=String(note??"").match(new RegExp(`\\[${label}:([^\\]]+)\\]`));
+    return match ? match[1].split(",").map(value=>value.trim()).filter(Boolean) : [];
+  }
+  function parseTopic(note:any) {
+    return parseMetaList(note,"프로젝트주제")[0]??"기본 흐름";
+  }
+  function projectPeriod(project:any) {
+    const start=String(project?.project_start??"").slice(0,10);
+    const end=String(project?.project_end??"").slice(0,10);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(start)&&/^\d{4}-\d{2}-\d{2}$/.test(end)) return {start,end};
+    const match=String(project?.admin_note??"").match(/\[프로젝트기간:(\d{4}-\d{2}-\d{2})~(\d{4}-\d{2}-\d{2})\]/);
+    return match ? {start:match[1],end:match[2]} : null;
+  }
+  function dateLabel(value:any) {
+    const date=String(value??"").slice(0,10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(5).replace("-",".") : "날짜 미정";
+  }
+  function employeeName(id:any) {
+    if(!id) return "담당 미정";
+    return employees.find(row=>row.id===id)?.name??"담당 미정";
+  }
+  function employeeIds(entry:any) {
+    return Array.from(new Set([
+      entry?.employee_id,
+      entry?.mentor_employee_id,
+      ...parseMetaList(entry?.admin_note,"연결직원"),
+    ].filter(Boolean)));
+  }
+  function projectIdFor(entry:any,byId:Map<string,any>) {
+    if(!entry) return null;
+    if(entry.scope==="monthly") return entry.id;
+    let parent=byId.get(entry.parent_id);
+    if(!parent) return null;
+    if(parent.scope==="monthly") return parent.id;
+    return parent.parent_id??null;
+  }
+  function entryTopic(entry:any,byId:Map<string,any>) {
+    const own=parseTopic(entry?.admin_note);
+    if(own!=="기본 흐름") return own;
+    if(entry?.scope==="daily") {
+      const parent=byId.get(entry.parent_id);
+      const inherited=parseTopic(parent?.admin_note);
+      if(inherited!=="기본 흐름") return inherited;
+    }
+    return own;
+  }
+  function load() {
+    setLoading(true);
+    setMessage("");
+    Promise.all([
+      supabase.from("kpi_entries").select("*").eq("is_active",true).order("sort_order",{ascending:true}).order("work_date",{ascending:true}),
+      supabase.from("employees").select("*").order("employee_no",{ascending:true}),
+    ]).then(([entryResult,employeeResult])=>{
+      if(entryResult.error) {
+        setMessage(`프로젝트를 불러오지 못했습니다: ${entryResult.error.message}`);
+        setEntries([]);
+      } else setEntries(entryResult.data??[]);
+      setEmployees(employeeResult.data??[]);
+    }).catch(error=>setMessage(`프로젝트를 불러오지 못했습니다: ${error?.message??String(error)}`)).finally(()=>setLoading(false));
+  }
+  useEffect(()=>{ load(); },[currentEmployee.id]);
+
+  const byId=new Map(entries.map(entry=>[entry.id,entry]));
+  const projects=entries.filter(entry=>entry.scope==="monthly");
+  function projectEntries(project:any) {
+    return entries.filter(entry=>entry.id!==project.id&&projectIdFor(entry,byId)===project.id);
+  }
+  function projectHasEmployee(project:any,employeeId:string) {
+    if(project?.employee_id===employeeId||project?.mentor_employee_id===employeeId) return true;
+    if(parseMetaList(project?.admin_note,"연결직원").includes(employeeId)) return true;
+    return projectEntries(project).some(entry=>employeeIds(entry).includes(employeeId));
+  }
+  function projectIsMine(project:any) {
+    return currentEmployee.role==="admin"||projectHasEmployee(project,currentEmployee.id);
+  }
+  function projectRole(project:any) {
+    if(project?.employee_id===currentEmployee.id) return "책임";
+    if(projectHasEmployee(project,currentEmployee.id)) return "참여";
+    return currentEmployee.role==="admin" ? "관리" : "참여";
+  }
+  function projectProgress(project:any) {
+    const linked=projectEntries(project);
+    const weekly=linked.filter(entry=>entry.scope==="weekly");
+    const daily=linked.filter(entry=>entry.scope==="daily");
+    const actionable=weekly.length>0 ? weekly : daily;
+    if(actionable.length===0) return project.status==="done" ? 100 : 0;
+    return Math.round(actionable.filter(entry=>entry.status==="done").length/actionable.length*100);
+  }
+  function projectVisible(project:any) {
+    if(!projectIsMine(project)) return false;
+    return showCompleted||project.status!=="done";
+  }
+  const projectRecords=projects.filter(projectVisible).map(project=>({
+    project,
+    role:projectRole(project),
+    entries:projectEntries(project),
+    progress:projectProgress(project),
+  }));
+  const responsibilityProjects=projectRecords.filter(record=>record.role==="책임");
+  const participationProjects=projectRecords.filter(record=>record.role!=="책임");
+  const selectedRecord=projectRecords.find(record=>record.project.id===selectedProjectId)??projectRecords[0]??null;
+  const selectedProject=selectedRecord?.project??null;
+  const selectedEntries=selectedRecord?.entries??[];
+  const topics=Array.from(new Set(selectedEntries.map(entry=>entryTopic(entry,byId))));
+
+  function statusLabel(entry:any) {
+    return entry.status==="done" ? "완료" : entry.status==="missed" ? "미완료" : "진행 중";
+  }
+  function roleBadges(entry:any,project:any) {
+    const ids=employeeIds(entry);
+    const labels=ids.map(id=>employeeName(id));
+    if(entry.employee_id===currentEmployee.id&&project.employee_id!==currentEmployee.id) labels.unshift("내 담당");
+    return Array.from(new Set(labels)).slice(0,4);
+  }
+  function renderProjectCard(record:any) {
+    const project=record.project;
+    const color=KPI_PROJECT_COLORS[projects.findIndex(item=>item.id===project.id)%KPI_PROJECT_COLORS.length]??KPI_PROJECT_COLORS[0];
+    const linked=record.entries;
+    const weeklyCount=linked.filter((entry:any)=>entry.scope==="weekly").length;
+    const dailyCount=linked.filter((entry:any)=>entry.scope==="daily").length;
+    const active=selectedProject?.id===project.id;
+    const period=projectPeriod(project);
+    return <button
+      type="button"
+      key={project.id}
+      className={`my-project-card${active?" active":""}`}
+      style={{"--project-color":color} as any}
+      onClick={()=>setSelectedProjectId(project.id)}
+    >
+      <span className="my-project-card-top"><b>{project.title}</b><em>{record.role}</em></span>
+      <span className="my-project-card-period">{period?`${period.start} ~ ${period.end}`:"기간 미정"}</span>
+      <span className="my-project-card-progress"><i><span style={{width:`${record.progress}%`}}></span></i><strong>{record.progress}%</strong></span>
+      <span className="my-project-card-meta"><span>주요 업무 {weeklyCount}</span><span>실행 항목 {dailyCount}</span><span>{linked.filter((entry:any)=>entry.status!=="done").length}건 남음</span></span>
+    </button>;
+  }
+  function renderFlowTopic(topic:string) {
+    const topicEntries=selectedEntries.filter(entry=>entryTopic(entry,byId)===topic);
+    const weekly=topicEntries.filter(entry=>entry.scope==="weekly").sort((a,b)=>(a.sort_order??0)-(b.sort_order??0));
+    const directDaily=topicEntries.filter(entry=>{
+      if(entry.scope!=="daily") return false;
+      const parent=byId.get(entry.parent_id);
+      return !parent||parent.scope==="monthly";
+    });
+    const flowWeekly=weekly.map(weeklyEntry=>({
+      weekly:weeklyEntry,
+      daily:topicEntries.filter(entry=>entry.scope==="daily"&&entry.parent_id===weeklyEntry.id).sort((a,b)=>(a.sort_order??0)-(b.sort_order??0)),
+    }));
+    return <section className="my-project-topic" key={topic}>
+      <div className="my-project-topic-head"><b>{topic}</b><span>{weekly.length}개 주요 업무 · {topicEntries.filter(entry=>entry.scope==="daily").length}개 실행 항목</span></div>
+      <div className="my-project-topic-flow">
+        {flowWeekly.map(({weekly:weeklyEntry,daily})=><div className="my-project-major-row" key={weeklyEntry.id}>
+          <article className={`my-project-flow-item major${weeklyEntry.status==="done"?" done":""}`}>
+            <div className="my-project-flow-title"><b>{weeklyEntry.title}</b><em>{statusLabel(weeklyEntry)}</em></div>
+            <div className="my-project-flow-meta"><span>{dateLabel(weeklyEntry.work_date)}</span><span>{roleBadges(weeklyEntry,selectedProject).join(" · ")||"담당 미정"}</span></div>
+          </article>
+          <div className="my-project-daily-list">
+            {daily.length>0 ? daily.map(dailyEntry=><article className={`my-project-flow-item daily${dailyEntry.status==="done"?" done":""}`} key={dailyEntry.id}>
+              <div className="my-project-flow-title"><b>{dailyEntry.title}</b><em>{statusLabel(dailyEntry)}</em></div>
+              <div className="my-project-flow-meta"><span>{dateLabel(dailyEntry.work_date)}</span><span>{roleBadges(dailyEntry,selectedProject).join(" · ")||"담당 미정"}</span></div>
+            </article>) : <p className="my-project-flow-empty">연결된 실행 항목이 없습니다.</p>}
+          </div>
+        </div>)}
+        {directDaily.map(entry=><article className={`my-project-flow-item daily direct${entry.status==="done"?" done":""}`} key={entry.id}>
+          <div className="my-project-flow-title"><b>{entry.title}</b><em>{statusLabel(entry)}</em></div>
+          <div className="my-project-flow-meta"><span>{dateLabel(entry.work_date)}</span><span>{roleBadges(entry,selectedProject).join(" · ")||"담당 미정"}</span></div>
+        </article>)}
+        {topicEntries.length===0&&<p className="my-project-flow-empty">표시할 업무가 없습니다.</p>}
+      </div>
+    </section>;
+  }
+
+  return <section className="my-project-page">
+    <div className="section-head my-project-page-head">
+      <div><h2 className="card-title"><i className="ti ti-briefcase-2" aria-hidden="true"></i>내 프로젝트</h2><p className="subtle">내가 책임지거나 참여하는 프로젝트별 주요 업무와 실행 항목을 한눈에 봅니다.</p></div>
+      <div className="my-project-toolbar"><button type="button" className={`kpi-filter-pill ${showCompleted?"active":""}`} onClick={()=>setShowCompleted(value=>!value)}><i className={`ti ${showCompleted?"ti-eye":"ti-eye-off"}`} aria-hidden="true"></i>{showCompleted?"완료 포함":"완료 숨김"}</button><button type="button" className="icon-button" title="새로고침" onClick={load} disabled={loading}><i className="ti ti-refresh" aria-hidden="true"></i></button></div>
+    </div>
+    {message&&<div className="alert error">{message}</div>}
+    {loading ? <div className="my-project-empty"><i className="ti ti-loader-2" aria-hidden="true"></i><span>프로젝트를 불러오는 중입니다.</span></div> : projectRecords.length===0 ? <div className="my-project-empty"><i className="ti ti-briefcase-off" aria-hidden="true"></i><b>{showCompleted?"표시할 프로젝트가 없습니다.":"진행 중인 내 프로젝트가 없습니다."}</b><span>프로젝트 관리자에게 책임 또는 참여 인력으로 배정되면 여기에 표시됩니다.</span></div> : <div className="my-project-layout">
+      <aside className="my-project-list" aria-label="프로젝트 목록">
+        {responsibilityProjects.length>0&&<div className="my-project-list-group"><div className="my-project-list-label"><b>내 책임 프로젝트</b><span>{responsibilityProjects.length}</span></div>{responsibilityProjects.map(renderProjectCard)}</div>}
+        {participationProjects.length>0&&<div className="my-project-list-group"><div className="my-project-list-label"><b>{currentEmployee.role==="admin"?"전체 프로젝트":"참여 프로젝트"}</b><span>{participationProjects.length}</span></div>{participationProjects.map(renderProjectCard)}</div>}
+      </aside>
+      <section className="my-project-detail" aria-label="프로젝트 세부 내역">
+        {selectedProject ? <>
+          <header className="my-project-detail-head" style={{"--project-color":KPI_PROJECT_COLORS[projects.findIndex(item=>item.id===selectedProject.id)%KPI_PROJECT_COLORS.length]??KPI_PROJECT_COLORS[0]} as any}>
+            <div><span className="my-project-kicker">프로젝트 세부 내역</span><h3>{selectedProject.title}</h3><p>{selectedRecord?.role} · {projectPeriod(selectedProject)?`${projectPeriod(selectedProject)!.start} ~ ${projectPeriod(selectedProject)!.end}`:"기간 미정"}</p></div>
+            <div className="my-project-detail-actions">{projectNotionUrlForMyProject(selectedProject)&&<a className="button ghost compact" href={projectNotionUrlForMyProject(selectedProject)!} target="_blank" rel="noreferrer"><i className="ti ti-external-link" aria-hidden="true"></i>노션 페이지</a>}<span className="my-project-detail-progress">{selectedRecord?.progress??0}%</span></div>
+          </header>
+          <div className="my-project-detail-summary"><span><b>주요 업무</b>{selectedEntries.filter(entry=>entry.scope==="weekly").length}</span><span><b>실행 항목</b>{selectedEntries.filter(entry=>entry.scope==="daily").length}</span><span><b>완료</b>{selectedEntries.filter(entry=>entry.status==="done").length}</span><span><b>미완료</b>{selectedEntries.filter(entry=>entry.status!=="done").length}</span></div>
+          <div className="my-project-flow-list">{topics.map(renderFlowTopic)}</div>
+        </> : <div className="my-project-empty"><i className="ti ti-click" aria-hidden="true"></i><span>왼쪽 프로젝트를 선택하면 세부 내역이 보입니다.</span></div>}
+      </section>
+    </div>}
+  </section>;
+}
+
+function projectNotionUrlForMyProject(project:any) {
+  const match=String(project?.admin_note??"").match(/\[노션:(https?:\/\/[^\]]+)\]/i);
+  return match?.[1]??null;
 }
 
 function KpiDashboardPage({ currentEmployee, mode="personal" }: { currentEmployee:any; mode?:KpiNavMode }) {
