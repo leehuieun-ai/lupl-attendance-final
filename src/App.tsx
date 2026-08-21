@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Session } from "@supabase/supabase-js";
+import html2canvas from "html2canvas";
 import { supabase, supabaseConfigured, supabaseConfigMessage } from "./lib/supabase";
 import { getDeviceFingerprint } from "./lib/device";
 import { getCurrentPositionFast, getPublicIp, distanceMeters } from "./lib/geo";
@@ -4848,13 +4849,49 @@ function MyProjectsPage({ currentEmployee }: { currentEmployee:any }) {
   const [showCompleted,setShowCompleted]=useState(false);
   const [loading,setLoading]=useState(true);
   const [message,setMessage]=useState("");
+  const flowMapRef=useRef<HTMLDivElement>(null);
+  const [exportingFlow,setExportingFlow]=useState<"image"|"pdf"|null>(null);
+  const [editingTopic,setEditingTopic]=useState<string|null>(null);
+  const [topicDraft,setTopicDraft]=useState("");
+  const [editingEntryId,setEditingEntryId]=useState<string|null>(null);
+  const [entryDraft,setEntryDraft]=useState({title:"",workDate:""});
+  const [savingEdit,setSavingEdit]=useState(false);
 
   function parseMetaList(note:any,label:string) {
     const match=String(note??"").match(new RegExp(`\\[${label}:([^\\]]+)\\]`));
     return match ? match[1].split(",").map(value=>value.trim()).filter(Boolean) : [];
   }
   function parseTopic(note:any) {
-    return parseMetaList(note,"프로젝트주제")[0]??"기본 흐름";
+    return parseTopicNames(note)[0]??"기본 흐름";
+  }
+  function parseTopicNames(note:any) {
+    return Array.from(String(note??"").matchAll(/\[프로젝트주제:([^\]\n]+)\]/g)).map(match=>match[1].trim()).filter(Boolean);
+  }
+  function withTopicMeta(note:any,topic:string) {
+    const body=String(note??"").replace(/\[프로젝트주제:[^\]\n]+\]\s*/g,"").trim();
+    return topic.trim()&&topic.trim()!=="기본 흐름" ? `[프로젝트주제:${topic.trim()}]${body?`\n${body}`:""}` : body;
+  }
+  function withTopicListMeta(note:any,topics:string[]) {
+    const body=String(note??"").replace(/\[프로젝트주제:[^\]\n]+\]\s*/g,"").trim();
+    const unique=Array.from(new Set(topics.map(topic=>topic.trim()).filter(Boolean)));
+    return [...unique.map(topic=>`[프로젝트주제:${topic}]`),body].filter(Boolean).join("\n");
+  }
+  function withDateUnknownMeta(note:any,unknown:boolean) {
+    const body=String(note??"").replace(new RegExp(`${KPI_DATE_UNKNOWN_TAG.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\s*`,"g"),"").trim();
+    return [unknown?KPI_DATE_UNKNOWN_TAG:"",body].filter(Boolean).join("\n");
+  }
+  function selectedProjectCanEdit() {
+    return currentEmployee.role==="admin"||selectedRecord?.role==="책임";
+  }
+  function editEntryDate(entry:any) {
+    return isKpiDateUnknownEntry(entry) ? "" : String(entry?.due_date??entry?.work_date??"").slice(0,10);
+  }
+  function startEditingEntry(entry:any) {
+    setEditingEntryId(entry.id);
+    setEntryDraft({title:String(entry.title??""),workDate:editEntryDate(entry)});
+  }
+  function updateMyProjectEntry(entryId:string,patch:any) {
+    return supabase.from("kpi_entries").update(patch).eq("id",entryId);
   }
   function projectPeriod(project:any) {
     const start=String(project?.project_start??"").slice(0,10);
@@ -4930,30 +4967,113 @@ function MyProjectsPage({ currentEmployee }: { currentEmployee:any }) {
     if(projectHasEmployee(project,currentEmployee.id)) return "참여";
     return currentEmployee.role==="admin" ? "관리" : "참여";
   }
-  function projectProgress(project:any) {
+ function projectProgress(project:any) {
     const linked=projectEntries(project);
     const weekly=linked.filter(entry=>entry.scope==="weekly");
     const daily=linked.filter(entry=>entry.scope==="daily");
     const actionable=weekly.length>0 ? weekly : daily;
     if(actionable.length===0) return project.status==="done" ? 100 : 0;
-    return Math.round(actionable.filter(entry=>entry.status==="done").length/actionable.length*100);
+   return Math.round(actionable.filter(entry=>entry.status==="done").length/actionable.length*100);
+ }
+  function entrySortKey(entry:any) {
+    const date=String(entry?.work_date??"").slice(0,10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "9999-12-31";
   }
-  function projectVisible(project:any) {
+ function projectVisible(project:any) {
     if(!projectIsMine(project)) return false;
     return showCompleted||project.status!=="done";
   }
-  const projectRecords=projects.filter(projectVisible).map(project=>({
-    project,
-    role:projectRole(project),
-    entries:projectEntries(project),
-    progress:projectProgress(project),
-  }));
+  const projectRecords=projects.filter(projectVisible).map(project=>{
+    const linked=projectEntries(project);
+    const nextEntry=[...linked]
+      .filter(entry=>entry.status!=="done")
+      .sort((a,b)=>entrySortKey(a).localeCompare(entrySortKey(b))||(a.sort_order??0)-(b.sort_order??0))[0]??null;
+    return {
+      project,
+      role:projectRole(project),
+      entries:linked,
+      progress:projectProgress(project),
+      nextEntry,
+    };
+  });
   const responsibilityProjects=projectRecords.filter(record=>record.role==="책임");
   const participationProjects=projectRecords.filter(record=>record.role!=="책임");
   const selectedRecord=projectRecords.find(record=>record.project.id===selectedProjectId)??projectRecords[0]??null;
   const selectedProject=selectedRecord?.project??null;
   const selectedEntries=selectedRecord?.entries??[];
   const topics=Array.from(new Set(selectedEntries.map(entry=>entryTopic(entry,byId))));
+
+  async function updateMyProjectEntryWithFallback(entryId:string,patch:any) {
+    let result=await updateMyProjectEntry(entryId,patch);
+    if(result.error&&optionalKpiColumnError(result.error)) {
+      const fallbackPatch={...patch};
+      delete fallbackPatch.admin_note;
+      delete fallbackPatch.updated_by;
+      delete fallbackPatch.due_date;
+      result=await updateMyProjectEntry(entryId,fallbackPatch);
+    }
+    return result;
+  }
+  async function saveMyProjectTopic(topic:string) {
+    if(!selectedProject||!selectedProjectCanEdit()) return setMessage("내 책임 프로젝트에서만 흐름을 수정할 수 있습니다.");
+    const nextTopic=topicDraft.trim();
+    if(!nextTopic) return setMessage("주제명을 입력해주세요.");
+    if(topic===nextTopic) {
+      setEditingTopic(null);
+      return;
+    }
+    const currentProject=entries.find(entry=>entry.id===selectedProject.id)??selectedProject;
+    const currentTopics=parseTopicNames(currentProject.admin_note);
+    const nextTopics=topic==="기본 흐름"
+      ? Array.from(new Set([...currentTopics,nextTopic]))
+      : Array.from(new Set(currentTopics.map(item=>item===topic?nextTopic:item)));
+    const affectedEntries=selectedEntries.filter(entry=>entryTopic(entry,byId)===topic);
+    setSavingEdit(true); setMessage("");
+    try {
+      const projectResult=await updateMyProjectEntryWithFallback(currentProject.id,{admin_note:withTopicListMeta(currentProject.admin_note??"",nextTopics),updated_by:currentEmployee.id,updated_at:new Date().toISOString()});
+      if(projectResult.error) throw projectResult.error;
+      for(const entry of affectedEntries) {
+        const result=await updateMyProjectEntryWithFallback(entry.id,{admin_note:withTopicMeta(entry.admin_note??"",nextTopic),updated_by:currentEmployee.id,updated_at:new Date().toISOString()});
+        if(result.error) throw result.error;
+      }
+      setEditingTopic(null);
+      setTopicDraft("");
+      await load();
+      setMessage("프로젝트 주제를 수정했습니다.");
+    } catch(error:any) {
+      setMessage(`주제 수정에 실패했습니다: ${error?.message??String(error)}`);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+  async function saveMyProjectEntry(entry:any) {
+    if(!selectedProjectCanEdit()) return setMessage("내 책임 프로젝트에서만 흐름을 수정할 수 있습니다.");
+    const title=entryDraft.title.trim();
+    const nextDate=entryDraft.workDate.trim();
+    if(!title) return setMessage("업무명을 입력해주세요.");
+    if(nextDate&&!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) return setMessage("날짜를 올바르게 입력해주세요.");
+    const existingWorkDate=String(entry.work_date??"").slice(0,10)||new Date().toISOString().slice(0,10);
+    setSavingEdit(true); setMessage("");
+    try {
+      const result=await updateMyProjectEntryWithFallback(entry.id,{
+        title,
+        work_date:nextDate||existingWorkDate,
+        due_date:nextDate||null,
+        admin_note:withDateUnknownMeta(entry.admin_note??"",!nextDate),
+        updated_by:currentEmployee.id,
+        updated_at:new Date().toISOString(),
+      });
+      if(result.error) throw result.error;
+      setEditingEntryId(null);
+      setEntryDraft({title:"",workDate:""});
+      await load();
+      setMessage("프로젝트 흐름을 수정했습니다.");
+    } catch(error:any) {
+      setMessage(`업무 수정에 실패했습니다: ${error?.message??String(error)}`);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
 
   function statusLabel(entry:any) {
     return entry.status==="done" ? "완료" : entry.status==="missed" ? "미완료" : "진행 중";
@@ -4965,25 +5085,69 @@ function MyProjectsPage({ currentEmployee }: { currentEmployee:any }) {
     return Array.from(new Set(labels)).slice(0,4);
   }
   function renderProjectCard(record:any) {
-    const project=record.project;
-    const color=KPI_PROJECT_COLORS[projects.findIndex(item=>item.id===project.id)%KPI_PROJECT_COLORS.length]??KPI_PROJECT_COLORS[0];
-    const linked=record.entries;
-    const weeklyCount=linked.filter((entry:any)=>entry.scope==="weekly").length;
-    const dailyCount=linked.filter((entry:any)=>entry.scope==="daily").length;
-    const active=selectedProject?.id===project.id;
-    const period=projectPeriod(project);
-    return <button
-      type="button"
-      key={project.id}
-      className={`my-project-card${active?" active":""}`}
-      style={{"--project-color":color} as any}
+   const project=record.project;
+   const color=KPI_PROJECT_COLORS[projects.findIndex(item=>item.id===project.id)%KPI_PROJECT_COLORS.length]??KPI_PROJECT_COLORS[0];
+   const active=selectedProject?.id===project.id;
+   return <button
+     type="button"
+     key={project.id}
+      className={`my-project-row${active?" active":""}`}
+     style={{"--project-color":color} as any}
       onClick={()=>setSelectedProjectId(project.id)}
     >
-      <span className="my-project-card-top"><b>{project.title}</b><em>{record.role}</em></span>
-      <span className="my-project-card-period">{period?`${period.start} ~ ${period.end}`:"기간 미정"}</span>
-      <span className="my-project-card-progress"><i><span style={{width:`${record.progress}%`}}></span></i><strong>{record.progress}%</strong></span>
-      <span className="my-project-card-meta"><span>주요 업무 {weeklyCount}</span><span>실행 항목 {dailyCount}</span><span>{linked.filter((entry:any)=>entry.status!=="done").length}건 남음</span></span>
-    </button>;
+      <span className="my-project-row-marker" aria-hidden="true"></span>
+      <span className="my-project-row-title"><b>{project.title}</b></span>
+   </button>;
+ }
+  async function exportProjectFlow(format:"image"|"pdf") {
+    const target=flowMapRef.current;
+    if(!target||!selectedProject) return;
+    const printWindow=format==="pdf" ? window.open("","_blank","width=1200,height=900") : null;
+    if(format==="pdf"&&!printWindow) {
+      setMessage("PDF 저장 창을 열 수 없습니다. 브라우저의 팝업 허용 후 다시 시도해주세요.");
+      return;
+    }
+    setExportingFlow(format);
+    setMessage("");
+    try {
+      await document.fonts?.ready;
+      const canvas=await html2canvas(target,{backgroundColor:"#ffffff",scale:2,useCORS:true,logging:false,windowWidth:Math.max(target.scrollWidth,document.documentElement.clientWidth),onclone:clonedDocument=>{
+        clonedDocument.querySelector(".my-project-flow-map")?.classList.add("my-project-exporting");
+      }});
+      const filename=String(selectedProject.title??"내-프로젝트-흐름").replace(/[\\/:*?"<>|]/g,"_");
+      if(format==="image") {
+        const link=document.createElement("a");
+        link.href=canvas.toDataURL("image/png");
+        link.download=`${filename}-프로젝트-흐름.png`;
+        link.click();
+      } else if(printWindow) {
+        const imageUrl=canvas.toDataURL("image/png");
+        printWindow.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${filename} 프로젝트 흐름</title><style>@page{size:landscape;margin:12mm}html,body{margin:0;background:#fff}img{display:block;width:100%;height:auto}</style></head><body><img src="${imageUrl}" alt="${filename} 프로젝트 흐름"></body></html>`);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.onload=()=>printWindow.print();
+      }
+    } catch(error:any) {
+      printWindow?.close();
+      setMessage(`프로젝트 흐름을 저장하지 못했습니다: ${error?.message??String(error)}`);
+    } finally {
+      setExportingFlow(null);
+    }
+  }
+  function renderFlowEntry(entry:any,kind:"major"|"daily") {
+    const editing=editingEntryId===entry.id;
+    const canEdit=selectedProjectCanEdit();
+    const displayDate=isKpiDateUnknownEntry(entry)?"":String(entry?.due_date??entry?.work_date??"").slice(0,10);
+    if(editing) return <article className={`my-project-flow-item ${kind} editing`}>
+      <div className="my-project-flow-edit-grid">
+        <input className="input" value={entryDraft.title} onChange={event=>setEntryDraft({...entryDraft,title:event.target.value})} autoFocus aria-label="업무명 수정" />
+        <label className="my-project-flow-date-edit"><span>날짜</span><input type="date" value={entryDraft.workDate} onChange={event=>setEntryDraft({...entryDraft,workDate:event.target.value})} /><small>{entryDraft.workDate?"":"비워두면 날짜 미정"}</small></label>
+      </div>
+      <div className="my-project-flow-edit-actions"><button type="button" className="button compact" disabled={savingEdit} onClick={()=>saveMyProjectEntry(entry)}>저장</button><button type="button" className="button ghost compact" disabled={savingEdit} onClick={()=>{setEditingEntryId(null);setEntryDraft({title:"",workDate:""});}}>취소</button></div>
+    </article>;
+    return <article className={`my-project-flow-item ${kind}${entry.status==="done"?" done":""}`}>
+      <div className="my-project-flow-title"><b>{entry.title}</b><span className="my-project-flow-inline-meta"><span>{displayDate?dateLabel(displayDate):"날짜 미정"}</span><span>{roleBadges(entry,selectedProject).join(" · ")||"담당 미정"}</span><em>{statusLabel(entry)}</em>{canEdit&&<button type="button" className="my-project-flow-edit-button" title="업무 수정" aria-label="업무 수정" onClick={()=>startEditingEntry(entry)}><i className="ti ti-edit" aria-hidden="true"></i></button>}</span></div>
+    </article>;
   }
   function renderFlowTopic(topic:string) {
     const topicEntries=selectedEntries.filter(entry=>entryTopic(entry,byId)===topic);
@@ -4997,33 +5161,26 @@ function MyProjectsPage({ currentEmployee }: { currentEmployee:any }) {
       weekly:weeklyEntry,
       daily:topicEntries.filter(entry=>entry.scope==="daily"&&entry.parent_id===weeklyEntry.id).sort((a,b)=>(a.sort_order??0)-(b.sort_order??0)),
     }));
-    return <section className="my-project-topic" key={topic}>
-      <div className="my-project-topic-head"><b>{topic}</b><span>{weekly.length}개 주요 업무 · {topicEntries.filter(entry=>entry.scope==="daily").length}개 실행 항목</span></div>
-      <div className="my-project-topic-flow">
-        {flowWeekly.map(({weekly:weeklyEntry,daily})=><div className="my-project-major-row" key={weeklyEntry.id}>
-          <article className={`my-project-flow-item major${weeklyEntry.status==="done"?" done":""}`}>
-            <div className="my-project-flow-title"><b>{weeklyEntry.title}</b><em>{statusLabel(weeklyEntry)}</em></div>
-            <div className="my-project-flow-meta"><span>{dateLabel(weeklyEntry.work_date)}</span><span>{roleBadges(weeklyEntry,selectedProject).join(" · ")||"담당 미정"}</span></div>
-          </article>
+    return <article className="my-project-flow-branch" key={topic}>
+      <div className="my-project-topic-node">
+        {editingTopic===topic ? <div className="my-project-topic-edit"><input className="input" value={topicDraft} onChange={event=>setTopicDraft(event.target.value)} autoFocus aria-label="주제명 수정" onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();saveMyProjectTopic(topic);}if(event.key==="Escape")setEditingTopic(null);}} /><div><button type="button" className="button compact" disabled={savingEdit} onClick={()=>saveMyProjectTopic(topic)}>저장</button><button type="button" className="button ghost compact" disabled={savingEdit} onClick={()=>setEditingTopic(null)}>취소</button></div></div> : <><b>{topic}</b>{selectedProjectCanEdit()&&<button type="button" className="my-project-topic-edit-button" title="주제 수정" aria-label="주제 수정" onClick={()=>{setEditingTopic(topic);setTopicDraft(topic);}}><i className="ti ti-edit" aria-hidden="true"></i></button>}</>}
+      </div>
+      <div className="my-project-branch-entries">
+        {flowWeekly.map(({weekly:weeklyEntry,daily})=><div className="my-project-entry-branch" key={weeklyEntry.id}>
+          {renderFlowEntry(weeklyEntry,"major")}
           <div className="my-project-daily-list">
-            {daily.length>0 ? daily.map(dailyEntry=><article className={`my-project-flow-item daily${dailyEntry.status==="done"?" done":""}`} key={dailyEntry.id}>
-              <div className="my-project-flow-title"><b>{dailyEntry.title}</b><em>{statusLabel(dailyEntry)}</em></div>
-              <div className="my-project-flow-meta"><span>{dateLabel(dailyEntry.work_date)}</span><span>{roleBadges(dailyEntry,selectedProject).join(" · ")||"담당 미정"}</span></div>
-            </article>) : <p className="my-project-flow-empty">연결된 실행 항목이 없습니다.</p>}
+            {daily.length>0 ? daily.map(dailyEntry=><Fragment key={dailyEntry.id}>{renderFlowEntry(dailyEntry,"daily")}</Fragment>) : <p className="my-project-flow-empty">연결된 실행 항목이 없습니다.</p>}
           </div>
         </div>)}
-        {directDaily.map(entry=><article className={`my-project-flow-item daily direct${entry.status==="done"?" done":""}`} key={entry.id}>
-          <div className="my-project-flow-title"><b>{entry.title}</b><em>{statusLabel(entry)}</em></div>
-          <div className="my-project-flow-meta"><span>{dateLabel(entry.work_date)}</span><span>{roleBadges(entry,selectedProject).join(" · ")||"담당 미정"}</span></div>
-        </article>)}
+        {directDaily.map(entry=><Fragment key={entry.id}>{renderFlowEntry(entry,"daily")}</Fragment>)}
         {topicEntries.length===0&&<p className="my-project-flow-empty">표시할 업무가 없습니다.</p>}
       </div>
-    </section>;
+    </article>;
   }
 
   return <section className="my-project-page">
     <div className="section-head my-project-page-head">
-      <div><h2 className="card-title"><i className="ti ti-briefcase-2" aria-hidden="true"></i>내 프로젝트</h2><p className="subtle">내가 책임지거나 참여하는 프로젝트별 주요 업무와 실행 항목을 한눈에 봅니다.</p></div>
+      <div><h2 className="card-title"><i className="ti ti-briefcase-2" aria-hidden="true"></i>내 프로젝트</h2><p className="subtle">프로젝트별 주요 업무와 실행 항목을 한눈에 보고, 내가 맡은 일과 다음 할 일을 확인합니다.</p></div>
       <div className="my-project-toolbar"><button type="button" className={`kpi-filter-pill ${showCompleted?"active":""}`} onClick={()=>setShowCompleted(value=>!value)}><i className={`ti ${showCompleted?"ti-eye":"ti-eye-off"}`} aria-hidden="true"></i>{showCompleted?"완료 포함":"완료 숨김"}</button><button type="button" className="icon-button" title="새로고침" onClick={load} disabled={loading}><i className="ti ti-refresh" aria-hidden="true"></i></button></div>
     </div>
     {message&&<div className="alert error">{message}</div>}
@@ -5035,11 +5192,21 @@ function MyProjectsPage({ currentEmployee }: { currentEmployee:any }) {
       <section className="my-project-detail" aria-label="프로젝트 세부 내역">
         {selectedProject ? <>
           <header className="my-project-detail-head" style={{"--project-color":KPI_PROJECT_COLORS[projects.findIndex(item=>item.id===selectedProject.id)%KPI_PROJECT_COLORS.length]??KPI_PROJECT_COLORS[0]} as any}>
-            <div><span className="my-project-kicker">프로젝트 세부 내역</span><h3>{selectedProject.title}</h3><p>{selectedRecord?.role} · {projectPeriod(selectedProject)?`${projectPeriod(selectedProject)!.start} ~ ${projectPeriod(selectedProject)!.end}`:"기간 미정"}</p></div>
-            <div className="my-project-detail-actions">{projectNotionUrlForMyProject(selectedProject)&&<a className="button ghost compact" href={projectNotionUrlForMyProject(selectedProject)!} target="_blank" rel="noreferrer"><i className="ti ti-external-link" aria-hidden="true"></i>노션 페이지</a>}<span className="my-project-detail-progress">{selectedRecord?.progress??0}%</span></div>
+            <div className="my-project-detail-title"><span className="my-project-kicker">프로젝트 세부 내역</span><h3>{selectedProject.title}</h3></div>
+            <div className="my-project-detail-actions"><span className="my-project-detail-meta">{selectedRecord?.role} · {projectPeriod(selectedProject)?`${projectPeriod(selectedProject)!.start} ~ ${projectPeriod(selectedProject)!.end}`:"기간 미정"}</span><span className="my-project-detail-progress">{selectedRecord?.progress??0}%</span>{projectNotionUrlForMyProject(selectedProject)&&<a className="button ghost compact" href={projectNotionUrlForMyProject(selectedProject)!} target="_blank" rel="noreferrer"><i className="ti ti-external-link" aria-hidden="true"></i>노션</a>}</div>
           </header>
-          <div className="my-project-detail-summary"><span><b>주요 업무</b>{selectedEntries.filter(entry=>entry.scope==="weekly").length}</span><span><b>실행 항목</b>{selectedEntries.filter(entry=>entry.scope==="daily").length}</span><span><b>완료</b>{selectedEntries.filter(entry=>entry.status==="done").length}</span><span><b>미완료</b>{selectedEntries.filter(entry=>entry.status!=="done").length}</span></div>
-          <div className="my-project-flow-list">{topics.map(renderFlowTopic)}</div>
+          <div className="my-project-flow-context">
+            <div className="my-project-flow-context-head"><div className="my-project-flow-guide"><span>주제</span><span>주요 업무</span><span>실행 항목</span></div><div className="my-project-flow-export-actions"><button type="button" className="button ghost compact" onClick={()=>exportProjectFlow("image")} disabled={Boolean(exportingFlow)}><i className="ti ti-photo" aria-hidden="true"></i>{exportingFlow==="image"?"저장 중":"이미지 저장"}</button><button type="button" className="button ghost compact" onClick={()=>exportProjectFlow("pdf")} disabled={Boolean(exportingFlow)}><i className="ti ti-file-type-pdf" aria-hidden="true"></i>{exportingFlow==="pdf"?"준비 중":"PDF 저장"}</button></div></div>
+            <div className="my-project-next-task"><span>다음 할 일</span><b>{selectedRecord?.nextEntry?.title??"남은 업무가 없습니다."}</b>{selectedRecord?.nextEntry&&<small>{dateLabel(selectedRecord.nextEntry.work_date)} · {roleBadges(selectedRecord.nextEntry,selectedProject).join(" · ")||"담당 미정"}</small>}</div>
+          </div>
+          <div ref={flowMapRef} className="my-project-flow-map" style={{"--project-color":KPI_PROJECT_COLORS[projects.findIndex(item=>item.id===selectedProject.id)%KPI_PROJECT_COLORS.length]??KPI_PROJECT_COLORS[0]} as any}>
+            <div className="my-project-flow-root">
+              <span>프로젝트</span>
+              <b>{selectedProject.title}</b>
+              <small>{selectedRecord?.role} · {selectedRecord?.progress??0}% 진행</small>
+            </div>
+            <div className="my-project-flow-branches">{topics.map(renderFlowTopic)}</div>
+          </div>
         </> : <div className="my-project-empty"><i className="ti ti-click" aria-hidden="true"></i><span>왼쪽 프로젝트를 선택하면 세부 내역이 보입니다.</span></div>}
       </section>
     </div>}
